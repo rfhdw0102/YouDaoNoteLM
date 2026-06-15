@@ -46,6 +46,10 @@ func (s *userLLMConfigGenerationService) Generate(ctx context.Context, req *Gene
 	return s.base(model).Generate(ctx, req)
 }
 
+func (s *userLLMConfigGenerationService) Export(ctx context.Context, req *GenerationExportRequest) (*GenerationExportResult, error) {
+	return s.base(nil).Export(ctx, req)
+}
+
 func (s *userLLMConfigGenerationService) resolveModel(ctx context.Context, req *GenerationRequest) (GenerationModel, error) {
 	if s.repo == nil || req == nil || req.UserID == 0 {
 		return nil, nil

@@ -8,7 +8,6 @@ MindTrace
 
 # Test binary
 *.test
-*_test.go
 
 # Go workspace
 go.work

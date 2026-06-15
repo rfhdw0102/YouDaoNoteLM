@@ -11,6 +11,7 @@ require (
 	github.com/cloudwego/eino-ext/components/model/ark v0.1.68
 	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.6
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
+	github.com/duynguyendang/docxgo/v3 v3.0.0-20260413074534-c2f254cc6bc2
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-audio/audio v1.0.0
 	github.com/go-audio/wav v1.1.0

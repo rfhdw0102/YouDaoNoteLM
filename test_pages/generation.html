@@ -171,7 +171,7 @@
     }
 
     button:disabled {
-      cursor: wait;
+      cursor: not-allowed;
       opacity: 0.7;
     }
 
@@ -284,7 +284,7 @@
     <header>
       <div>
         <h1>Generation API Test</h1>
-        <p class="hint">POST /api/v1/generations</p>
+        <p class="hint">POST /api/v1/generations and /api/v1/generations/export</p>
       </div>
       <div class="status" id="status">Idle</div>
     </header>
@@ -357,8 +357,14 @@
             <label><input id="allowDegrade" type="checkbox" checked> allow_degrade</label>
           </div>
 
+          <label>
+            Export Title
+            <input id="exportTitle" placeholder="Optional filename title, for example lesson-note">
+          </label>
+
           <div class="actions">
             <button id="sendBtn" type="button">Send Request</button>
+            <button id="exportBtn" class="secondary" type="button" disabled>Export Result</button>
             <button id="copyBtn" class="secondary" type="button">Copy Request JSON</button>
             <button id="clearBtn" class="secondary" type="button">Clear Output</button>
           </div>
@@ -545,9 +551,105 @@
       $("searchResults").textContent = JSON.stringify((data && data.search_results) || [], null, 2);
     }
 
+    function getGenerationData() {
+      return state.lastResponse && state.lastResponse.data ? state.lastResponse.data : null;
+    }
+
+    function hasExportableContent() {
+      const data = getGenerationData();
+      return Boolean(data && String(data.content || "").trim());
+    }
+
+    function setExportReady(ready) {
+      $("exportBtn").disabled = !ready;
+    }
+
+    function buildExportPayload() {
+      const data = getGenerationData();
+      const content = data && data.content ? String(data.content) : "";
+      if (!content.trim()) {
+        throw new Error("Generate content before exporting");
+      }
+
+      const payload = {
+        type: data.type || $("type").value,
+        content
+      };
+      const title = $("exportTitle").value.trim();
+      if (title) payload.title = title;
+      return payload;
+    }
+
+    function fallbackExportFilename(type) {
+      const extByType = {
+        note: "md",
+        mindmap: "md",
+        quiz: "json",
+        ppt: "pptx"
+      };
+      return `${type || "generation"}-export.${extByType[type] || "txt"}`;
+    }
+
+    function parseContentDispositionFilename(disposition) {
+      if (!disposition) return "";
+
+      const encodedMatch = disposition.match(/(?:^|;)\s*filename\*=([^;]+)/i);
+      if (encodedMatch) {
+        const encodedValue = encodedMatch[1].trim().replace(/^"|"$/g, "");
+        const parts = encodedValue.split("''");
+        const filename = parts.length > 1 ? parts.slice(1).join("''") : encodedValue;
+        try {
+          return decodeURIComponent(filename);
+        } catch (_) {
+          return filename;
+        }
+      }
+
+      const plainMatch = disposition.match(/(?:^|;)\s*filename=("[^"]+"|[^;]+)/i);
+      return plainMatch ? plainMatch[1].trim().replace(/^"|"$/g, "") : "";
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    async function readErrorMessage(resp) {
+      const text = await resp.text();
+      if (!text) return `Export failed: ${resp.status}`;
+
+      try {
+        const body = JSON.parse(text);
+        return body.message || body.error || `Export failed: ${resp.status}`;
+      } catch (_) {
+        return text;
+      }
+    }
+
+    async function readBusinessErrorFromBlob(blob) {
+      if (!String(blob.type || "").includes("application/json")) return "";
+
+      try {
+        const body = JSON.parse(await blob.text());
+        if (body && typeof body.code === "number" && body.code !== 0) {
+          return body.message || `Export failed: ${body.code}`;
+        }
+      } catch (_) {
+        return "";
+      }
+      return "";
+    }
+
     async function sendRequest() {
       const button = $("sendBtn");
       button.disabled = true;
+      setExportReady(false);
       setStatus("Sending...");
 
       try {
@@ -580,8 +682,10 @@
         renderSources(body.data);
 
         if (!resp.ok || (body && body.code && body.code !== 0)) {
+          setExportReady(false);
           setStatus(body.message || `Request failed: ${resp.status}`, true);
         } else {
+          setExportReady(hasExportableContent());
           setStatus("Done");
         }
       } catch (err) {
@@ -590,9 +694,50 @@
         $("references").textContent = "[]";
         $("searchResults").textContent = "[]";
         updateMeta("-", {});
+        setExportReady(false);
         setStatus(err.message || "Request failed", true);
       } finally {
         button.disabled = false;
+      }
+    }
+
+    async function exportResult() {
+      const button = $("exportBtn");
+      button.disabled = true;
+      setStatus("Exporting...");
+
+      try {
+        const baseUrl = $("baseUrl").value.replace(/\/+$/, "");
+        const token = $("token").value.trim().replace(/^Bearer\s+/i, "");
+        const payload = buildExportPayload();
+        state.lastExportRequest = payload;
+
+        const headers = { "Content-Type": "application/json" };
+        if (token) headers.Authorization = `Bearer ${token}`;
+
+        const resp = await fetch(`${baseUrl}/api/v1/generations/export`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload)
+        });
+        if (!resp.ok) {
+          throw new Error(await readErrorMessage(resp));
+        }
+
+        const disposition = resp.headers.get("Content-Disposition") || "";
+        const blob = await resp.blob();
+        const businessError = await readBusinessErrorFromBlob(blob);
+        if (businessError) {
+          throw new Error(businessError);
+        }
+
+        const filename = parseContentDispositionFilename(disposition) || fallbackExportFilename(payload.type);
+        downloadBlob(blob, filename);
+        setStatus(`Exported ${filename}`);
+      } catch (err) {
+        setStatus(err.message || "Export failed", true);
+      } finally {
+        setExportReady(hasExportableContent());
       }
     }
 
@@ -607,15 +752,19 @@
     }
 
     function clearOutput() {
+      state.lastResponse = null;
+      state.lastExportRequest = null;
       $("responseJson").textContent = "{}";
       $("preview").innerHTML = "";
       $("references").textContent = "[]";
       $("searchResults").textContent = "[]";
       updateMeta("-", {});
+      setExportReady(false);
       setStatus("Idle");
     }
 
     $("sendBtn").addEventListener("click", sendRequest);
+    $("exportBtn").addEventListener("click", exportResult);
     $("copyBtn").addEventListener("click", copyRequest);
     $("clearBtn").addEventListener("click", clearOutput);
   </script>

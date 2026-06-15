@@ -44,6 +44,18 @@ type GenerationResponse struct {
 	Meta          map[string]any        `json:"meta,omitempty"`
 }
 
+type GenerationExportRequest struct {
+	Type    GenerationType `json:"type"`
+	Content string         `json:"content"`
+	Title   string         `json:"title,omitempty"`
+}
+
+type GenerationExportResult struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
+
 // GenerationPrompt is the prompt payload passed to the model-backed sub-agent.
 type GenerationPrompt struct {
 	AgentName    string
@@ -61,4 +73,5 @@ type GenerationModel interface {
 // GenerationService is the supervisor entry point for generation.
 type GenerationService interface {
 	Generate(ctx context.Context, req *GenerationRequest) (*GenerationResponse, error)
+	Export(ctx context.Context, req *GenerationExportRequest) (*GenerationExportResult, error)
 }
