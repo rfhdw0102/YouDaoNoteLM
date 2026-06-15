@@ -185,6 +185,16 @@
       color: var(--danger);
     }
 
+    .helper {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 400;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
     .output-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -362,10 +372,21 @@
             <input id="exportTitle" placeholder="Optional filename title, for example lesson-note">
           </label>
 
+          <label id="pptTemplateField">
+            PPT Template
+            <select id="pptTemplate">
+              <option value="classic" selected>classic</option>
+              <option value="clean">clean</option>
+              <option value="business">business</option>
+            </select>
+            <span class="helper" id="pptTemplateHint">Only sent when exporting ppt. Backend uses the exact template ID.</span>
+          </label>
+
           <div class="actions">
             <button id="sendBtn" type="button">Send Request</button>
             <button id="exportBtn" class="secondary" type="button" disabled>Export Result</button>
             <button id="copyBtn" class="secondary" type="button">Copy Request JSON</button>
+            <button id="copyExportBtn" class="secondary" type="button" disabled>Copy Export JSON</button>
             <button id="clearBtn" class="secondary" type="button">Clear Output</button>
           </div>
         </div>
@@ -410,6 +431,12 @@
     const state = {
       lastRequest: null,
       lastResponse: null
+    };
+
+    const pptTemplateLabels = {
+      classic: "classic: warm editorial style with numbered learning cards",
+      clean: "clean: white-panel minimal style with quiet focus notes",
+      business: "business: muted teal executive style for formal reports"
     };
 
     function parseNumber(value) {
@@ -555,6 +582,11 @@
       return state.lastResponse && state.lastResponse.data ? state.lastResponse.data : null;
     }
 
+    function getCurrentExportType() {
+      const data = getGenerationData();
+      return data && data.type ? String(data.type) : $("type").value;
+    }
+
     function hasExportableContent() {
       const data = getGenerationData();
       return Boolean(data && String(data.content || "").trim());
@@ -562,6 +594,18 @@
 
     function setExportReady(ready) {
       $("exportBtn").disabled = !ready;
+      $("copyExportBtn").disabled = !ready;
+      updatePPTTemplateUI();
+    }
+
+    function updatePPTTemplateUI() {
+      const isPPT = getCurrentExportType() === "ppt";
+      $("pptTemplateField").classList.toggle("hidden", !isPPT);
+      $("pptTemplate").disabled = !isPPT;
+      const selected = $("pptTemplate").value;
+      $("pptTemplateHint").textContent = isPPT
+        ? `${pptTemplateLabels[selected] || selected}. Export payload includes template="${selected}".`
+        : "Only sent when exporting ppt. Backend uses the exact template ID.";
     }
 
     function buildExportPayload() {
@@ -577,6 +621,9 @@
       };
       const title = $("exportTitle").value.trim();
       if (title) payload.title = title;
+      if (payload.type === "ppt") {
+        payload.template = $("pptTemplate").value;
+      }
       return payload;
     }
 
@@ -733,7 +780,8 @@
 
         const filename = parseContentDispositionFilename(disposition) || fallbackExportFilename(payload.type);
         downloadBlob(blob, filename);
-        setStatus(`Exported ${filename}`);
+        const templateLabel = payload.template ? ` with template ${payload.template}` : "";
+        setStatus(`Exported ${filename}${templateLabel}`);
       } catch (err) {
         setStatus(err.message || "Export failed", true);
       } finally {
@@ -748,6 +796,17 @@
         setStatus("Request JSON copied");
       } catch (err) {
         setStatus(err.message || "Copy failed", true);
+      }
+    }
+
+    async function copyExportRequest() {
+      try {
+        const payload = buildExportPayload();
+        await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+        const templateLabel = payload.template ? ` (${payload.template})` : "";
+        setStatus(`Export JSON copied${templateLabel}`);
+      } catch (err) {
+        setStatus(err.message || "Copy export failed", true);
       }
     }
 
@@ -766,7 +825,11 @@
     $("sendBtn").addEventListener("click", sendRequest);
     $("exportBtn").addEventListener("click", exportResult);
     $("copyBtn").addEventListener("click", copyRequest);
+    $("copyExportBtn").addEventListener("click", copyExportRequest);
     $("clearBtn").addEventListener("click", clearOutput);
+    $("type").addEventListener("change", updatePPTTemplateUI);
+    $("pptTemplate").addEventListener("change", updatePPTTemplateUI);
+    updatePPTTemplateUI();
   </script>
 </body>
 </html>

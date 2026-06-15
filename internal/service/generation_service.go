@@ -6,12 +6,16 @@ import (
 
 	"YoudaoNoteLm/internal/rag"
 	bizerrors "YoudaoNoteLm/pkg/errors"
+	"YoudaoNoteLm/pkg/logger"
+
+	"go.uber.org/zap"
 )
 
 type generationService struct {
 	retriever rag.RAGRetriever
 	search    SearchService
 	model     GenerationModel
+	memory    GenerationMemoryStore
 	agents    map[GenerationType]generationAgent
 }
 
@@ -34,10 +38,15 @@ type generationAgentOutput struct {
 
 // NewGenerationService creates the supervisor generation service.
 func NewGenerationService(retriever rag.RAGRetriever, search SearchService, model GenerationModel) GenerationService {
+	return NewGenerationServiceWithMemory(retriever, search, model, nil)
+}
+
+func NewGenerationServiceWithMemory(retriever rag.RAGRetriever, search SearchService, model GenerationModel, memory GenerationMemoryStore) GenerationService {
 	return &generationService{
 		retriever: retriever,
 		search:    search,
 		model:     model,
+		memory:    memory,
 		agents: map[GenerationType]generationAgent{
 			GenerationTypeMindmap: newMindmapAgent(model),
 			GenerationTypePPT:     newPPTAgent(model),
@@ -75,15 +84,46 @@ func (s *generationService) Generate(ctx context.Context, req *GenerationRequest
 		}
 	}
 
+	memoryEntries := []GenerationMemoryEntry{}
+	memoryEnabled := s.memory != nil
+	if memoryEnabled {
+		entries, readErr := s.memory.GetRecent(ctx, generationMemoryScopeFromRequest(req), generationMemoryDefaultLimit)
+		if readErr != nil {
+			logger.Warn("read generation memory failed",
+				zap.Uint("user_id", req.UserID),
+				zap.Uint("notebook_id", req.NotebookID),
+				zap.String("type", string(req.Type)),
+				zap.Error(readErr),
+			)
+		} else {
+			memoryEntries = entries
+		}
+	}
+
+	contextValue := buildGenerationContext(req, refs, searchSummary, searchResults)
+	contextValue = appendGenerationMemoryContext(contextValue, memoryEntries)
+
 	agent := s.agents[req.Type]
 	agentOutput, err := agent.Generate(ctx, generationAgentInput{
 		Request:       req,
-		Context:       buildGenerationContext(req, refs, searchSummary, searchResults),
+		Context:       contextValue,
 		References:    refs,
 		SearchResults: searchResults,
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if memoryEnabled {
+		entry := buildGenerationMemoryEntry(req, agentOutput.Content)
+		if writeErr := s.memory.Add(ctx, generationMemoryScopeFromRequest(req), entry); writeErr != nil {
+			logger.Warn("write generation memory failed",
+				zap.Uint("user_id", req.UserID),
+				zap.Uint("notebook_id", req.NotebookID),
+				zap.String("type", string(req.Type)),
+				zap.Error(writeErr),
+			)
+		}
 	}
 
 	return &GenerationResponse{
@@ -100,6 +140,8 @@ func (s *generationService) Generate(ctx context.Context, req *GenerationRequest
 			"web_query":           plan.WebQuery,
 			"format_valid":        agentOutput.FormatValid,
 			"fallback_used":       agentOutput.FallbackUsed,
+			"memory_enabled":      memoryEnabled,
+			"memory_count":        len(memoryEntries),
 			"orchestration_steps": generationOrchestrationSteps(),
 		},
 	}, nil

@@ -229,7 +229,11 @@ func (a *App) initDependencies() {
 		audioPreviewCache,
 		ingestionSvc,
 	)
-	generationSvc := service.NewGenerationServiceWithUserLLMConfig(a.ragRetriever, searchSvc, llmConfigRepo)
+	var generationMemory service.GenerationMemoryStore
+	if a.redis != nil {
+		generationMemory = service.NewGenerationMemoryCacheStore(cache.NewGenerationMemoryCache(a.redis))
+	}
+	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory)
 
 	// 创建 ChatAgentService
 	var chatAgentSvc service.ChatAgentService

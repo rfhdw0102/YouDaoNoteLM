@@ -21,24 +21,104 @@ type pptExportSlide struct {
 	Bullets []string
 }
 
-var pptExportTheme = struct {
+type pptExportTheme struct {
 	Background pptx.Color
+	Surface    pptx.Color
+	SurfaceAlt pptx.Color
 	Accent     pptx.Color
+	AccentDark pptx.Color
 	AccentSoft pptx.Color
 	Border     pptx.Color
 	Title      pptx.Color
 	Text       pptx.Color
 	Muted      pptx.Color
 	White      pptx.Color
-}{
-	Background: pptx.Color{R: 246, G: 241, B: 232},
-	Accent:     pptx.Color{R: 15, G: 118, B: 110},
-	AccentSoft: pptx.Color{R: 233, G: 247, B: 243},
-	Border:     pptx.Color{R: 183, G: 228, B: 214},
-	Title:      pptx.Color{R: 18, G: 60, B: 58},
-	Text:       pptx.Color{R: 31, G: 41, B: 55},
-	Muted:      pptx.Color{R: 91, G: 112, B: 111},
-	White:      pptx.White,
+}
+
+type pptExportTemplate struct {
+	ID          string
+	Name        string
+	Theme       pptExportTheme
+	Kicker      string
+	TitleFont   string
+	BodyFont    string
+	FooterLabel string
+	TitleSize   int
+	BodySize    int
+}
+
+const pptDefaultTemplateID = "classic"
+
+var pptExportTemplates = map[string]pptExportTemplate{
+	"classic": {
+		ID:   "classic",
+		Name: "Classic",
+		Theme: pptExportTheme{
+			Background: pptx.Color{R: 255, G: 247, B: 237},
+			Surface:    pptx.Color{R: 255, G: 251, B: 245},
+			SurfaceAlt: pptx.Color{R: 255, G: 237, B: 213},
+			Accent:     pptx.Color{R: 234, G: 88, B: 12},
+			AccentDark: pptx.Color{R: 194, G: 65, B: 12},
+			AccentSoft: pptx.Color{R: 255, G: 237, B: 213},
+			Border:     pptx.Color{R: 253, G: 186, B: 116},
+			Title:      pptx.Color{R: 67, G: 20, B: 7},
+			Text:       pptx.Color{R: 41, G: 37, B: 36},
+			Muted:      pptx.Color{R: 120, G: 113, B: 108},
+			White:      pptx.White,
+		},
+		Kicker:      "LEARNING DECK",
+		TitleFont:   "Microsoft YaHei UI",
+		BodyFont:    "Microsoft YaHei",
+		FooterLabel: "YoudaoNoteLM / Classic",
+		TitleSize:   36,
+		BodySize:    18,
+	},
+	"clean": {
+		ID:   "clean",
+		Name: "Clean",
+		Theme: pptExportTheme{
+			Background: pptx.Color{R: 248, G: 250, B: 252},
+			Surface:    pptx.Color{R: 255, G: 255, B: 255},
+			SurfaceAlt: pptx.Color{R: 248, G: 250, B: 252},
+			Accent:     pptx.Color{R: 156, G: 163, B: 175},
+			AccentDark: pptx.Color{R: 107, G: 114, B: 128},
+			AccentSoft: pptx.Color{R: 229, G: 231, B: 235},
+			Border:     pptx.Color{R: 229, G: 231, B: 235},
+			Title:      pptx.Color{R: 31, G: 41, B: 55},
+			Text:       pptx.Color{R: 30, G: 41, B: 59},
+			Muted:      pptx.Color{R: 100, G: 116, B: 139},
+			White:      pptx.White,
+		},
+		Kicker:      "FOCUS NOTES",
+		TitleFont:   "Microsoft YaHei UI",
+		BodyFont:    "Microsoft YaHei",
+		FooterLabel: "YoudaoNoteLM / Clean",
+		TitleSize:   34,
+		BodySize:    18,
+	},
+	"business": {
+		ID:   "business",
+		Name: "Business",
+		Theme: pptExportTheme{
+			Background: pptx.Color{R: 247, G: 248, B: 245},
+			Surface:    pptx.Color{R: 255, G: 255, B: 255},
+			SurfaceAlt: pptx.Color{R: 229, G: 241, B: 239},
+			Accent:     pptx.Color{R: 63, G: 125, B: 122},
+			AccentDark: pptx.Color{R: 61, G: 102, B: 99},
+			AccentSoft: pptx.Color{R: 229, G: 241, B: 239},
+			Border:     pptx.Color{R: 184, G: 216, B: 213},
+			Title:      pptx.Color{R: 31, G: 41, B: 55},
+			Text:       pptx.Color{R: 55, G: 65, B: 81},
+			Muted:      pptx.Color{R: 91, G: 101, B: 112},
+			White:      pptx.White,
+		},
+		Kicker:      "EXECUTIVE BRIEF",
+		TitleFont:   "Microsoft YaHei UI",
+		BodyFont:    "Microsoft YaHei",
+		FooterLabel: "YoudaoNoteLM / Business",
+		TitleSize:   34,
+		BodySize:    18,
+	},
 }
 
 var (
@@ -48,14 +128,18 @@ var (
 	pptBulletPattern  = regexp.MustCompile(`(?is)<li\b[^>]*>(.*?)</li>`)
 )
 
-func exportPPT(content, title string) (*GenerationExportResult, error) {
+func exportPPT(content, title, templateID string) (*GenerationExportResult, error) {
 	slides, err := parsePPTExportSlides(content)
+	if err != nil {
+		return nil, err
+	}
+	template, err := resolvePPTExportTemplate(templateID)
 	if err != nil {
 		return nil, err
 	}
 
 	filename := resolveExportFilename(title, content, "ppt-export", ".pptx")
-	data, err := buildPPTXBytes(slides, strings.TrimSuffix(filename, ".pptx"))
+	data, err := buildPPTXBytes(slides, strings.TrimSuffix(filename, ".pptx"), template)
 	if err != nil {
 		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "build ppt export failed", err)
 	}
@@ -65,6 +149,18 @@ func exportPPT(content, title string) (*GenerationExportResult, error) {
 		ContentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 		Data:        data,
 	}, nil
+}
+
+func resolvePPTExportTemplate(templateID string) (pptExportTemplate, error) {
+	id := strings.ToLower(strings.TrimSpace(templateID))
+	if id == "" {
+		id = pptDefaultTemplateID
+	}
+	template, ok := pptExportTemplates[id]
+	if !ok {
+		return pptExportTemplate{}, bizerrors.New(bizerrors.CodeInvalidParam, "unsupported ppt template")
+	}
+	return template, nil
 }
 
 func parsePPTExportSlides(content string) ([]pptExportSlide, error) {
@@ -123,33 +219,26 @@ func normalizePPTExportText(value string) string {
 	return value
 }
 
-func buildPPTXBytes(slides []pptExportSlide, deckTitle string) ([]byte, error) {
+func buildPPTXBytes(slides []pptExportSlide, deckTitle string, template pptExportTemplate) ([]byte, error) {
 	builder := pptx.NewPresentationBuilder(
 		pptx.WithTitle(firstNonEmpty(deckTitle, "ppt-export")),
 		pptx.WithLayout(pptx.Layout16x9),
 	)
 
 	for i, slideData := range slides {
-		slide := builder.AddSlide().SetBackgroundColor(pptExportTheme.Background)
-		addPPTThemeFrame(slide, i+1)
+		slide := builder.AddSlide().SetBackgroundColor(template.Theme.Background)
+		addPPTThemeFrame(slide, i+1, template)
 
 		if slideData.Title != "" {
-			slide.AddText(slideData.Title).
-				SetBold(true).
-				SetFontSize(30).
-				SetFontFamily("Aptos Display").
-				SetColor(pptExportTheme.Title).
-				SetPosition(pptx.Inches(1.15), pptx.Inches(0.72)).
-				SetSize(pptx.Inches(10.2), pptx.Inches(0.78)).
-				End()
+			addPPTSlideTitle(slide, slideData.Title, template)
 		}
 
-		startY := 1.75
+		startY := 2.14
 		if slideData.Title == "" {
-			startY = 0.95
+			startY = 1.24
 		}
 		for i, bullet := range slideData.Bullets {
-			addPPTBulletCard(slide, i, bullet, startY)
+			addPPTBulletCard(slide, i, bullet, startY, template)
 		}
 	}
 
@@ -175,69 +264,146 @@ func buildPPTXBytes(slides []pptExportSlide, deckTitle string) ([]byte, error) {
 	return fixPPTXPackage(data, len(slides))
 }
 
-func addPPTThemeFrame(slide *pptx.SlideBuilder, slideNumber int) {
+func addPPTThemeFrame(slide *pptx.SlideBuilder, slideNumber int, template pptExportTemplate) {
+	slide.AddShape(pptx.ShapeRoundedRectangle).
+		SetPosition(pptx.Inches(0.74), pptx.Inches(0.5)).
+		SetSize(pptx.Inches(11.88), pptx.Inches(6.22)).
+		SetFillColor(template.Theme.Surface).
+		SetLine(template.Theme.Border, 1).
+		End()
+
 	slide.AddShape(pptx.ShapeRectangle).
 		SetPosition(pptx.Inches(0), pptx.Inches(0)).
-		SetSize(pptx.Inches(13.333), pptx.Inches(0.16)).
-		SetFillColor(pptExportTheme.Accent).
+		SetSize(pptx.Inches(13.333), pptx.Inches(0.22)).
+		SetFillColor(template.Theme.Accent).
 		SetNoLine().
 		End()
 
 	slide.AddShape(pptx.ShapeRectangle).
-		SetPosition(pptx.Inches(0.62), pptx.Inches(0.72)).
-		SetSize(pptx.Inches(0.12), pptx.Inches(5.85)).
-		SetFillColor(pptExportTheme.Accent).
+		SetPosition(pptx.Inches(0.74), pptx.Inches(0.5)).
+		SetSize(pptx.Inches(0.08), pptx.Inches(6.22)).
+		SetFillColor(template.Theme.AccentDark).
 		SetNoLine().
 		End()
 
 	slide.AddShape(pptx.ShapeRoundedRectangle).
-		SetPosition(pptx.Inches(11.65), pptx.Inches(0.54)).
-		SetSize(pptx.Inches(0.75), pptx.Inches(0.42)).
-		SetFillColor(pptExportTheme.Accent).
+		SetPosition(pptx.Inches(0.98), pptx.Inches(0.78)).
+		SetSize(pptx.Inches(1.54), pptx.Inches(0.34)).
+		SetFillColor(template.Theme.Accent).
+		SetNoLine().
+		End()
+
+	slide.AddText(template.Kicker).
+		SetBold(true).
+		SetFontSize(9).
+		SetFontFamily(template.BodyFont).
+		SetAlignment(pptx.AlignmentCenter).
+		SetColor(template.Theme.White).
+		SetPosition(pptx.Inches(1.03), pptx.Inches(0.85)).
+		SetSize(pptx.Inches(1.44), pptx.Inches(0.14)).
+		End()
+
+	slide.AddShape(pptx.ShapeRoundedRectangle).
+		SetPosition(pptx.Inches(11.54), pptx.Inches(0.73)).
+		SetSize(pptx.Inches(0.82), pptx.Inches(0.46)).
+		SetFillColor(template.Theme.AccentDark).
 		SetNoLine().
 		End()
 
 	slide.AddText(fmt.Sprintf("%02d", slideNumber)).
 		SetBold(true).
 		SetFontSize(13).
-		SetFontFamily("Aptos").
-		SetColor(pptExportTheme.White).
-		SetPosition(pptx.Inches(11.73), pptx.Inches(0.61)).
-		SetSize(pptx.Inches(0.58), pptx.Inches(0.22)).
+		SetFontFamily(template.BodyFont).
+		SetAlignment(pptx.AlignmentCenter).
+		SetColor(template.Theme.White).
+		SetPosition(pptx.Inches(11.65), pptx.Inches(0.84)).
+		SetSize(pptx.Inches(0.6), pptx.Inches(0.16)).
 		End()
 
-	slide.AddText("YoudaoNoteLM").
-		SetFontSize(10).
-		SetFontFamily("Aptos").
-		SetColor(pptExportTheme.Muted).
-		SetPosition(pptx.Inches(1.15), pptx.Inches(6.92)).
-		SetSize(pptx.Inches(2.2), pptx.Inches(0.22)).
-		End()
-}
-
-func addPPTBulletCard(slide *pptx.SlideBuilder, index int, bullet string, startY float64) {
-	y := startY + float64(index)*0.72
-	slide.AddShape(pptx.ShapeRoundedRectangle).
-		SetPosition(pptx.Inches(1.12), pptx.Inches(y)).
-		SetSize(pptx.Inches(10.8), pptx.Inches(0.54)).
-		SetFillColor(pptExportTheme.AccentSoft).
-		SetLine(pptExportTheme.Border, 1).
-		End()
-
-	slide.AddShape(pptx.ShapeRoundedRectangle).
-		SetPosition(pptx.Inches(1.34), pptx.Inches(y+0.18)).
-		SetSize(pptx.Inches(0.18), pptx.Inches(0.18)).
-		SetFillColor(pptExportTheme.Accent).
+	slide.AddShape(pptx.ShapeRectangle).
+		SetPosition(pptx.Inches(0.98), pptx.Inches(6.55)).
+		SetSize(pptx.Inches(11.18), pptx.Inches(0.02)).
+		SetFillColor(template.Theme.AccentSoft).
 		SetNoLine().
 		End()
 
-	slide.AddText(bullet).
-		SetFontSize(17).
-		SetFontFamily("Aptos").
-		SetColor(pptExportTheme.Text).
-		SetPosition(pptx.Inches(1.7), pptx.Inches(y+0.13)).
-		SetSize(pptx.Inches(9.8), pptx.Inches(0.3)).
+	slide.AddText(template.FooterLabel).
+		SetFontSize(10).
+		SetFontFamily(template.BodyFont).
+		SetColor(template.Theme.Muted).
+		SetPosition(pptx.Inches(0.98), pptx.Inches(6.68)).
+		SetSize(pptx.Inches(3.2), pptx.Inches(0.18)).
 		End()
+}
+
+func addPPTSlideTitle(slide *pptx.SlideBuilder, title string, template pptExportTemplate) {
+	slide.AddText(title).
+		SetBold(true).
+		SetFontSize(template.TitleSize).
+		SetFontFamily(template.TitleFont).
+		SetColor(template.Theme.Title).
+		SetPosition(pptx.Inches(0.98), pptx.Inches(1.18)).
+		SetSize(pptx.Inches(10.65), pptx.Inches(0.72)).
+		End()
+
+	slide.AddShape(pptx.ShapeRoundedRectangle).
+		SetPosition(pptx.Inches(0.98), pptx.Inches(1.9)).
+		SetSize(pptx.Inches(1.08), pptx.Inches(0.07)).
+		SetFillColor(template.Theme.Accent).
+		SetNoLine().
+		End()
+}
+
+func addPPTBulletCard(slide *pptx.SlideBuilder, index int, bullet string, startY float64, template pptExportTemplate) {
+	y := startY + float64(index)*0.96
+	slide.AddShape(pptx.ShapeRoundedRectangle).
+		SetPosition(pptx.Inches(1.04), pptx.Inches(y)).
+		SetSize(pptx.Inches(11.08), pptx.Inches(0.78)).
+		SetFillColor(template.Theme.SurfaceAlt).
+		SetLine(template.Theme.Border, 1).
+		End()
+
+	slide.AddShape(pptx.ShapeEllipse).
+		SetPosition(pptx.Inches(1.28), pptx.Inches(y+0.21)).
+		SetSize(pptx.Inches(0.36), pptx.Inches(0.36)).
+		SetFillColor(template.Theme.Accent).
+		SetNoLine().
+		End()
+
+	slide.AddText(fmt.Sprintf("%02d", index+1)).
+		SetBold(true).
+		SetFontSize(10).
+		SetFontFamily(template.BodyFont).
+		SetAlignment(pptx.AlignmentCenter).
+		SetColor(template.Theme.White).
+		SetPosition(pptx.Inches(1.31), pptx.Inches(y+0.29)).
+		SetSize(pptx.Inches(0.3), pptx.Inches(0.13)).
+		End()
+
+	slide.AddText(bullet).
+		SetFontSize(pptBulletFontSize(bullet, template.BodySize)).
+		SetFontFamily(template.BodyFont).
+		SetColor(template.Theme.Text).
+		SetPosition(pptx.Inches(1.86), pptx.Inches(y+0.22)).
+		SetSize(pptx.Inches(9.7), pptx.Inches(0.36)).
+		End()
+}
+
+func pptBulletFontSize(bullet string, baseSize int) int {
+	if baseSize <= 0 {
+		baseSize = 15
+	}
+	length := len([]rune(strings.TrimSpace(bullet)))
+	switch {
+	case length > 110:
+		return baseSize - 3
+	case length > 72:
+		return baseSize - 2
+	case length > 44:
+		return baseSize - 1
+	default:
+		return baseSize
+	}
 }
 
 func fixPPTXPackage(data []byte, slideCount int) ([]byte, error) {

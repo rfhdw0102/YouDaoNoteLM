@@ -45,9 +45,10 @@ type GenerationResponse struct {
 }
 
 type GenerationExportRequest struct {
-	Type    GenerationType `json:"type"`
-	Content string         `json:"content"`
-	Title   string         `json:"title,omitempty"`
+	Type     GenerationType `json:"type"`
+	Content  string         `json:"content"`
+	Title    string         `json:"title,omitempty"`
+	Template string         `json:"template,omitempty"`
 }
 
 type GenerationExportResult struct {
