@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Generation API Test</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #667085;
+      --line: #d8dee8;
+      --accent: #0f766e;
+      --accent-dark: #0b5f59;
+      --danger: #b42318;
+      --code: #111827;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(1480px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 20px 0 28px;
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .hint {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(360px, 480px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    label {
+      display: grid;
+      gap: 5px;
+      font-weight: 600;
+      color: #344054;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid #cfd6e2;
+      border-radius: 6px;
+      padding: 9px 10px;
+      color: var(--text);
+      background: #fff;
+      font: inherit;
+      outline: none;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+    }
+
+    textarea {
+      min-height: 220px;
+      resize: vertical;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+
+    .checkboxes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .checkboxes label {
+      display: flex;
+      grid-template-columns: none;
+      gap: 7px;
+      align-items: center;
+      font-weight: 600;
+    }
+
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    button {
+      border: 0;
+      border-radius: 6px;
+      padding: 9px 13px;
+      color: white;
+      background: var(--accent);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: var(--accent-dark);
+    }
+
+    button.secondary {
+      color: #344054;
+      background: #eef2f6;
+    }
+
+    button.secondary:hover {
+      background: #e3e8ef;
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.7;
+    }
+
+    .status {
+      min-height: 22px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .status.error {
+      color: var(--danger);
+    }
+
+    .output-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .source-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    pre {
+      margin: 0;
+      min-height: 280px;
+      max-height: 620px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      background: #0f172a;
+      color: #e5e7eb;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .preview {
+      min-height: 280px;
+      max-height: 620px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 14px;
+      background: #fff;
+    }
+
+    .preview h1,
+    .preview h2,
+    .preview h3 {
+      margin: 10px 0 6px;
+    }
+
+    .preview section {
+      margin: 0 0 12px;
+      padding: 12px;
+      border-radius: 6px;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .meta div {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      background: #fbfcfe;
+    }
+
+    .meta span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .meta strong {
+      display: block;
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 980px) {
+      .layout,
+      .output-grid,
+      .meta,
+      .row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Generation API Test</h1>
+        <p class="hint">POST /api/v1/generations</p>
+      </div>
+      <div class="status" id="status">Idle</div>
+    </header>
+
+    <div class="layout">
+      <section>
+        <div class="stack">
+          <div class="row">
+            <label>
+              API Base URL
+              <input id="baseUrl" value="http://localhost:8080">
+            </label>
+            <label>
+              Type
+              <select id="type">
+                <option value="mindmap">mindmap</option>
+                <option value="ppt">ppt</option>
+                <option value="quiz">quiz</option>
+                <option value="note" selected>note</option>
+              </select>
+            </label>
+          </div>
+
+          <label>
+            Bearer Token
+            <input id="token" placeholder="粘贴 access_token，不要带 Bearer 前缀">
+          </label>
+
+          <label>
+            Prompt
+            <input id="prompt" value="请基于笔记生成结构化学习内容">
+          </label>
+
+          <div class="row">
+            <label>
+              Notebook ID
+              <input id="notebookId" type="number" min="0" value="0">
+            </label>
+            <label>
+              Source IDs
+              <input id="sourceIds" placeholder="例如 1,2,3">
+            </label>
+          </div>
+
+          <label>
+            Markdown
+            <textarea id="markdown"># 光合作用
+
+## 光反应
+叶绿素吸收光能，将水分解并产生 ATP 和 NADPH。
+
+## 卡尔文循环
+二氧化碳被固定，最终合成糖类。
+
+## 影响因素
+光照强度、二氧化碳浓度和温度都会影响光合作用效率。</textarea>
+          </label>
+
+          <label>
+            Options JSON
+            <textarea id="options" style="min-height: 92px;">{
+  "inline_top_k": 4,
+  "top_k": 5,
+  "search_count": 3
+}</textarea>
+          </label>
+
+          <div class="checkboxes">
+            <label><input id="useWeb" type="checkbox"> use_web</label>
+            <label><input id="allowDegrade" type="checkbox" checked> allow_degrade</label>
+          </div>
+
+          <div class="actions">
+            <button id="sendBtn" type="button">Send Request</button>
+            <button id="copyBtn" class="secondary" type="button">Copy Request JSON</button>
+            <button id="clearBtn" class="secondary" type="button">Clear Output</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="meta">
+          <div><span>HTTP</span><strong id="httpStatus">-</strong></div>
+          <div><span>Code</span><strong id="bizCode">-</strong></div>
+          <div><span>Agent</span><strong id="agent">-</strong></div>
+          <div><span>Fallback</span><strong id="fallback">-</strong></div>
+        </div>
+
+        <div class="output-grid">
+          <div>
+            <h2>Response JSON</h2>
+            <pre id="responseJson">{}</pre>
+          </div>
+          <div>
+            <h2>Content Preview</h2>
+            <div class="preview" id="preview"></div>
+          </div>
+        </div>
+
+        <div class="source-grid">
+          <div>
+            <h2>References</h2>
+            <pre id="references">[]</pre>
+          </div>
+          <div>
+            <h2>Search Results</h2>
+            <pre id="searchResults">[]</pre>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    const state = {
+      lastRequest: null,
+      lastResponse: null
+    };
+
+    function parseNumber(value) {
+      const n = Number(value);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    }
+
+    function parseSourceIds(value) {
+      return value
+        .split(",")
+        .map((item) => Number(item.trim()))
+        .filter((item) => Number.isInteger(item) && item > 0);
+    }
+
+    function parseOptions() {
+      const raw = $("options").value.trim();
+      if (!raw) return {};
+      return JSON.parse(raw);
+    }
+
+    function buildPayload() {
+      const payload = {
+        notebook_id: parseNumber($("notebookId").value),
+        markdown: $("markdown").value,
+        type: $("type").value,
+        prompt: $("prompt").value,
+        options: parseOptions(),
+        source_ids: parseSourceIds($("sourceIds").value),
+        use_web: $("useWeb").checked,
+        allow_degrade: $("allowDegrade").checked
+      };
+
+      if (payload.notebook_id === 0) delete payload.notebook_id;
+      if (payload.source_ids.length === 0) delete payload.source_ids;
+      if (!payload.prompt.trim()) delete payload.prompt;
+      return payload;
+    }
+
+    function setStatus(message, isError = false) {
+      $("status").textContent = message;
+      $("status").classList.toggle("error", isError);
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function renderMarkdown(value) {
+      const lines = String(value || "").split(/\r?\n/);
+      let html = "";
+      let inList = false;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          continue;
+        }
+
+        if (trimmed.startsWith("### ")) {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          html += `<h3>${escapeHtml(trimmed.slice(4))}</h3>`;
+        } else if (trimmed.startsWith("## ")) {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          html += `<h2>${escapeHtml(trimmed.slice(3))}</h2>`;
+        } else if (trimmed.startsWith("# ")) {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          html += `<h1>${escapeHtml(trimmed.slice(2))}</h1>`;
+        } else if (trimmed.startsWith("- ")) {
+          if (!inList) {
+            html += "<ul>";
+            inList = true;
+          }
+          html += `<li>${escapeHtml(trimmed.slice(2))}</li>`;
+        } else {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          html += `<p>${escapeHtml(trimmed)}</p>`;
+        }
+      }
+
+      if (inList) html += "</ul>";
+      return html;
+    }
+
+    function renderContent(data) {
+      const content = data && data.content ? String(data.content) : "";
+      if (!content) {
+        $("preview").innerHTML = "";
+        return;
+      }
+
+      if (content.includes("<section") || content.includes("<h1") || content.includes("<ul")) {
+        $("preview").innerHTML = content;
+        return;
+      }
+
+      if (content.trim().startsWith("{") || content.trim().startsWith("[")) {
+        try {
+          $("preview").innerHTML = `<pre>${escapeHtml(JSON.stringify(JSON.parse(content), null, 2))}</pre>`;
+          return;
+        } catch (_) {
+          $("preview").innerHTML = `<pre>${escapeHtml(content)}</pre>`;
+          return;
+        }
+      }
+
+      $("preview").innerHTML = renderMarkdown(content);
+    }
+
+    function updateMeta(httpStatus, body) {
+      const data = body && body.data ? body.data : {};
+      $("httpStatus").textContent = httpStatus || "-";
+      $("bizCode").textContent = body && body.code !== undefined ? body.code : "-";
+      $("agent").textContent = data.meta && data.meta.agent ? data.meta.agent : "-";
+      $("fallback").textContent = data.meta && data.meta.fallback_used !== undefined ? String(data.meta.fallback_used) : "-";
+    }
+
+    function renderSources(data) {
+      $("references").textContent = JSON.stringify((data && data.references) || [], null, 2);
+      $("searchResults").textContent = JSON.stringify((data && data.search_results) || [], null, 2);
+    }
+
+    async function sendRequest() {
+      const button = $("sendBtn");
+      button.disabled = true;
+      setStatus("Sending...");
+
+      try {
+        const baseUrl = $("baseUrl").value.replace(/\/+$/, "");
+        const token = $("token").value.trim().replace(/^Bearer\s+/i, "");
+        const payload = buildPayload();
+        state.lastRequest = payload;
+
+        const headers = { "Content-Type": "application/json" };
+        if (token) headers.Authorization = `Bearer ${token}`;
+
+        const resp = await fetch(`${baseUrl}/api/v1/generations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload)
+        });
+
+        const text = await resp.text();
+        let body;
+        try {
+          body = text ? JSON.parse(text) : {};
+        } catch (_) {
+          body = { raw: text };
+        }
+
+        state.lastResponse = body;
+        $("responseJson").textContent = JSON.stringify(body, null, 2);
+        updateMeta(resp.status, body);
+        renderContent(body.data);
+        renderSources(body.data);
+
+        if (!resp.ok || (body && body.code && body.code !== 0)) {
+          setStatus(body.message || `Request failed: ${resp.status}`, true);
+        } else {
+          setStatus("Done");
+        }
+      } catch (err) {
+        $("responseJson").textContent = String(err && err.stack ? err.stack : err);
+        $("preview").innerHTML = "";
+        $("references").textContent = "[]";
+        $("searchResults").textContent = "[]";
+        updateMeta("-", {});
+        setStatus(err.message || "Request failed", true);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function copyRequest() {
+      try {
+        const payload = buildPayload();
+        await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+        setStatus("Request JSON copied");
+      } catch (err) {
+        setStatus(err.message || "Copy failed", true);
+      }
+    }
+
+    function clearOutput() {
+      $("responseJson").textContent = "{}";
+      $("preview").innerHTML = "";
+      $("references").textContent = "[]";
+      $("searchResults").textContent = "[]";
+      updateMeta("-", {});
+      setStatus("Idle");
+    }
+
+    $("sendBtn").addEventListener("click", sendRequest);
+    $("copyBtn").addEventListener("click", copyRequest);
+    $("clearBtn").addEventListener("click", clearOutput);
+  </script>
+</body>
+</html>

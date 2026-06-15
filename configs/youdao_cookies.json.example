@@ -1,0 +1,22 @@
+{
+    "cookies": [
+        [
+            "YNOTE_CSTK",
+            "你的YNOTE_CSTK值",
+            ".note.youdao.com",
+            "/"
+        ],
+        [
+            "YNOTE_LOGIN",
+            "你的YNOTE_LOGIN值",
+            ".note.youdao.com",
+            "/"
+        ],
+        [
+            "YNOTE_SESS",
+            "你的YNOTE_SESS值",
+            ".note.youdao.com",
+            "/"
+        ]
+    ]
+}
