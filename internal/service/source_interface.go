@@ -12,6 +12,7 @@ type SourceService interface {
 	Rename(id uint, name string) error
 	Delete(id uint) error
 	BatchDelete(ids []uint) error
+	DeleteFailed(userID, notebookID uint) (int64, error)
 	GetContent(id uint) (string, error)
 	GetOriginalContent(id uint) (content string, contentType string, err error)
 	GetDownloadURL(id uint) (string, error)

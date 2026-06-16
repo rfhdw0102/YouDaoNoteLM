@@ -73,8 +73,11 @@ func TestStructure_空内容(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "" {
-		t.Errorf("expected empty, got %q", result)
+	if result.Content != "" {
+		t.Errorf("expected empty, got %q", result.Content)
+	}
+	if result.ActuallyCalled {
+		t.Errorf("expected ActuallyCalled=false for empty content")
 	}
 }
 
@@ -89,9 +92,11 @@ func TestStructure_已有结构时跳过(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != input {
+	if result.Content != input {
 		t.Errorf("已有结构时应返回原始内容，但返回了不同的输出")
 	}
+	if result.ActuallyCalled {
+		t.Errorf("已有结构时不应调用 
 }
 
 func TestStructure_LLM配置为nil时降级(t *testing.T) {
@@ -106,9 +111,13 @@ func TestStructure_LLM配置为nil时降级(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result != input {
-		t.Errorf("LLM 配置为 nil 时应返回原始内容，但返回了不同的输出")
+	if result.Content != input {
 	}
 }
+ nil 时应返回原始内容，但返回了不同的输出")
+	}
+	if result.ActuallyCalled {
+		t.Errorf("LLM 配置为 nil 时不应调用 L
 
 func TestStructure_LLM未启用时降级(t *testing.T) {
 	configSvc := &mockStructureConfigService{
@@ -121,9 +130,13 @@ func TestStructure_LLM未启用时降级(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != input {
+	if result.Content != input {
 		t.Errorf("LLM 未启用时应返回原始内容，但返回了不同的输出")
 	}
+的输出")
+	}
+	if result.ActuallyCalled {
+		t.Errorf("LLM 
 }
 
 func TestStructure_Prompt模板包含格式占位符(t *testing.T) {

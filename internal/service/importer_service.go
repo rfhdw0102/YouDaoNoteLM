@@ -185,7 +185,7 @@ func (s *importerService) processFileImport(sourceID uint, fileName, ext, filePa
 	// 2. LLM 结构化
 	stepStart = time.Now()
 	if s.structurer != nil {
-		structured, err := s.structurer.Structure(context.Background(), userID, markdown, StructureMeta{
+		result, err := s.structurer.Structure(context.Background(), userID, markdown, StructureMeta{
 			Title:      fileName,
 			SourceType: "file",
 		})
@@ -195,13 +195,16 @@ func (s *importerService) processFileImport(sourceID uint, fileName, ext, filePa
 				zap.Duration("elapsed", time.Since(stepStart)),
 				zap.Error(err),
 			)
-		} else {
-			markdown = structured
+		} else if result.ActuallyCalled {
+			markdown = result.Content
 			logger.Info("LLM 结构化完成",
 				zap.String("file", fileName),
 				zap.Int("content_len", len(markdown)),
 				zap.Duration("elapsed", time.Since(stepStart)),
 			)
+		} else {
+			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
+				zap.String("file", fileName),
 		}
 	} else {
 		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.String("file", fileName))
@@ -474,7 +477,7 @@ func (s *importerService) ConfirmAudio(userID uint, previewID string, editedCont
 	if s.structurer != nil {
 		structured, err := s.structurer.Structure(ctx, userID, content, StructureMeta{
 			Title:      preview.FileName,
-			SourceType: "audio",
+		result, err := s.structurer.Structure(ctx, userID, content, StructureMeta{
 		})
 		if err != nil {
 			logger.Error("LLM 结构化失败，使用原始内容",
@@ -484,21 +487,26 @@ func (s *importerService) ConfirmAudio(userID uint, previewID string, editedCont
 			)
 		} else if len(structured) != len(content) {
 			logger.Info("LLM 结构化成功，内容已优化",
-				zap.String("preview_id", previewID),
+		} else if result.ActuallyCalled && result.Content != content {
 				zap.Int("original_len", len(content)),
 				zap.Int("structured_len", len(structured)),
 				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Int("structured_len", len(result.Content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
 			)
-			content = structured
-		} else {
-			logger.Info("LLM 结构化完成，内容无变化",
+			content = result.Content
+		} else if result.ActuallyCalled {
+			logger.Info("LLM 判断内容已有结构，无需结构化",
 				zap.String("preview_id", previewID),
 				zap.Int("content_len", len(content)),
+			content = structured
+		} else {
+				zap.String("preview_id", previewID),
+			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
 				zap.Duration("elapsed", time.Since(stepStart)),
 			)
 			content = structured
 		}
-	} else {
 		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.String("preview_id", previewID))
 	}
 
@@ -791,7 +799,7 @@ func (s *importerService) processSingleSource(taskCtx context.Context, sourceID 
 	if s.structurer != nil {
 		structured, err := s.structurer.Structure(taskCtx, source.UserID, markdown, StructureMeta{
 			Title:      source.Name,
-			SourceType: "url",
+		result, err := s.structurer.Structure(taskCtx, source.UserID, markdown, StructureMeta{
 		})
 		if err != nil {
 			logger.Error("LLM 结构化失败，使用原始内容",
@@ -802,21 +810,26 @@ func (s *importerService) processSingleSource(taskCtx context.Context, sourceID 
 			)
 		} else if len(structured) != len(markdown) {
 			logger.Info("LLM 结构化成功，内容已优化",
-				zap.Uint("source_id", sourceID),
+		} else if result.ActuallyCalled && result.Content != markdown {
 				zap.Int("original_len", len(markdown)),
 				zap.Int("structured_len", len(structured)),
 				zap.Duration("elapsed", time.Since(stepStart)),
-			)
+				zap.Int("structured_len", len(result.Content)),
 			markdown = structured
 		} else {
-			logger.Info("LLM 结构化完成，内容无变化",
+			markdown = result.Content
+		} else if result.ActuallyCalled {
+			logger.Info("LLM 判断内容已有结构，无需结构化",
 				zap.Uint("source_id", sourceID),
 				zap.Int("content_len", len(markdown)),
 				zap.Duration("elapsed", time.Since(stepStart)),
 			)
+				zap.Uint("source_id", sourceID),
+			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
 			markdown = structured
 		}
-	} else {
 		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.Uint("source_id", sourceID))
 	}
 

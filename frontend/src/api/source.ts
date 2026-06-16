@@ -58,9 +58,17 @@ export async function batchDeleteSources(nbId: number, ids: number[]): Promise<A
   return res.data;
 }
 
+// 5.1 Delete all failed sources
+export async function deleteFailedSources(nbId: number): Promise<ApiResponse<{ deleted_count: number }>> {
+  const res = await client.post<ApiResponse<{ deleted_count: number }>>(`/notebooks/${nbId}/sources/delete-failed`);
+  return res.data;
+}
+
 // 6. Get source markdown content
 export async function getSourceContent(nbId: number, id: number): Promise<ApiResponse<{ content: string }>> {
-  const res = await client.get<ApiResponse<{ content: string }>>(`/notebooks/${nbId}/sources/${id}/content`);
+  const res = await client.get<ApiResponse<{ content: string }>>(`/notebooks/${nbId}/sources/${id}/content`, {
+    params: { _t: Date.now() },
+  });
   return res.data;
 }
 

@@ -13,4 +13,5 @@ type SourceRepository interface {
 	ListByNotebook(userID, notebookID uint, keyword string, offset, limit int) ([]*entity.Source, int64, error)
 	UpdateStatus(id uint, status string, errMsg string) error
 	SetVectorized(id uint) error
+	DeleteFailedByNotebook(userID, notebookID uint) (int64, error)
 }

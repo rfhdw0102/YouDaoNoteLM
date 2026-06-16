@@ -91,3 +91,8 @@ func (r *sourceRepository) UpdateContent(id uint, markdown string, status string
 func (r *sourceRepository) SetVectorized(id uint) error {
 	return r.db.Model(&entity.Source{}).Where("id = ?", id).Update("vectorized", true).Error
 }
+
+func (r *sourceRepository) DeleteFailedByNotebook(userID, notebookID uint) (int64, error) {
+	result := r.db.Where("user_id = ? AND notebook_id = ? AND status = ?", userID, notebookID, "failed").Delete(&entity.Source{})
+	return result.RowsAffected, result.Error
+}

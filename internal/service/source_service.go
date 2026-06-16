@@ -76,6 +76,10 @@ func (s *sourceService) BatchDelete(ids []uint) error {
 	return s.sourceRepo.BatchDelete(ids)
 }
 
+func (s *sourceService) DeleteFailed(userID, notebookID uint) (int64, error) {
+	return s.sourceRepo.DeleteFailedByNotebook(userID, notebookID)
+}
+
 func (s *sourceService) GetContent(id uint) (string, error) {
 	source, err := s.GetByID(id)
 	if err != nil {

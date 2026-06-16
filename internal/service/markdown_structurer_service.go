@@ -16,9 +16,13 @@ import (
 	"go.uber.org/zap"
 )
 
-const structureSystemPrompt = `你是一个 markdown 结构化助手。你的任务是为缺乏结构的 markdown 文本补充标题和段落结构。
+const structureSystemPrompt = `你是一个 markdown 结构化助手。你必须为缺乏标题结构的 markdown 文本补充标题和段落结构。
 
-规则：
+判断标准（满足任一则认为需要结构化）：
+- 没有任何 # 开头的标题
+- 有标题但不超过 1 个
+
+如果需要结构化：
 1. 识别内容的主题和子主题
 2. 使用 ## 和 ### 层级标题标记主题和子主题
 3. 按逻辑段落分段，段落之间用空行分隔
@@ -26,9 +30,11 @@ const structureSystemPrompt = `你是一个 markdown 结构化助手。你的任
 5. 保留原始内容的文字不变，只添加结构标记（标题、段落分隔、列表标记）
 6. 不要添加、删除或改写原始内容的文字
 7. 不要添加元信息、摘要或总结
-8. 直接输出结构化后的 markdown，不要加任何解释`
 
-const structureUserPromptTemplate = `请为以下 markdown 文本补充结构（标题、段落分隔）。
+只有当内容已有 2 个以上清晰的标题层级时，才直接原样返回。
+直接输出结果 markdown，不要加任何解释。`
+
+const structureUserPromptTemplate = `请为以下 markdown 文本补充标题和段落结构。如果内容没有标题或标题不足，请务必添加标题。只有已有 2 个以上标题的内容才可以原样返回。
 
 来源类型：%s
 原始标题：%s
@@ -37,76 +43,25 @@ const structureUserPromptTemplate = `请为以下 markdown 文本补充结构（
 
 %s`
 
-// hasSufficientStructure 检测内容是否已有足够的结构
-// 判断标准（满足任一即可）：
-//  1. ≥2 个 h1/h2 标题
-//  2. ≥3 个任意层级标题（h1-h4）
-//  3. 有代码块 + 至少 1 个标题
-//  4. 长文档有 ≥5 个列表项（说明本身是结构化内容）
+// hasSufficientStructure 检测内容是否已有足够的标题结构
+// 只看标题数量：≥2 个 h1/h2 或 ≥3 个任意层级标题，说明已有清晰结构
+// 标题不够的交给 LLM 判断是否需要结构化
 func hasSufficientStructure(content string) bool {
-	headings := 0   // 所有层级标题数
-	h1h2 := 0       // h1 + h2 数
-	codeBlocks := 0 // ``` 代码块标记数
-	listItems := 0  // 列表项数（- / * / 1.）
-	inCodeBlock := false
+	headings := 0
+	h1h2 := 0
 
 	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
-
-		// 代码块检测
-		if strings.HasPrefix(trimmed, "```") {
-			codeBlocks++
-			inCodeBlock = !inCodeBlock
-			continue
-		}
-		if inCodeBlock {
-			continue
-		}
-
-		// 标题检测（h1-h4）
-		if strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "#\t") ||
-			strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "##\t") ||
-			strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "###\t") ||
-			strings.HasPrefix(trimmed, "#### ") || strings.HasPrefix(trimmed, "####\t") {
+		if strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "## ") ||
+			strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "#### ") {
 			headings++
-			if strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "#\t") ||
-				strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "##\t") {
+			if strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "## ") {
 				h1h2++
 			}
 		}
-
-		// 列表项检测
-		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") ||
-			(len(trimmed) > 2 && trimmed[0] >= '0' && trimmed[0] <= '9' && strings.Contains(trimmed[:min(4, len(trimmed))], ". ")) {
-			listItems++
-		}
 	}
 
-	// 条件 1：≥2 个 h1/h2 标题
-	if h1h2 >= 2 {
-		return true
-	}
-	// 条件 2：≥3 个任意层级标题
-	if headings >= 3 {
-		return true
-	}
-	// 条件 3：有代码块 + 至少 1 个标题
-	if codeBlocks >= 2 && headings >= 1 {
-		return true
-	}
-	// 条件 4：≥5 个列表项（结构化列表内容）
-	if listItems >= 5 {
-		return true
-	}
-
-	return false
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return h1h2 >= 2 || headings >= 3
 }
 
 // cachedModel 缓存的 ChatModel 及其配置指纹
@@ -162,12 +117,12 @@ func (s *markdownStructurer) getOrCreateChatModel(ctx context.Context, userID ui
 	return chatModel, nil
 }
 
-func (s *markdownStructurer) Structure(ctx context.Context, userID uint, content string, meta StructureMeta) (string, error) {
+func (s *markdownStructurer) Structure(ctx context.Context, userID uint, content string, meta StructureMeta) (StructureResult, error) {
 	totalStart := time.Now()
 
 	content = strings.TrimSpace(content)
 	if content == "" {
-		return "", nil
+		return StructureResult{}, nil
 	}
 
 	// 智能跳过：已有足够结构时直接返回
@@ -178,7 +133,7 @@ func (s *markdownStructurer) Structure(ctx context.Context, userID uint, content
 			zap.Int("content_len", len(content)),
 			zap.Duration("elapsed", time.Since(totalStart)),
 		)
-		return content, nil
+		return StructureResult{Content: content, ActuallyCalled: false}, nil
 	}
 
 	logger.Info("开始 LLM 结构化",
@@ -194,13 +149,13 @@ func (s *markdownStructurer) Structure(ctx context.Context, userID uint, content
 			zap.Duration("elapsed", time.Since(stepStart)),
 			zap.Error(err),
 		)
-		return content, nil
+		return StructureResult{Content: content, ActuallyCalled: false}, nil
 	}
 	if chatModel == nil {
 		logger.Debug("用户未配置 LLM，跳过结构化",
 			zap.Duration("elapsed", time.Since(stepStart)),
 		)
-		return content, nil
+		return StructureResult{Content: content, ActuallyCalled: false}, nil
 	}
 	logger.Info("获取 ChatModel 完成",
 		zap.Bool("cached", true),
@@ -217,7 +172,7 @@ func (s *markdownStructurer) Structure(ctx context.Context, userID uint, content
 			zap.Duration("elapsed", time.Since(stepStart)),
 			zap.Error(err),
 		)
-		return content, nil // 降级：LLM 调用失败时不阻塞导入
+		return StructureResult{Content: content, ActuallyCalled: false}, nil // 降级：LLM 调用失败时不阻塞导入
 	}
 	logger.Info("LLM 调用完成",
 		zap.Duration("elapsed", time.Since(stepStart)),
@@ -229,12 +184,30 @@ func (s *markdownStructurer) Structure(ctx context.Context, userID uint, content
 			zap.String("source_type", meta.SourceType),
 			zap.Duration("total_elapsed", time.Since(totalStart)),
 		)
-		return content, nil
+		return StructureResult{Content: content, ActuallyCalled: false}, nil
 	}
 
-	// 检查是否真正发生了结构化（长度应该有变化）
-	if len(structured) == len(content) {
-		logger.Info("markdown 结构化完成（内容无变化）",
+	// 兜底：LLM 返回了原文且内容确实缺乏结构，强制重试一次
+	if structured == content && !hasSufficientStructure(content) {
+		logger.Warn("LLM 未结构化缺乏结构的内容，强制重试",
+			zap.String("source_type", meta.SourceType),
+			zap.Int("content_len", len(content)),
+		)
+		retryResult, retryErr := s.callLLMForceful(ctx, chatModel, content, meta)
+		if retryErr == nil && retryResult != "" && retryResult != content {
+			logger.Info("强制重试结构化成功",
+				zap.Int("original_len", len(content)),
+				zap.Int("structured_len", len(retryResult)),
+			)
+			return StructureResult{Content: retryResult, ActuallyCalled: true}, nil
+		}
+		logger.Warn("强制重试也未能结构化，返回原始内容",
+			zap.String("source_type", meta.SourceType),
+		)
+	}
+
+	if structured == content {
+		logger.Info("markdown 结构化完成（LLM 判断无需结构化）",
 			zap.String("source_type", meta.SourceType),
 			zap.Int("content_len", len(content)),
 			zap.Duration("total_elapsed", time.Since(totalStart)),
@@ -248,7 +221,7 @@ func (s *markdownStructurer) Structure(ctx context.Context, userID uint, content
 		)
 	}
 
-	return structured, nil
+	return StructureResult{Content: structured, ActuallyCalled: true}, nil
 }
 
 func (s *markdownStructurer) callLLM(ctx context.Context, chatModel model.ChatModel, content string, meta StructureMeta) (string, error) {
@@ -259,8 +232,19 @@ func (s *markdownStructurer) callLLM(ctx context.Context, chatModel model.ChatMo
 
 	userMsg := fmt.Sprintf(structureUserPromptTemplate, meta.SourceType, title, content)
 
+	// 动态计算 MaxTokens：内容越长给越多空间，最少 4096，最多 16384
+	maxTokens := len(content) * 2
+	if maxTokens < 4096 {
+		maxTokens = 4096
+	}
+	if maxTokens > 16384 {
+		maxTokens = 16384
+	}
+
 	msg, err := chatModel.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(structureSystemPrompt),
+		schema.SystemMessage(structureSystemPr
+	msg, err := chatModel.Generate(ctx, []*schema.Message{
+	}, model.WithMaxTokens(maxTokens))
 		schema.UserMessage(userMsg),
 	}, model.WithMaxTokens(2048))
 	if err != nil {

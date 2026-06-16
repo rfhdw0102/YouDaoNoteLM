@@ -207,7 +207,7 @@ func (s *youdaoService) ImportNote(userID uint, notebookID uint, fileID string) 
 	// LLM 结构化
 	stepStart = time.Now()
 	if s.structurer != nil {
-		structured, err := s.structurer.Structure(context.Background(), userID, content, StructureMeta{
+		result, err := s.structurer.Structure(context.Background(), userID, content, StructureMeta{
 			Title:      noteName,
 			SourceType: "youdao",
 		})
@@ -217,21 +217,26 @@ func (s *youdaoService) ImportNote(userID uint, notebookID uint, fileID string) 
 				zap.Duration("elapsed", time.Since(stepStart)),
 				zap.Error(err),
 			)
-		} else if len(structured) != len(content) {
+		} else if result.ActuallyCalled && result.Content != content {
 			logger.Info("LLM 结构化成功，内容已优化",
 				zap.String("file_id", fileID),
 				zap.Int("original_len", len(content)),
-				zap.Int("structured_len", len(structured)),
+				zap.Int("structured_len", len(result.Content)),
 				zap.Duration("elapsed", time.Since(stepStart)),
 			)
-			content = structured
-		} else {
-			logger.Info("LLM 结构化完成，内容无变化",
+			content = result.Content
+		} else if result.ActuallyCalled {
+			logger.Info("LLM 判断内容已有结构，无需结构化",
 				zap.String("file_id", fileID),
 				zap.Int("content_len", len(content)),
 				zap.Duration("elapsed", time.Since(stepStart)),
 			)
-			content = structured
+		} else {
+			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
+				zap.String("file_id", fileID),
+				zap.Int("content_len", len(content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
 		}
 	} else {
 		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.String("file_id", fileID))
@@ -555,7 +560,7 @@ func (s *youdaoService) processSingleNote(taskCtx context.Context, apiKey string
 	// LLM 结构化
 	stepStart = time.Now()
 	if s.structurer != nil {
-		structured, err := s.structurer.Structure(taskCtx, existing.UserID, content, StructureMeta{
+		result, err := s.structurer.Structure(taskCtx, existing.UserID, content, StructureMeta{
 			Title:      existing.Name,
 			SourceType: "youdao",
 		})
@@ -566,21 +571,26 @@ func (s *youdaoService) processSingleNote(taskCtx context.Context, apiKey string
 				zap.Duration("elapsed", time.Since(stepStart)),
 				zap.Error(err),
 			)
-		} else if len(structured) != len(content) {
+		} else if result.ActuallyCalled && result.Content != content {
 			logger.Info("LLM 结构化成功，内容已优化",
 				zap.Uint("source_id", sourceID),
 				zap.Int("original_len", len(content)),
-				zap.Int("structured_len", len(structured)),
+				zap.Int("structured_len", len(result.Content)),
 				zap.Duration("elapsed", time.Since(stepStart)),
 			)
-			content = structured
-		} else {
-			logger.Info("LLM 结构化完成，内容无变化（可能已降级或内容已有结构）",
+			content = result.Content
+		} else if result.ActuallyCalled {
+			logger.Info("LLM 判断内容已有结构，无需结构化",
 				zap.Uint("source_id", sourceID),
 				zap.Int("content_len", len(content)),
 				zap.Duration("elapsed", time.Since(stepStart)),
 			)
-			content = structured
+		} else {
+			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
+				zap.Uint("source_id", sourceID),
+				zap.Int("content_len", len(content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
 		}
 	} else {
 		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.Uint("source_id", sourceID))
