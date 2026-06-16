@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	dynamicPPTDefaultFontFamily = "Microsoft YaHei"
-	dynamicPPTTitleFontFamily   = "Microsoft YaHei UI"
+	dynamicPPTDefaultFontFamily = "Aptos"
+	dynamicPPTTitleFontFamily   = "Aptos"
 	dynamicPPTSlideWidth        = 13.333
 	dynamicPPTSlideHeight       = 7.5
 	dynamicPPTOuterMarginX      = 0.32
@@ -26,12 +26,12 @@ const (
 )
 
 var (
-	dynamicPPTDefaultSlideBackground = pptx.Color{R: 238, G: 243, B: 232}
-	dynamicPPTDefaultSectionFill     = pptx.White
-	dynamicPPTDefaultSectionBorder   = pptx.Color{R: 220, G: 232, B: 208}
-	dynamicPPTDefaultText            = pptx.Color{R: 31, G: 47, B: 22}
-	dynamicPPTDefaultMuted           = pptx.Color{R: 90, G: 115, B: 80}
-	dynamicPPTDefaultAccent          = pptx.Color{R: 123, G: 176, B: 92}
+	dynamicPPTDefaultSlideBackground = pptx.Color{R: 246, G: 244, B: 239}
+	dynamicPPTDefaultSectionFill     = pptx.Color{R: 252, G: 251, B: 248}
+	dynamicPPTDefaultSectionBorder   = pptx.Color{R: 231, G: 224, B: 214}
+	dynamicPPTDefaultText            = pptx.Color{R: 47, G: 42, B: 36}
+	dynamicPPTDefaultMuted           = pptx.Color{R: 111, G: 104, B: 95}
+	dynamicPPTDefaultAccent          = pptx.Color{R: 183, G: 170, B: 150}
 )
 
 type pptHTMLDocument struct {
@@ -69,28 +69,36 @@ type pptCSSSelectorPart struct {
 	FirstChild bool
 }
 
+type pptStyleDeclaration struct {
+	Key   string
+	Value string
+}
+
 type pptStyle struct {
-	TextColor         *pptx.Color
-	BackgroundColor   *pptx.Color
-	BorderColor       *pptx.Color
-	BorderLeftColor   *pptx.Color
-	BorderBottomColor *pptx.Color
-	FontSize          *int
-	FontWeight        *int
-	FontFamily        string
-	TextAlign         string
-	Display           string
-	Gap               *float64
-	Padding           pptEdges
-	Margin            pptEdges
-	BorderWidth       *int
-	BorderLeftWidth   *int
-	BorderBottomWidth *int
-	BorderRadius      *int
-	ClearBackground   bool
-	ClearBorder       bool
-	ClearBorderLeft   bool
-	ClearBorderBottom bool
+	TextColor           *pptx.Color
+	BackgroundColor     *pptx.Color
+	BorderColor         *pptx.Color
+	BorderLeftColor     *pptx.Color
+	BorderBottomColor   *pptx.Color
+	FontSize            *int
+	FontWeight          *int
+	LineHeight          *float64
+	FontFamily          string
+	TextAlign           string
+	Display             string
+	GridTemplateColumns string
+	FlexWrap            string
+	Gap                 *float64
+	Padding             pptEdges
+	Margin              pptEdges
+	BorderWidth         *int
+	BorderLeftWidth     *int
+	BorderBottomWidth   *int
+	BorderRadius        *int
+	ClearBackground     bool
+	ClearBorder         bool
+	ClearBorderLeft     bool
+	ClearBorderBottom   bool
 }
 
 type pptEdges struct {
@@ -118,6 +126,31 @@ type pptSectionFrame struct {
 	paddingLeft   float64
 }
 
+type dynamicLayoutConfig struct {
+	SlideWidth          float64
+	SlideHeight         float64
+	OuterMarginX        float64
+	OuterMarginY        float64
+	DefaultGap          float64
+	ConservativeColumns bool
+}
+
+type measuredDynamicHTMLSlide struct {
+	SectionStyle  pptStyle
+	Frame         pptSectionFrame
+	Blocks        []measuredDynamicBlock
+	ContentBottom float64
+}
+
+type measuredDynamicBlock struct {
+	Block    pptHTMLBlock
+	X        float64
+	Y        float64
+	Width    float64
+	Height   float64
+	Children []measuredDynamicBlock
+}
+
 func buildDynamicHTMLPPTX(content, deckTitle string) ([]byte, error) {
 	doc, err := parseDynamicHTMLDocument(content)
 	if err != nil {
@@ -132,8 +165,10 @@ func buildDynamicHTMLPPTX(content, deckTitle string) ([]byte, error) {
 		pptx.WithLayout(pptx.Layout16x9),
 	)
 
+	layoutConfig := newDynamicLayoutConfig()
 	for _, slideData := range doc.Slides {
-		renderDynamicHTMLSlide(builder.AddSlide(), doc, slideData)
+		measured := measureDynamicHTMLSlide(doc, slideData, layoutConfig)
+		renderMeasuredDynamicHTMLSlide(builder.AddSlide(), doc, measured)
 	}
 
 	presentation, err := builder.Build()
@@ -513,8 +548,8 @@ func computeNodeStyle(node *html.Node, inheritedText pptStyle, doc *pptHTMLDocum
 		style = mergePPTStyle(style, rule.Style)
 	}
 
-	inlineStyle := parseInlineStyleMap(resolveCSSVars(getHTMLAttribute(node, "style"), doc.Vars))
-	style = applyStyleDeclarations(style, inlineStyle)
+	inlineStyle := parseInlineStyleDeclarations(resolveCSSVars(getHTMLAttribute(node, "style"), doc.Vars))
+	style = applyOrderedStyleDeclarations(style, inlineStyle)
 	return style
 }
 
@@ -593,17 +628,17 @@ func parseCSSRules(css string, existingVars map[string]string, startOrder int) (
 		if selector == "" || strings.Contains(selector, "::") || strings.Contains(selector, ":last-child") {
 			continue
 		}
-		declarations := parseInlineStyleMap(resolveCSSVars(block.body, vars))
+		declarations := parseInlineStyleDeclarations(resolveCSSVars(block.body, vars))
 		if selector == ":root" {
-			for key, value := range declarations {
-				if strings.HasPrefix(key, "--") {
-					vars[key] = value
+			for _, value := range declarations {
+				if strings.HasPrefix(value.Key, "--") {
+					vars[value.Key] = value.Value
 				}
 			}
 			continue
 		}
 
-		style := applyStyleDeclarations(pptStyle{}, declarations)
+		style := applyOrderedStyleDeclarations(pptStyle{}, declarations)
 		for _, item := range strings.Split(selector, ",") {
 			item = strings.TrimSpace(item)
 			if item == "" || strings.Contains(item, "::") || strings.Contains(item, ":last-child") {
@@ -766,11 +801,15 @@ func isCSSWhitespace(value byte) bool {
 
 func inheritTextStyle(style pptStyle) pptStyle {
 	return pptStyle{
-		TextColor:  cloneColor(style.TextColor),
-		FontSize:   cloneInt(style.FontSize),
-		FontWeight: cloneInt(style.FontWeight),
-		FontFamily: style.FontFamily,
-		TextAlign:  style.TextAlign,
+		TextColor:           cloneColor(style.TextColor),
+		FontSize:            cloneInt(style.FontSize),
+		FontWeight:          cloneInt(style.FontWeight),
+		LineHeight:          cloneFloat64(style.LineHeight),
+		FontFamily:          style.FontFamily,
+		TextAlign:           style.TextAlign,
+		Display:             style.Display,
+		GridTemplateColumns: style.GridTemplateColumns,
+		FlexWrap:            style.FlexWrap,
 	}
 }
 
@@ -811,6 +850,9 @@ func mergePPTStyle(base, patch pptStyle) pptStyle {
 	if patch.FontWeight != nil {
 		base.FontWeight = cloneInt(patch.FontWeight)
 	}
+	if patch.LineHeight != nil {
+		base.LineHeight = cloneFloat64(patch.LineHeight)
+	}
 	if patch.FontFamily != "" {
 		base.FontFamily = patch.FontFamily
 	}
@@ -819,6 +861,12 @@ func mergePPTStyle(base, patch pptStyle) pptStyle {
 	}
 	if patch.Display != "" {
 		base.Display = patch.Display
+	}
+	if patch.GridTemplateColumns != "" {
+		base.GridTemplateColumns = patch.GridTemplateColumns
+	}
+	if patch.FlexWrap != "" {
+		base.FlexWrap = patch.FlexWrap
 	}
 	if patch.Gap != nil {
 		base.Gap = cloneFloat64(patch.Gap)
@@ -873,6 +921,10 @@ func applyStyleDeclarations(style pptStyle, declarations map[string]string) pptS
 			if weight := parseCSSFontWeight(value); weight > 0 {
 				style.FontWeight = intPtr(weight)
 			}
+		case "line-height":
+			if lineHeight := parseCSSLineHeight(value, style.FontSize); lineHeight > 0 {
+				style.LineHeight = float64Ptr(lineHeight)
+			}
 		case "font-family":
 			if family := normalizeFontFamily(value); family != "" {
 				style.FontFamily = family
@@ -881,6 +933,10 @@ func applyStyleDeclarations(style pptStyle, declarations map[string]string) pptS
 			style.TextAlign = strings.ToLower(value)
 		case "display":
 			style.Display = strings.ToLower(value)
+		case "grid-template-columns":
+			style.GridTemplateColumns = strings.ToLower(value)
+		case "flex-wrap":
+			style.FlexWrap = strings.ToLower(value)
 		case "gap":
 			if gap := parseCSSSpacingInches(value); gap > 0 {
 				style.Gap = float64Ptr(gap)
@@ -971,18 +1027,37 @@ func applyStyleDeclarations(style pptStyle, declarations map[string]string) pptS
 	return style
 }
 
+func applyOrderedStyleDeclarations(style pptStyle, declarations []pptStyleDeclaration) pptStyle {
+	for _, declaration := range declarations {
+		style = applyStyleDeclarations(style, map[string]string{
+			declaration.Key: declaration.Value,
+		})
+	}
+	return style
+}
+
+func newDynamicLayoutConfig() dynamicLayoutConfig {
+	return dynamicLayoutConfig{
+		SlideWidth:          dynamicPPTSlideWidth,
+		SlideHeight:         dynamicPPTSlideHeight,
+		OuterMarginX:        dynamicPPTOuterMarginX,
+		OuterMarginY:        dynamicPPTOuterMarginY,
+		DefaultGap:          dynamicPPTDefaultGap,
+		ConservativeColumns: true,
+	}
+}
+
 func renderDynamicHTMLSlide(slide *pptx.SlideBuilder, doc *pptHTMLDocument, slideData pptHTMLSlide) {
+	measured := measureDynamicHTMLSlide(doc, slideData, newDynamicLayoutConfig())
+	renderMeasuredDynamicHTMLSlide(slide, doc, measured)
+}
+
+func renderMeasuredDynamicHTMLSlide(slide *pptx.SlideBuilder, doc *pptHTMLDocument, measured measuredDynamicHTMLSlide) {
 	slide.SetBackgroundColor(resolveSlideBackground(doc.BodyStyle))
 
-	frame := renderSectionFrame(slide, slideData.SectionStyle)
-	cursor := &pptLayoutCursor{
-		x:     frame.x + frame.paddingLeft,
-		y:     frame.y + frame.paddingTop,
-		width: frame.width - frame.paddingLeft - frame.paddingRight,
-	}
-
-	for _, block := range slideData.Blocks {
-		renderDynamicBlock(slide, cursor, block)
+	renderSectionFrameAt(slide, measured.Frame, measured.SectionStyle)
+	for _, block := range measured.Blocks {
+		renderMeasuredDynamicBlock(slide, block)
 	}
 }
 
@@ -1027,6 +1102,272 @@ func renderSectionFrame(slide *pptx.SlideBuilder, style pptStyle) pptSectionFram
 	}
 
 	return frame
+}
+
+func renderSectionFrameAt(slide *pptx.SlideBuilder, frame pptSectionFrame, style pptStyle) {
+	shapeType := pptx.ShapeRoundedRectangle
+	if dynamicPPTValueOrInt(style.BorderRadius, 28) <= 0 {
+		shapeType = pptx.ShapeRectangle
+	}
+	slide.AddShape(shapeType).
+		SetPosition(pptx.Inches(frame.x), pptx.Inches(frame.y)).
+		SetSize(pptx.Inches(frame.width), pptx.Inches(frame.height)).
+		SetFillColor(resolveSectionFill(style)).
+		SetLine(resolveBorderColor(style, dynamicPPTDefaultSectionBorder), dynamicPPTValueOrInt(style.BorderWidth, 1)).
+		End()
+	if style.BorderBottomColor != nil {
+		height := 0.05
+		width := frame.width - 0.4
+		if dynamicPPTValueOrInt(style.BorderBottomWidth, 0) >= 3 {
+			height = 0.06
+		}
+		slide.AddShape(pptx.ShapeRectangle).
+			SetPosition(pptx.Inches(frame.x+0.2), pptx.Inches(frame.y+frame.height-height-0.02)).
+			SetSize(pptx.Inches(width), pptx.Inches(height)).
+			SetFillColor(*style.BorderBottomColor).
+			SetNoLine().
+			End()
+	}
+}
+
+func measureDynamicHTMLSlide(doc *pptHTMLDocument, slideData pptHTMLSlide, config dynamicLayoutConfig) measuredDynamicHTMLSlide {
+	frame := pptSectionFrame{
+		x:             config.OuterMarginX,
+		y:             config.OuterMarginY,
+		width:         config.SlideWidth - config.OuterMarginX*2,
+		height:        config.SlideHeight - config.OuterMarginY*2,
+		paddingTop:    edgeOr(slideData.SectionStyle.Padding, "top", 0.36),
+		paddingRight:  edgeOr(slideData.SectionStyle.Padding, "right", 0.42),
+		paddingBottom: edgeOr(slideData.SectionStyle.Padding, "bottom", 0.36),
+		paddingLeft:   edgeOr(slideData.SectionStyle.Padding, "left", 0.42),
+	}
+	cursor := &pptLayoutCursor{
+		x:     frame.x + frame.paddingLeft,
+		y:     frame.y + frame.paddingTop,
+		width: frame.width - frame.paddingLeft - frame.paddingRight,
+	}
+	measuredBlocks := measureDynamicBlocks(slideData.Blocks, cursor, config)
+	contentBottom := cursor.y
+	_ = doc
+	return measuredDynamicHTMLSlide{
+		SectionStyle:  slideData.SectionStyle,
+		Frame:         frame,
+		Blocks:        measuredBlocks,
+		ContentBottom: contentBottom,
+	}
+}
+
+func measureDynamicBlocks(blocks []pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) []measuredDynamicBlock {
+	measured := make([]measuredDynamicBlock, 0, len(blocks))
+	for _, block := range blocks {
+		entry := measureDynamicBlock(block, cursor, config)
+		if entry.Height <= 0 && len(entry.Children) == 0 && block.Kind != "section-number" {
+			continue
+		}
+		measured = append(measured, entry)
+	}
+	return measured
+}
+
+func measureDynamicBlock(block pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) measuredDynamicBlock {
+	switch block.Kind {
+	case "section-number":
+		return measuredDynamicBlock{
+			Block:  block,
+			X:      dynamicPPTSlideWidth - 1.35,
+			Y:      0.38,
+			Width:  0.88,
+			Height: 0.24,
+		}
+	case "container":
+		return measureContainerBlock(block, cursor, config)
+	case "card":
+		return measureCardBlock(block, cursor, config)
+	default:
+		return measureTextBlock(block, cursor)
+	}
+}
+
+func measureContainerBlock(block pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) measuredDynamicBlock {
+	startY := cursor.y + edgeOr(block.Style.Margin, "top", 0)
+	cursor.y = startY
+	measured := measuredDynamicBlock{
+		Block: block,
+		X:     cursor.x,
+		Y:     startY,
+		Width: cursor.width,
+	}
+	switch block.Layout {
+	case "row", "grid":
+		measured.Children = measureGridChildren(block, cursor, config)
+	default:
+		childCursor := &pptLayoutCursor{x: cursor.x, y: cursor.y, width: cursor.width}
+		measured.Children = measureDynamicBlocks(block.Children, childCursor, config)
+		cursor.y = childCursor.y
+	}
+	measured.Height = cursor.y - startY + edgeOr(block.Style.Margin, "bottom", 0)
+	cursor.y += edgeOr(block.Style.Margin, "bottom", 0)
+	return measured
+}
+
+func measureGridChildren(block pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) []measuredDynamicBlock {
+	if len(block.Children) == 0 {
+		return nil
+	}
+	cols := resolveContainerColumns(block, cursor.width, config.ConservativeColumns)
+	if cols <= 1 {
+		return measureDynamicBlocks(block.Children, cursor, config)
+	}
+	gap := resolveGap(block.Style, 0.18)
+	cellWidth := (cursor.width - gap*float64(cols-1)) / float64(cols)
+	currentY := cursor.y
+	measured := make([]measuredDynamicBlock, 0, len(block.Children))
+	for start := 0; start < len(block.Children); start += cols {
+		end := start + cols
+		if end > len(block.Children) {
+			end = len(block.Children)
+		}
+		row := make([]measuredDynamicBlock, 0, end-start)
+		rowHeight := 0.0
+		for i, child := range block.Children[start:end] {
+			cellCursor := &pptLayoutCursor{
+				x:     cursor.x + float64(i)*(cellWidth+gap),
+				y:     currentY,
+				width: cellWidth,
+			}
+			childMeasured := measureDynamicBlockInRect(child, cellCursor, config)
+			if childMeasured.Height > rowHeight {
+				rowHeight = childMeasured.Height
+			}
+			row = append(row, childMeasured)
+		}
+		for i := range row {
+			row[i].Height = rowHeight
+		}
+		measured = append(measured, row...)
+		currentY += rowHeight + gap
+	}
+	cursor.y = currentY + config.DefaultGap
+	return measured
+}
+
+func measureDynamicBlockInRect(block pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) measuredDynamicBlock {
+	switch block.Kind {
+	case "card":
+		return measureCardAt(block, cursor.x, cursor.y, cursor.width, config)
+	default:
+		textBlock := block
+		textBlock.Style.Margin = pptEdges{}
+		textCursor := &pptLayoutCursor{x: cursor.x, y: cursor.y, width: cursor.width}
+		return measureTextBlock(textBlock, textCursor)
+	}
+}
+
+func measureCardBlock(block pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) measuredDynamicBlock {
+	cursor.y += edgeOr(block.Style.Margin, "top", 0)
+	measured := measureCardAt(block, cursor.x, cursor.y, cursor.width, config)
+	cursor.y += measured.Height + edgeOr(block.Style.Margin, "bottom", dynamicPPTDefaultGap)
+	return measured
+}
+
+func measureCardAt(block pptHTMLBlock, x, y, width float64, config dynamicLayoutConfig) measuredDynamicBlock {
+	contentWidth := width - edgeOr(block.Style.Padding, "left", 0.22) - edgeOr(block.Style.Padding, "right", 0.22)
+	if contentWidth < 0.5 {
+		contentWidth = width - 0.18
+	}
+	innerCursor := &pptLayoutCursor{
+		x:     x + edgeOr(block.Style.Padding, "left", 0.22),
+		y:     y + edgeOr(block.Style.Padding, "top", 0.18),
+		width: contentWidth,
+	}
+	children := measureDynamicBlocks(block.Children, innerCursor, config)
+	height := innerCursor.y - y + edgeOr(block.Style.Padding, "bottom", 0.18)
+	if height < 0.56 {
+		height = 0.56
+	}
+	return measuredDynamicBlock{
+		Block:    block,
+		X:        x,
+		Y:        y,
+		Width:    width,
+		Height:   height,
+		Children: children,
+	}
+}
+
+func measureTextBlock(block pptHTMLBlock, cursor *pptLayoutCursor) measuredDynamicBlock {
+	if strings.TrimSpace(block.Text) == "" {
+		return measuredDynamicBlock{Block: block}
+	}
+	cursor.y += edgeOr(block.Style.Margin, "top", 0)
+	fontSize := resolveBlockFontSize(block, defaultFontSizeForBlock(block.Kind))
+	x := cursor.x + edgeOr(block.Style.Padding, "left", 0)
+	width := cursor.width - edgeOr(block.Style.Padding, "left", 0) - edgeOr(block.Style.Padding, "right", 0)
+	if width <= 0.2 {
+		width = cursor.width
+	}
+	height := estimateTextHeightWithStyle(block.Text, block.Style, fontSize, width)
+	measured := measuredDynamicBlock{
+		Block:  block,
+		X:      x,
+		Y:      cursor.y,
+		Width:  width,
+		Height: height,
+	}
+	cursor.y += height + edgeOr(block.Style.Margin, "bottom", dynamicPPTDefaultGap)
+	return measured
+}
+
+func renderMeasuredDynamicBlock(slide *pptx.SlideBuilder, measured measuredDynamicBlock) {
+	switch measured.Block.Kind {
+	case "section-number":
+		renderSectionNumber(slide, measured.Block)
+	case "container":
+		for _, child := range measured.Children {
+			renderMeasuredDynamicBlock(slide, child)
+		}
+	case "card":
+		renderCardChrome(slide, measured.Block, measured.X, measured.Y, measured.Width, measured.Height)
+		for _, child := range measured.Children {
+			renderMeasuredDynamicBlock(slide, child)
+		}
+	default:
+		renderTextAt(slide, measured)
+	}
+}
+
+func renderTextAt(slide *pptx.SlideBuilder, measured measuredDynamicBlock) {
+	block := measured.Block
+	if strings.TrimSpace(block.Text) == "" {
+		return
+	}
+	fontSize := resolveBlockFontSize(block, defaultFontSizeForBlock(block.Kind))
+	fontFamily := resolveFontFamily(block.Style, defaultFontFamilyForBlock(block.Kind))
+	color := resolveTextColor(block.Style, dynamicPPTDefaultText)
+	text := slide.AddText(block.Text).
+		SetFontSize(fontSize).
+		SetFontFamily(fontFamily).
+		SetColor(color).
+		SetAlignment(resolveAlignment(block.Style.TextAlign)).
+		SetPosition(pptx.Inches(measured.X), pptx.Inches(measured.Y)).
+		SetSize(pptx.Inches(measured.Width), pptx.Inches(measured.Height))
+	if dynamicPPTValueOrInt(block.Style.FontWeight, 0) >= 600 || block.Kind == "h1" || block.Kind == "h2" || block.Kind == "h3" {
+		text.SetBold(true)
+	}
+	text.End()
+
+	if block.Style.BorderLeftColor != nil {
+		leftWidth := 0.04
+		if dynamicPPTValueOrInt(block.Style.BorderLeftWidth, 0) >= 4 {
+			leftWidth = 0.05
+		}
+		slide.AddShape(pptx.ShapeRectangle).
+			SetPosition(pptx.Inches(measured.X-edgeOr(block.Style.Padding, "left", 0)), pptx.Inches(measured.Y+0.02)).
+			SetSize(pptx.Inches(leftWidth), pptx.Inches(measured.Height-0.02)).
+			SetFillColor(*block.Style.BorderLeftColor).
+			SetNoLine().
+			End()
+	}
 }
 
 func renderDynamicBlock(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, block pptHTMLBlock) {
@@ -1074,7 +1415,7 @@ func renderGridContainer(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, bloc
 	if len(block.Children) == 0 {
 		return
 	}
-	cols := resolveContainerColumns(block)
+	cols := resolveContainerColumns(block, cursor.width, false)
 	if cols <= 1 {
 		for _, child := range block.Children {
 			renderDynamicBlock(slide, cursor, child)
@@ -1130,6 +1471,21 @@ func renderCardBlock(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, block pp
 }
 
 func renderCardInRect(slide *pptx.SlideBuilder, block pptHTMLBlock, x, y, width, height float64) {
+	renderCardChrome(slide, block, x, y, width, height)
+	innerCursor := &pptLayoutCursor{
+		x:     x + edgeOr(block.Style.Padding, "left", 0.22),
+		y:     y + edgeOr(block.Style.Padding, "top", 0.18),
+		width: width - edgeOr(block.Style.Padding, "left", 0.22) - edgeOr(block.Style.Padding, "right", 0.22),
+	}
+	if innerCursor.width < 0.5 {
+		innerCursor.width = width - 0.18
+	}
+	for _, child := range block.Children {
+		renderDynamicBlock(slide, innerCursor, child)
+	}
+}
+
+func renderCardChrome(slide *pptx.SlideBuilder, block pptHTMLBlock, x, y, width, height float64) {
 	fill := resolveCardFill(block.Style)
 	borderColor := resolveBorderColor(block.Style, dynamicPPTDefaultSectionBorder)
 	borderWidth := dynamicPPTValueOrInt(block.Style.BorderWidth, 1)
@@ -1156,18 +1512,6 @@ func renderCardInRect(slide *pptx.SlideBuilder, block pptHTMLBlock, x, y, width,
 			SetFillColor(*block.Style.BorderLeftColor).
 			SetNoLine().
 			End()
-	}
-
-	innerCursor := &pptLayoutCursor{
-		x:     x + edgeOr(block.Style.Padding, "left", 0.22),
-		y:     y + edgeOr(block.Style.Padding, "top", 0.18),
-		width: width - edgeOr(block.Style.Padding, "left", 0.22) - edgeOr(block.Style.Padding, "right", 0.22),
-	}
-	if innerCursor.width < 0.5 {
-		innerCursor.width = width - 0.18
-	}
-	for _, child := range block.Children {
-		renderDynamicBlock(slide, innerCursor, child)
 	}
 }
 
@@ -1218,7 +1562,7 @@ func estimateRenderedHeight(block pptHTMLBlock, width float64) float64 {
 	switch block.Kind {
 	case "container":
 		if block.Layout == "row" || block.Layout == "grid" {
-			cols := resolveContainerColumns(block)
+			cols := resolveContainerColumns(block, width, false)
 			if cols <= 0 {
 				cols = 1
 			}
@@ -1269,12 +1613,24 @@ func estimateRenderedHeight(block pptHTMLBlock, width float64) float64 {
 		return 0
 	default:
 		fontSize := resolveBlockFontSize(block, defaultFontSizeForBlock(block.Kind))
-		height := estimateTextHeight(block.Text, fontSize, width)
+		height := estimateTextHeightWithStyle(block.Text, block.Style, fontSize, width)
 		return height + edgeOr(block.Style.Margin, "top", 0) + edgeOr(block.Style.Margin, "bottom", dynamicPPTDefaultGap)
 	}
 }
 
-func resolveContainerColumns(block pptHTMLBlock) int {
+func resolveContainerColumns(block pptHTMLBlock, width float64, conservative bool) int {
+	template := strings.ToLower(strings.TrimSpace(block.Style.GridTemplateColumns))
+	if conservative && strings.Contains(template, "repeat(") && strings.Contains(template, "auto-fit") && strings.Contains(template, "minmax(") {
+		return dynamicPPTMaxInt(1, dynamicPPTMinInt(2, len(block.Children)))
+	}
+	if strings.Contains(template, "repeat(") && strings.Contains(template, "auto-fit") && strings.Contains(template, "minmax(") {
+		if width >= 6.0 && len(block.Children) >= 3 {
+			return 3
+		}
+		if len(block.Children) >= 2 {
+			return 2
+		}
+	}
 	switch {
 	case block.Classes["dir-list"]:
 		if len(block.Children) >= 6 {
@@ -1318,7 +1674,7 @@ func resolveCardFill(style pptStyle) pptx.Color {
 	if style.BackgroundColor != nil {
 		return *style.BackgroundColor
 	}
-	return pptx.Color{R: 249, G: 252, B: 246}
+	return pptx.Color{R: 252, G: 251, B: 248}
 }
 
 func resolveTextColor(style pptStyle, fallback pptx.Color) pptx.Color {
@@ -1419,8 +1775,35 @@ func estimateTextHeight(text string, fontSize int, width float64) float64 {
 	return dynamicPPTMaxFloat(lineHeight*float64(lines), 0.26)
 }
 
+func estimateTextHeightWithStyle(text string, style pptStyle, fontSize int, width float64) float64 {
+	height := estimateTextHeight(text, fontSize, width)
+	if style.LineHeight == nil || *style.LineHeight <= 0 {
+		return height
+	}
+
+	trimmed := strings.TrimSpace(text)
+	runes := len([]rune(trimmed))
+	if runes == 0 {
+		return 0.22
+	}
+	charsPerLine := int(width * 7.0)
+	if charsPerLine < 10 {
+		charsPerLine = 10
+	}
+	lines := (runes + charsPerLine - 1) / charsPerLine
+	return dynamicPPTMaxFloat(*style.LineHeight*float64(lines), 0.26)
+}
+
 func parseInlineStyleMap(value string) map[string]string {
 	styles := map[string]string{}
+	for _, declaration := range parseInlineStyleDeclarations(value) {
+		styles[declaration.Key] = declaration.Value
+	}
+	return styles
+}
+
+func parseInlineStyleDeclarations(value string) []pptStyleDeclaration {
+	declarations := make([]pptStyleDeclaration, 0)
 	for _, part := range strings.Split(value, ";") {
 		part = strings.TrimSpace(part)
 		if part == "" {
@@ -1432,11 +1815,15 @@ func parseInlineStyleMap(value string) map[string]string {
 		}
 		key := strings.ToLower(strings.TrimSpace(kv[0]))
 		val := strings.TrimSpace(kv[1])
-		if key != "" && val != "" {
-			styles[key] = val
+		if key == "" || val == "" {
+			continue
 		}
+		declarations = append(declarations, pptStyleDeclaration{
+			Key:   key,
+			Value: val,
+		})
 	}
-	return styles
+	return declarations
 }
 
 func parsePPTColor(value string) (pptx.Color, bool) {
@@ -1586,6 +1973,27 @@ func parseCSSFontWeight(value string) int {
 		}
 		return weight
 	}
+}
+
+func parseCSSLineHeight(value string, inheritedFontSize *int) float64 {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || value == "normal" {
+		if inheritedFontSize != nil && *inheritedFontSize > 0 {
+			return float64(*inheritedFontSize) * 1.22 / 72.0
+		}
+		return float64(dynamicPPTDefaultBodyFont) * 1.22 / 72.0
+	}
+	if strings.HasSuffix(value, "rem") || strings.HasSuffix(value, "px") || strings.HasSuffix(value, "pt") {
+		return parseCSSSpacingInches(value)
+	}
+	if f, err := strconv.ParseFloat(value, 64); err == nil && f > 0 {
+		fontSize := dynamicPPTDefaultBodyFont
+		if inheritedFontSize != nil && *inheritedFontSize > 0 {
+			fontSize = *inheritedFontSize
+		}
+		return float64(fontSize) * f / 72.0
+	}
+	return 0
 }
 
 func parseCSSSpacingInches(value string) float64 {
@@ -1767,10 +2175,17 @@ func resolveCSSVars(value string, vars map[string]string) string {
 func normalizeFontFamily(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.Trim(value, `"'`)
+	lowerValue := strings.ToLower(value)
 	switch {
 	case value == "":
 		return ""
-	case strings.Contains(strings.ToLower(value), "system-ui"), strings.Contains(strings.ToLower(value), "segoe ui"), strings.Contains(strings.ToLower(value), "roboto"), strings.Contains(strings.ToLower(value), "helvetica"):
+	case strings.Contains(lowerValue, "system-ui"),
+		strings.Contains(lowerValue, "segoe ui"),
+		strings.Contains(lowerValue, "roboto"),
+		strings.Contains(lowerValue, "helvetica"),
+		strings.Contains(lowerValue, "arial"),
+		strings.Contains(lowerValue, "sans-serif"),
+		strings.Contains(lowerValue, "sans serif"):
 		return dynamicPPTDefaultFontFamily
 	default:
 		return value
@@ -1884,6 +2299,13 @@ func dynamicPPTValueOrInt(value *int, fallback int) int {
 
 func dynamicPPTMaxInt(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func dynamicPPTMinInt(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b

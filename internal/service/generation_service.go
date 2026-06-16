@@ -62,10 +62,11 @@ func (s *generationService) Generate(ctx context.Context, req *GenerationRequest
 	}
 
 	plan := buildGenerationQueryPlan(req)
-	refs, err := s.retrieve(ctx, req, plan)
+	selection, err := s.retrieve(ctx, req, plan)
 	if err != nil {
 		return nil, err
 	}
+	refs := selection.References
 	searchResp, err := s.searchWeb(ctx, req, plan)
 	if err != nil {
 		return nil, err
@@ -132,17 +133,20 @@ func (s *generationService) Generate(ctx context.Context, req *GenerationRequest
 		References:    refs,
 		SearchResults: searchResults,
 		Meta: map[string]any{
-			"agent":               string(req.Type),
-			"reference_count":     len(refs),
-			"search_count":        len(searchResults),
-			"search_degraded":     searchDegraded,
-			"local_query":         plan.LocalQuery,
-			"web_query":           plan.WebQuery,
-			"format_valid":        agentOutput.FormatValid,
-			"fallback_used":       agentOutput.FallbackUsed,
-			"memory_enabled":      memoryEnabled,
-			"memory_count":        len(memoryEntries),
-			"orchestration_steps": generationOrchestrationSteps(),
+			"agent":                    string(req.Type),
+			"reference_count":          len(refs),
+			"local_reference_count":    selection.StrongLocalCount,
+			"filtered_reference_count": selection.IrrelevantLocalCount + selection.WeakLocalCount,
+			"local_filter_reason":      selection.WebSupplementReason,
+			"search_count":             len(searchResults),
+			"search_degraded":          searchDegraded,
+			"local_query":              plan.LocalQuery,
+			"web_query":                plan.WebQuery,
+			"format_valid":             agentOutput.FormatValid,
+			"fallback_used":            agentOutput.FallbackUsed,
+			"memory_enabled":           memoryEnabled,
+			"memory_count":             len(memoryEntries),
+			"orchestration_steps":      generationOrchestrationSteps(),
 		},
 	}, nil
 }
@@ -162,14 +166,17 @@ func validateGenerationRequest(req *GenerationRequest) error {
 	}
 }
 
-func (s *generationService) retrieve(ctx context.Context, req *GenerationRequest, plan generationQueryPlan) ([]GenerationReference, error) {
+func (s *generationService) retrieve(ctx context.Context, req *GenerationRequest, plan generationQueryPlan) (generationReferenceSelection, error) {
 	inlineLimit := optionInt(req.Options, "inline_top_k", 6)
 	inlineRefs, err := buildInlineMarkdownReferences(ctx, req.Markdown, plan, inlineLimit)
 	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "preprocess input markdown failed", err)
+		return generationReferenceSelection{}, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "preprocess input markdown failed", err)
 	}
+	selectionLimit := inlineLimit + optionInt(req.Options, "top_k", 5)
 	if s.retriever == nil {
-		return inlineRefs, nil
+		return generationReferenceSelection{
+			References: inlineRefs,
+		}, nil
 	}
 	results, err := s.retriever.Retrieve(ctx, &rag.RetrieveRequest{
 		Query:     plan.LocalQuery,
@@ -178,7 +185,7 @@ func (s *generationService) retrieve(ctx context.Context, req *GenerationRequest
 		TopK:      optionInt(req.Options, "top_k", 5),
 	})
 	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "retrieve generation context failed", err)
+		return generationReferenceSelection{}, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "retrieve generation context failed", err)
 	}
 
 	ragRefs := make([]GenerationReference, 0, len(results))
@@ -199,7 +206,7 @@ func (s *generationService) retrieve(ctx context.Context, req *GenerationRequest
 			ChapterPath: item.ChapterPath,
 		})
 	}
-	return mergeGenerationReferences(inlineRefs, ragRefs, inlineLimit+optionInt(req.Options, "top_k", 5)), nil
+	return selectGenerationReferences(inlineRefs, ragRefs, plan, selectionLimit), nil
 }
 
 func (s *generationService) searchWeb(ctx context.Context, req *GenerationRequest, plan generationQueryPlan) (*SearchResponse, error) {
