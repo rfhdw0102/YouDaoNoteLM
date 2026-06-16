@@ -205,6 +205,8 @@ func (s *importerService) processFileImport(sourceID uint, fileName, ext, filePa
 		} else {
 			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
 				zap.String("file", fileName),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
 		}
 	} else {
 		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.String("file", fileName))
@@ -475,9 +477,9 @@ func (s *importerService) ConfirmAudio(userID uint, previewID string, editedCont
 	// LLM 结构化
 	stepStart := time.Now()
 	if s.structurer != nil {
-		structured, err := s.structurer.Structure(ctx, userID, content, StructureMeta{
-			Title:      preview.FileName,
 		result, err := s.structurer.Structure(ctx, userID, content, StructureMeta{
+			Title:      preview.FileName,
+			SourceType: "audio",
 		})
 		if err != nil {
 			logger.Error("LLM 结构化失败，使用原始内容",
@@ -485,12 +487,10 @@ func (s *importerService) ConfirmAudio(userID uint, previewID string, editedCont
 				zap.Duration("elapsed", time.Since(stepStart)),
 				zap.Error(err),
 			)
-		} else if len(structured) != len(content) {
-			logger.Info("LLM 结构化成功，内容已优化",
 		} else if result.ActuallyCalled && result.Content != content {
+			logger.Info("LLM 结构化成功，内容已优化",
+				zap.String("preview_id", previewID),
 				zap.Int("original_len", len(content)),
-				zap.Int("structured_len", len(structured)),
-				zap.Duration("elapsed", time.Since(stepStart)),
 				zap.Int("structured_len", len(result.Content)),
 				zap.Duration("elapsed", time.Since(stepStart)),
 			)
@@ -499,14 +499,16 @@ func (s *importerService) ConfirmAudio(userID uint, previewID string, editedCont
 			logger.Info("LLM 判断内容已有结构，无需结构化",
 				zap.String("preview_id", previewID),
 				zap.Int("content_len", len(content)),
-			content = structured
-		} else {
-				zap.String("preview_id", previewID),
-			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
 				zap.Duration("elapsed", time.Since(stepStart)),
 			)
-			content = structured
+		} else {
+			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
+				zap.String("preview_id", previewID),
+				zap.Int("content_len", len(content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
 		}
+	} else {
 		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.String("preview_id", previewID))
 	}
 
@@ -797,9 +799,9 @@ func (s *importerService) processSingleSource(taskCtx context.Context, sourceID 
 	// LLM 结构化
 	stepStart = time.Now()
 	if s.structurer != nil {
-		structured, err := s.structurer.Structure(taskCtx, source.UserID, markdown, StructureMeta{
-			Title:      source.Name,
 		result, err := s.structurer.Structure(taskCtx, source.UserID, markdown, StructureMeta{
+			Title:      source.Name,
+			SourceType: "url",
 		})
 		if err != nil {
 			logger.Error("LLM 结构化失败，使用原始内容",
@@ -808,15 +810,13 @@ func (s *importerService) processSingleSource(taskCtx context.Context, sourceID 
 				zap.Duration("elapsed", time.Since(stepStart)),
 				zap.Error(err),
 			)
-		} else if len(structured) != len(markdown) {
-			logger.Info("LLM 结构化成功，内容已优化",
 		} else if result.ActuallyCalled && result.Content != markdown {
+			logger.Info("LLM 结构化成功，内容已优化",
+				zap.Uint("source_id", sourceID),
 				zap.Int("original_len", len(markdown)),
-				zap.Int("structured_len", len(structured)),
-				zap.Duration("elapsed", time.Since(stepStart)),
 				zap.Int("structured_len", len(result.Content)),
-			markdown = structured
-		} else {
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
 			markdown = result.Content
 		} else if result.ActuallyCalled {
 			logger.Info("LLM 判断内容已有结构，无需结构化",
@@ -824,12 +824,14 @@ func (s *importerService) processSingleSource(taskCtx context.Context, sourceID 
 				zap.Int("content_len", len(markdown)),
 				zap.Duration("elapsed", time.Since(stepStart)),
 			)
-				zap.Uint("source_id", sourceID),
+		} else {
 			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
+				zap.Uint("source_id", sourceID),
+				zap.Int("content_len", len(markdown)),
 				zap.Duration("elapsed", time.Since(stepStart)),
 			)
-			markdown = structured
 		}
+	} else {
 		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.Uint("source_id", sourceID))
 	}
 

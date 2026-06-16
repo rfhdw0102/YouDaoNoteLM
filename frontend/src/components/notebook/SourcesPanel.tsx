@@ -44,7 +44,7 @@ function parseSearchContent(content: string): { results: SearchResultItem[]; sum
 export default function SourcesPanel() {
   const {
     currentNotebookId, getCurrentNotebook, toggleSourceSelection,
-    removeSource, batchRemoveSources, renameSource, selectAllSources, deselectAllSources,
+    removeSource, batchRemoveSources, deleteFailedSources, renameSource, selectAllSources, deselectAllSources,
     importFile, previewAudio, confirmAudio, searchSourcesStream, importFromURL, importSearchResults, fetchSourceContent, getSourceDownloadURL, fetchSources
   } = useNotebookStore();
   const notebook = getCurrentNotebook();
@@ -95,6 +95,9 @@ export default function SourcesPanel() {
   const filteredSources = notebook.sources.filter((s) =>
     s.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // 计算失效来源数量
+  const failedCount = notebook.sources.filter(s => s.status === 'error').length;
   // 未确认的音频源（转写完成但用户未确认导入，排除已确认但 API 未完成的）
   const unconfirmedAudioIds = new Set(
     notebook.sources
@@ -138,6 +141,19 @@ export default function SourcesPanel() {
       await batchRemoveSources(currentNotebookId, selectedIds);
     } catch (err) {
       console.error('Batch delete failed:', err);
+    }
+  };
+
+  const handleDeleteFailed = async () => {
+    if (!currentNotebookId) return;
+
+    try {
+      const count = await deleteFailedSources(currentNotebookId);
+      if (count > 0) {
+        console.log(`Deleted ${count} failed sources`);
+      }
+    } catch (err) {
+      console.error('Delete failed sources failed:', err);
     }
   };
 
@@ -297,6 +313,9 @@ export default function SourcesPanel() {
 
   // Load source content for viewing
   const handleViewSource = async (source: Source) => {
+    // loading 状态的 source 还在后台处理中，禁止点击查看（避免拿到空/旧内容）
+    if (source.status === 'loading') return;
+
     // Audio sources with pending preview: reopen editor with confirm button
     // Only allow preview editing if the source has a previewId (not yet confirmed)
     // Also skip if this previewId is already being confirmed (in confirmedPreviewIds)
@@ -316,13 +335,9 @@ export default function SourcesPanel() {
     setViewContent({});
     setViewLoading(true);
     try {
-      // For audio sources, use cached content if available
-      if (source.type === 'audio' && source.content) {
-        setViewContent({ markdown: source.content });
-      } else {
-        const mdContent = await fetchSourceContent(currentNotebookId, source.id).catch(() => undefined);
-        setViewContent({ markdown: mdContent });
-      }
+      // 统一从后端获取最新内容（避免本地缓存的旧内容未经结构化）
+      const mdContent = await fetchSourceContent(currentNotebookId, source.id).catch(() => undefined);
+      setViewContent({ markdown: mdContent });
     } catch {
       // ignore
     } finally {
@@ -614,11 +629,18 @@ export default function SourcesPanel() {
               {selectedCount === selectableSources.length ? '取消全选' : '全选'}
               <span className="text-text-muted">({selectedCount}/{selectableSources.length})</span>
             </button>
-            {selectedCount > 0 && (
-              <button onClick={handleBatchDelete} className="flex items-center gap-1 text-xs text-error hover:text-error/80 transition-colors cursor-pointer">
-                <Trash2 size={11} /> 删除选中 ({selectedCount})
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {failedCount > 0 && (
+                <button onClick={handleDeleteFailed} className="flex items-center gap-1 text-xs text-warning hover:text-warning/80 transition-colors cursor-pointer">
+                  <AlertCircle size={11} /> 清除失效 ({failedCount})
+                </button>
+              )}
+              {selectedCount > 0 && (
+                <button onClick={handleBatchDelete} className="flex items-center gap-1 text-xs text-error hover:text-error/80 transition-colors cursor-pointer">
+                  <Trash2 size={11} /> 删除选中 ({selectedCount})
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>

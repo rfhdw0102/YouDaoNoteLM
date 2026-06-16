@@ -39,6 +39,7 @@ interface NotebookState {
   updateSource: (notebookId: string, sourceId: string, updates: Partial<Source>) => void;
   removeSource: (notebookId: string, sourceId: string) => Promise<void>;
   batchRemoveSources: (notebookId: string, sourceIds: string[]) => Promise<void>;
+  deleteFailedSources: (notebookId: string) => Promise<number>;
   toggleSourceSelection: (notebookId: string, sourceId: string) => void;
   renameSource: (notebookId: string, sourceId: string, name: string) => Promise<void>;
   selectAllSources: (notebookId: string) => void;
@@ -454,6 +455,30 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
     }
   },
 
+  deleteFailedSources: async (notebookId) => {
+    try {
+      const res = await sourceApi.deleteFailedSources(Number(notebookId));
+      if (res.code === 0) {
+        const deletedCount = res.data.deleted_count;
+
+        // 从本地状态中移除所有 failed 状态的 source
+        set((state) => ({
+          notebooks: state.notebooks.map((n) =>
+            n.id === notebookId
+              ? { ...n, sources: n.sources.filter((s) => s.status !== 'error') }
+              : n
+          ),
+        }));
+
+        return deletedCount;
+      }
+      throw new Error(res.message);
+    } catch (err) {
+      console.error('Failed to delete failed sources:', err);
+      throw err;
+    }
+  },
+
   toggleSourceSelection: (notebookId, sourceId) => {
     set((state) => ({
       notebooks: state.notebooks.map((n) =>
@@ -682,8 +707,6 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
     });
     if (res.code === 0) {
       const source = toSource(res.data);
-      // Store the edited content locally so it can be viewed later
-      source.content = content;
       // Remove the pending placeholder (has previewId) and add the confirmed source
       set((state) => ({
         notebooks: state.notebooks.map((n) =>

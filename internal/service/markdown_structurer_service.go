@@ -242,13 +242,51 @@ func (s *markdownStructurer) callLLM(ctx context.Context, chatModel model.ChatMo
 	}
 
 	msg, err := chatModel.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(structureSystemPr
-	msg, err := chatModel.Generate(ctx, []*schema.Message{
-	}, model.WithMaxTokens(maxTokens))
+		schema.SystemMessage(structureSystemPrompt),
 		schema.UserMessage(userMsg),
-	}, model.WithMaxTokens(2048))
+	}, model.WithMaxTokens(maxTokens))
 	if err != nil {
 		return "", fmt.Errorf("LLM 结构化调用失败: %w", err)
+	}
+	if msg == nil {
+		return "", nil
+	}
+	return msg.Content, nil
+}
+
+// callLLMForceful 强制重试：用更直接的指令要求 LLM 添加标题
+func (s *markdownStructurer) callLLMForceful(ctx context.Context, chatModel model.ChatModel, content string, meta StructureMeta) (string, error) {
+	title := meta.Title
+	if title == "" {
+		title = "（无）"
+	}
+
+	forcefulPrompt := fmt.Sprintf(`以下 markdown 文本没有任何标题，你必须为其添加 ## 标题来划分段落。
+不要返回原文，必须添加标题。保留所有原始文字，只在合适的位置插入标题行。
+如果文本有明显的主题段落，用 ## 标记每个主题。
+如果文本是一整段，至少在开头加一个 ## 标题。
+
+原始标题：%s
+来源类型：%s
+
+---
+
+%s`, title, meta.SourceType, content)
+
+	// 动态计算 MaxTokens：内容越长给越多空间，最少 4096，最多 16384
+	maxTokens := len(content) * 2
+	if maxTokens < 4096 {
+		maxTokens = 4096
+	}
+	if maxTokens > 16384 {
+		maxTokens = 16384
+	}
+
+	msg, err := chatModel.Generate(ctx, []*schema.Message{
+		schema.UserMessage(forcefulPrompt),
+	}, model.WithMaxTokens(maxTokens))
+	if err != nil {
+		return "", fmt.Errorf("LLM 强制结构化调用失败: %w", err)
 	}
 	if msg == nil {
 		return "", nil
