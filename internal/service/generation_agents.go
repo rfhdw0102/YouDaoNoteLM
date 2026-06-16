@@ -269,6 +269,7 @@ func (a *pptGenerationAgent) generatePPTDraft(ctx context.Context, state pptChai
 }
 
 func (a *pptGenerationAgent) repairPPTStructure(ctx context.Context, draft generationDraft) (generationDraft, error) {
+	draft.content = sanitizePPTReferenceSections(draft.content)
 	if pptNeedsStructureRepair(draft.content) {
 		if draft.pptRepairPlan != nil {
 			draft.content = renderStyledPPTSlides(*draft.pptRepairPlan)

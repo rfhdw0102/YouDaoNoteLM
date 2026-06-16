@@ -247,7 +247,11 @@ func (a *App) initDependencies() {
 	searchAgentSvc := service.NewSearchAgentService(configSvc, importerSvc, searchAgentInst)
 
 	// 创建生成服务（SearchService 暂为 nil，后续可接入）
-	generationSvc := service.NewGenerationService(a.ragRetriever, nil, nil)
+	var generationMemory service.GenerationMemoryStore
+	if a.redis != nil {
+		generationMemory = service.NewGenerationMemoryCacheStore(cache.NewGenerationMemoryCache(a.redis))
+	}
+	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory)
 
 	// 创建 ChatAgentService
 	chatCache := cache.NewChatCache(a.redis)

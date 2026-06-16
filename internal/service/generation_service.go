@@ -215,7 +215,7 @@ func (s *generationService) searchWeb(ctx context.Context, req *GenerationReques
 		NeedContent:    true,
 		NotebookID:     req.NotebookID,
 		AllowDegrade:   req.AllowDegrade,
-		SkipUserConfig: true,
+		SkipUserConfig: true, // 生成 Agent 直接使用 YAML 配置，不查数据库用户配置
 	})
 	if err != nil {
 		if req.AllowDegrade {

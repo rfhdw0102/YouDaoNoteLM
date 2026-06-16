@@ -219,7 +219,7 @@ func buildGenerationContext(req *GenerationRequest, refs []GenerationReference, 
 	if len(refs) > 0 {
 		b.WriteString("\n\n本地 RAG 参考：\n")
 		for i, ref := range refs {
-			b.WriteString(fmt.Sprintf("[%d] %s %s\n%s\n", i+1, generationReferenceLabel(ref), ref.ChapterPath, ref.Content))
+			b.WriteString(fmt.Sprintf("[%d] %s %s\n%s\n", i+1, generationReferenceLabel(ref), ref.ChapterPath, summarizeLine(ref.Content, 120)))
 		}
 	}
 	if strings.TrimSpace(searchSummary) != "" {
@@ -229,7 +229,7 @@ func buildGenerationContext(req *GenerationRequest, refs []GenerationReference, 
 	if len(searchResults) > 0 {
 		b.WriteString("\n\n联网搜索结果：\n")
 		for i, result := range searchResults {
-			b.WriteString(fmt.Sprintf("[%d] %s - %s\n%s\n", i+1, result.Title, result.URL, firstNonEmpty(result.Snippet, result.Content)))
+			b.WriteString(fmt.Sprintf("[%d] %s - %s\n%s\n", i+1, result.Title, result.URL, summarizeLine(firstNonEmpty(result.Snippet, result.Content), 120)))
 		}
 	}
 	b.WriteString("\n\n生成约束：\n")
