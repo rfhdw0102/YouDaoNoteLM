@@ -30,17 +30,28 @@ func FormatRetrievalResults(results []*rag.RetrieveResult) string {
 	return sb.String()
 }
 
-// FormatChatHistory 格式化对话历史
-func FormatChatHistory(history []cache.MessagePair) string {
-	if len(history) == 0 {
-		return "暂无对话历史"
+// FormatChatHistoryWithSummary 格式化对话历史（含摘要）
+func FormatChatHistoryWithSummary(summary string, hasSummary bool, history []cache.MessagePair) string {
+	var sb strings.Builder
+
+	// 先输出摘要
+	if hasSummary && summary != "" {
+		sb.WriteString("【对话摘要】\n")
+		sb.WriteString(summary)
+		sb.WriteString("\n\n")
 	}
 
-	var sb strings.Builder
-	for i, pair := range history {
-		sb.WriteString(fmt.Sprintf("第 %d 轮:\n", i+1))
-		sb.WriteString(fmt.Sprintf("用户: %s\n", pair.User))
-		sb.WriteString(fmt.Sprintf("助手: %s\n\n", pair.Assistant))
+	// 再输出历史消息
+	if len(history) == 0 {
+		sb.WriteString("暂无对话历史")
+	} else {
+		sb.WriteString("【最近对话】\n")
+		for i, pair := range history {
+			sb.WriteString(fmt.Sprintf("第 %d 轮:\n", i+1))
+			sb.WriteString(fmt.Sprintf("用户: %s\n", pair.User))
+			sb.WriteString(fmt.Sprintf("助手: %s\n\n", pair.Assistant))
+		}
 	}
+
 	return sb.String()
 }
