@@ -129,19 +129,32 @@ var (
 )
 
 func exportPPT(content, title, templateID string) (*GenerationExportResult, error) {
-	slides, err := parsePPTExportSlides(content)
-	if err != nil {
-		return nil, err
-	}
-	template, err := resolvePPTExportTemplate(templateID)
-	if err != nil {
-		return nil, err
-	}
-
 	filename := resolveExportFilename(title, content, "ppt-export", ".pptx")
-	data, err := buildPPTXBytes(slides, strings.TrimSuffix(filename, ".pptx"), template)
-	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "build ppt export failed", err)
+
+	trimmedTemplateID := strings.TrimSpace(templateID)
+	var (
+		data []byte
+		err  error
+	)
+
+	if trimmedTemplateID == "" {
+		data, err = buildDynamicHTMLPPTX(content, strings.TrimSuffix(filename, ".pptx"))
+		if err != nil {
+			return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "build ppt export failed", err)
+		}
+	} else {
+		slides, parseErr := parsePPTExportSlides(content)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		template, templateErr := resolvePPTExportTemplate(trimmedTemplateID)
+		if templateErr != nil {
+			return nil, templateErr
+		}
+		data, err = buildPPTXBytes(slides, strings.TrimSuffix(filename, ".pptx"), template)
+		if err != nil {
+			return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "build ppt export failed", err)
+		}
 	}
 
 	return &GenerationExportResult{
@@ -153,9 +166,6 @@ func exportPPT(content, title, templateID string) (*GenerationExportResult, erro
 
 func resolvePPTExportTemplate(templateID string) (pptExportTemplate, error) {
 	id := strings.ToLower(strings.TrimSpace(templateID))
-	if id == "" {
-		id = pptDefaultTemplateID
-	}
 	template, ok := pptExportTemplates[id]
 	if !ok {
 		return pptExportTemplate{}, bizerrors.New(bizerrors.CodeInvalidParam, "unsupported ppt template")
