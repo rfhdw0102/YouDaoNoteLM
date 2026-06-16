@@ -63,7 +63,14 @@ func (r *userLLMConfigRepository) Create(config *entity.UserLLMConfig) error {
 
 // Update 更新配置
 func (r *userLLMConfigRepository) Update(config *entity.UserLLMConfig) error {
-	return r.db.Save(config).Error
+	return r.db.Model(config).Updates(map[string]interface{}{
+		"name":     config.Name,
+		"provider": config.Provider,
+		"api_key":  config.APIKey,
+		"api_url":  config.APIURL,
+		"model":    config.Model,
+		"enabled":  config.Enabled,
+	}).Error
 }
 
 // Delete 删除配置

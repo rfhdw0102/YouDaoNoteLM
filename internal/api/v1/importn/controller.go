@@ -56,7 +56,7 @@ func (ctrl *Controller) ImportFile(c *gin.Context) {
 
 // PreviewAudio 音频上传转写预览
 // @Summary 音频上传转写预览
-// @Description 上传音频文件，返回转写预览
+// @Description 上传音频文件，立即返回 previewID，后台异步执行 ASR 转写
 // @Tags 导入
 // @Accept multipart/form-data
 // @Produce json
@@ -78,7 +78,7 @@ func (ctrl *Controller) PreviewAudio(c *gin.Context) {
 		return
 	}
 
-	previewID, content, fileName, err := ctrl.importerService.PreviewAudio(userID, uint(nbID), file)
+	previewID, fileName, err := ctrl.importerService.PreviewAudio(userID, uint(nbID), file)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -86,9 +86,34 @@ func (ctrl *Controller) PreviewAudio(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"preview_id": previewID,
-		"content":    content,
 		"file_name":  fileName,
+		"status":     "pending",
 	})
+}
+
+// GetAudioPreviewStatus 查询音频转写状态
+// @Summary 查询音频转写状态
+// @Description 根据 previewID 查询音频转写进度（前端轮询用）
+// @Tags 导入
+// @Produce json
+// @Param previewId path string true "预览ID"
+// @Success 200 {object} response.Response{data=cache.AudioPreview}
+// @Router /api/v1/import/audio/preview/{previewId} [get]
+func (ctrl *Controller) GetAudioPreviewStatus(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	previewID := c.Param("previewId")
+	if previewID == "" {
+		response.BadRequest(c, "无效的预览ID")
+		return
+	}
+
+	preview, err := ctrl.importerService.GetAudioPreviewStatus(userID, previewID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, preview)
 }
 
 // ConfirmAudio 确认音频导入
@@ -105,7 +130,7 @@ func (ctrl *Controller) ConfirmAudio(c *gin.Context) {
 
 	var req request.AudioConfirmRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -140,4 +165,27 @@ func (ctrl *Controller) GetTask(c *gin.Context) {
 	}
 
 	response.Success(c, task)
+}
+
+// DeleteTask 删除导入任务
+// @Summary 删除导入任务
+// @Description 根据任务ID删除导入任务（运行中的任务会被取消）
+// @Tags 导入
+// @Produce json
+// @Param taskId path string true "任务ID"
+// @Success 200 {object} response.Response
+// @Router /api/v1/import/tasks/{taskId} [delete]
+func (ctrl *Controller) DeleteTask(c *gin.Context) {
+	taskID := c.Param("taskId")
+	if taskID == "" {
+		response.BadRequest(c, "无效的任务ID")
+		return
+	}
+
+	if err := ctrl.importerService.DeleteImportTask(taskID); err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.SuccessWithMessage(c, "任务已删除", nil)
 }

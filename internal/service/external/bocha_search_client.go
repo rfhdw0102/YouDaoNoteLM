@@ -29,13 +29,6 @@ type bochaSearchRequest struct {
 	Count     int    `json:"count,omitempty"`
 }
 
-// bochaSearchAPIResponse Bocha API 顶层响应，实际数据在 data 字段中。
-type bochaSearchAPIResponse struct {
-	Code int                  `json:"code"`
-	Msg  *string              `json:"msg"`
-	Data *bochaSearchResponse `json:"data"`
-}
-
 type bochaSearchResponse struct {
 	QueryContext struct {
 		OriginalQuery string `json:"originalQuery"`
@@ -149,19 +142,10 @@ func (c *bochaSearchClient) Search(ctx context.Context, cfg SearchProviderConfig
 		)
 	}
 
-	var apiResp bochaSearchAPIResponse
-	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+	var raw bochaSearchResponse
+	if err := json.Unmarshal(respBody, &raw); err != nil {
 		return nil, bizerrors.NewWithErr(bizerrors.CodeSearchInvalidResponse, "解析博查响应失败", err)
 	}
-	if apiResp.Data == nil {
-		msg := "博查 API 返回 data 为空"
-		if apiResp.Msg != nil {
-			msg = fmt.Sprintf("博查 API 错误: %s (code=%d)", *apiResp.Msg, apiResp.Code)
-		}
-		return nil, bizerrors.New(bizerrors.CodeSearchInvalidResponse, msg)
-	}
-
-	raw := apiResp.Data
 	if raw.WebPages == nil {
 		return nil, bizerrors.ErrSearchInvalidResponse
 	}

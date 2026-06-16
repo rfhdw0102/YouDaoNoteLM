@@ -5,7 +5,6 @@ import (
 	"YoudaoNoteLm/internal/model/dto/request"
 	"YoudaoNoteLm/internal/service"
 	"YoudaoNoteLm/pkg/response"
-	"mime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -51,34 +50,4 @@ func (ctrl *Controller) Generate(c *gin.Context) {
 	}
 
 	response.Success(c, resp)
-}
-
-// Export converts generated content into a downloadable attachment.
-func (ctrl *Controller) Export(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == 0 {
-		response.Unauthorized(c, "user is not authenticated")
-		return
-	}
-
-	var req request.GenerationExportRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-
-	resp, err := ctrl.generationService.Export(c.Request.Context(), &service.GenerationExportRequest{
-		Type:     service.GenerationType(req.Type),
-		Content:  req.Content,
-		Title:    req.Title,
-		Template: req.Template,
-	})
-	if err != nil {
-		response.BizError(c, err)
-		return
-	}
-
-	c.Header("Content-Type", resp.ContentType)
-	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": resp.Filename}))
-	c.Data(200, resp.ContentType, resp.Data)
 }

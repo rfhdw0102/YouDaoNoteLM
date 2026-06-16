@@ -1,28 +1,22 @@
 package service
 
 import (
-	"context"
+	"YoudaoNoteLm/internal/service/external/storage"
+	"time"
 
 	"YoudaoNoteLm/internal/model/dto/response"
 	"YoudaoNoteLm/internal/model/entity"
-	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/repository"
 	bizerrors "YoudaoNoteLm/pkg/errors"
-	"YoudaoNoteLm/pkg/logger"
-
-	"go.uber.org/zap"
 )
 
 type sourceService struct {
-	sourceRepo   repository.SourceRepository
-	ingestionSvc rag.IngestionService
+	sourceRepo repository.SourceRepository
+	storage    storage.FileStorage
 }
 
-func NewSourceService(sourceRepo repository.SourceRepository, ingestionSvc rag.IngestionService) SourceService {
-	return &sourceService{
-		sourceRepo:   sourceRepo,
-		ingestionSvc: ingestionSvc,
-	}
+func NewSourceService(sourceRepo repository.SourceRepository, storage storage.FileStorage) SourceService {
+	return &sourceService{sourceRepo: sourceRepo, storage: storage}
 }
 
 func (s *sourceService) List(userID, notebookID uint, keyword string, page, size int) ([]*response.SourceResponse, int64, error) {
@@ -71,46 +65,19 @@ func (s *sourceService) Rename(id uint, name string) error {
 }
 
 func (s *sourceService) Delete(id uint) error {
-	source, err := s.GetByID(id)
+	_, err := s.GetByID(id)
 	if err != nil {
 		return err
 	}
-
-	// 删除 Milvus 向量数据
-	if s.ingestionSvc != nil && source.Vectorized {
-		ctx := context.Background()
-		if err := s.ingestionSvc.DeleteSource(ctx, source.UserID, source.ID); err != nil {
-			logger.Warn("删除向量数据失败，继续删除数据库记录",
-				zap.Uint("source_id", source.ID),
-				zap.Error(err),
-			)
-		}
-	}
-
 	return s.sourceRepo.Delete(id)
 }
 
 func (s *sourceService) BatchDelete(ids []uint) error {
-	// 先获取所有 source 信息，删除 Milvus 数据
-	if s.ingestionSvc != nil {
-		ctx := context.Background()
-		for _, id := range ids {
-			source, err := s.sourceRepo.FindByID(id)
-			if err != nil || source == nil {
-				continue
-			}
-			if source.Vectorized {
-				if err := s.ingestionSvc.DeleteSource(ctx, source.UserID, source.ID); err != nil {
-					logger.Warn("批量删除：删除向量数据失败",
-						zap.Uint("source_id", source.ID),
-						zap.Error(err),
-					)
-				}
-			}
-		}
-	}
-
 	return s.sourceRepo.BatchDelete(ids)
+}
+
+func (s *sourceService) DeleteFailed(userID, notebookID uint) (int64, error) {
+	return s.sourceRepo.DeleteFailedByNotebook(userID, notebookID)
 }
 
 func (s *sourceService) GetContent(id uint) (string, error) {
@@ -129,17 +96,41 @@ func (s *sourceService) GetOriginalContent(id uint) (string, string, error) {
 
 	switch source.Type {
 	case "file":
-		// 返回文件路径，前端通过该路径从对象存储获取并渲染原格式（PDF/DOCX等）
-		return source.FilePath, source.MimeType, nil
+		// 对于文件类型，返回 Markdown 内容作为原内容展示
+		// 原始文件通过 GetDownloadURL 提供下载
+		return source.MarkdownContent, source.MimeType, nil
 	case "url":
 		return source.OriginalURL, "url", nil
 	case "audio":
-		return "", "", bizerrors.New(bizerrors.CodeBadRequest, "音频类型不支持查看原格式")
+		return source.MarkdownContent, "audio_transcript", nil
 	case "note", "youdao":
 		return source.MarkdownContent, "raw_markdown", nil
 	default:
 		return "", "", bizerrors.New(bizerrors.CodeBadRequest, "该类型不支持查看原格式")
 	}
+}
+
+func (s *sourceService) GetDownloadURL(id uint) (string, error) {
+	source, err := s.GetByID(id)
+	if err != nil {
+		return "", err
+	}
+	if source.FilePath == "" {
+		return "", bizerrors.New(bizerrors.CodeBadRequest, "该来源没有可下载的文件")
+	}
+
+	// 如果 storage 是 MinIO，生成预签名 URL
+	if minioStorage, ok := s.storage.(interface {
+		GetPresignedURL(filePath string, expiry time.Duration) (string, error)
+	}); ok {
+		url, err := minioStorage.GetPresignedURL(source.FilePath, 10*time.Minute)
+		if err != nil {
+			return "", bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "生成下载链接失败", err)
+		}
+		return url, nil
+	}
+
+	return "", bizerrors.New(bizerrors.CodeInternalServiceError, "存储服务不支持生成下载链接")
 }
 
 func toSourceResponse(src *entity.Source) *response.SourceResponse {

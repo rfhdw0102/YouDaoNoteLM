@@ -31,9 +31,7 @@ type SearchRequest struct {
 	SourceID       uint        `json:"source_id,omitempty"`
 	TraceID        string      `json:"trace_id,omitempty"`
 	AllowDegrade   bool        `json:"allow_degrade,omitempty"`
-	// SkipUserConfig 为 true 时跳过数据库用户配置查询，直接使用 YAML 全局配置。
-	// 用于生成 Agent 等场景，避免被 user_config 表中的记录阻断。
-	SkipUserConfig bool `json:"-"`
+	SkipUserConfig bool        `json:"-"`
 }
 
 // SearchQuota 统一搜索额度信息。

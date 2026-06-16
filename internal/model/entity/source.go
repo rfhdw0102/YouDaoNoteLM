@@ -14,8 +14,9 @@ type Source struct {
 	MimeType        string   `gorm:"type:varchar(100)" json:"mime_type"`                              // MIME类型
 	MarkdownContent string   `gorm:"type:longtext" json:"markdown_content"`                           // 解析后的Markdown内容
 	Status          string   `gorm:"type:varchar(20);default:pending;index:idx_status" json:"status"` // 状态: pending/processing/ready/failed
-	ErrorMessage    string   `gorm:"type:varchar(512)" json:"error_message"`                          // 失败原因
+	ErrorMessage    string   `gorm:"type:varchar(1024)" json:"error_message"`                         // 失败原因
 	Vectorized      bool     `gorm:"default:false" json:"vectorized"`                                 // 是否已向量化
+	ExternalID      string   `gorm:"type:varchar(255);index:idx_external_id" json:"external_id"`      // 外部系统ID（如 youdao fileId）
 
 	// 关联
 	ParentBlocks []ParentBlock `gorm:"foreignKey:SourceID"`

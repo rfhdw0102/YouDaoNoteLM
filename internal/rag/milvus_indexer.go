@@ -85,7 +85,7 @@ func (w *MilvusWriter) EnsureCollection(ctx context.Context, userID uint) error 
 				Name:     "content",
 				DataType: entity.FieldTypeVarChar,
 				TypeParams: map[string]string{
-					"max_length": "8192",
+					"max_length": "32768",
 				},
 			},
 			{
@@ -170,8 +170,13 @@ func (w *MilvusWriter) Store(ctx context.Context, userID uint, docs []*schema.Do
 	chunkTypes := make([]string, n)
 	metadatas := make([]string, n)
 
+	const maxContentLen = 32768
 	for i, doc := range docs {
-		contents[i] = doc.Content
+		c := doc.Content
+		if len(c) > maxContentLen {
+			c = c[:maxContentLen]
+		}
+		contents[i] = c
 		vectorsData[i] = vectors[i]
 
 		if pid, ok := doc.MetaData["parent_index"].(int); ok {
@@ -241,7 +246,10 @@ func mapsToSparseEmbeddings(maps []map[int32]float32) ([]entity.SparseEmbedding,
 
 // StoreWithSparse 将文档、dense vector 和 sparse vector 写入用户专属 Collection
 func (w *MilvusWriter) StoreWithSparse(ctx context.Context, userID uint, docs []*schema.Document, denseVectors [][]float32, sparseVectors []map[int32]float32) error {
-	if len(docs) == 0 || len(docs) != len(denseVectors) || len(docs) != len(sparseVectors) {
+	if len(docs) == 0 {
+		return fmt.Errorf("没有可写入的文档（内容可能为空或解析结果为空）")
+	}
+	if len(docs) != len(denseVectors) || len(docs) != len(sparseVectors) {
 		return fmt.Errorf("文档、dense向量和sparse向量数量不匹配: docs=%d, dense=%d, sparse=%d", len(docs), len(denseVectors), len(sparseVectors))
 	}
 
@@ -253,8 +261,13 @@ func (w *MilvusWriter) StoreWithSparse(ctx context.Context, userID uint, docs []
 	chunkTypes := make([]string, n)
 	metadatas := make([]string, n)
 
+	const maxContentLen = 32768
 	for i, doc := range docs {
-		contents[i] = doc.Content
+		c := doc.Content
+		if len(c) > maxContentLen {
+			c = c[:maxContentLen]
+		}
+		contents[i] = c
 		denseData[i] = denseVectors[i]
 
 		if pid, ok := doc.MetaData["parent_index"].(int); ok {

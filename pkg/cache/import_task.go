@@ -8,16 +8,17 @@ import (
 
 // ImportTask 导入任务缓存结构
 type ImportTask struct {
-	TaskID       string `json:"task_id"`       // 任务ID
-	UserID       uint   `json:"user_id"`       // 所属用户
-	NotebookID   uint   `json:"notebook_id"`   // 所属笔记本
-	TaskType     string `json:"task_type"`     // 任务类型: batch_file/batch_url/youdao
-	TotalCount   int    `json:"total_count"`   // 总数
-	SuccessCount int    `json:"success_count"` // 成功数
-	FailCount    int    `json:"fail_count"`    // 失败数
-	Status       string `json:"status"`        // 状态: pending/processing/completed
-	ErrorDetail  string `json:"error_detail"`  // 错误详情(JSON)
-	CreatedAt    int64  `json:"created_at"`    // 创建时间戳
+	TaskID        string `json:"task_id"`        // 任务ID
+	UserID        uint   `json:"user_id"`        // 所属用户
+	NotebookID    uint   `json:"notebook_id"`    // 所属笔记本
+	TaskType      string `json:"task_type"`      // 任务类型: batch_file/batch_url/youdao
+	TotalCount    int    `json:"total_count"`    // 总数
+	ProcessedCount int   `json:"processed_count"` // 已处理数
+	SuccessCount  int    `json:"success_count"`  // 成功数
+	FailCount     int    `json:"fail_count"`     // 失败数
+	Status        string `json:"status"`         // 状态: pending/running/completed/failed/partial_failed/cancelled
+	ErrorDetail   string `json:"error_detail"`   // 错误详情(JSON)
+	CreatedAt     int64  `json:"created_at"`     // 创建时间戳
 }
 
 // ImportTaskCache 导入任务缓存操作

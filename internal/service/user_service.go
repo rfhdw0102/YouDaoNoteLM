@@ -5,7 +5,7 @@ import (
 	dto "YoudaoNoteLm/internal/model/dto/response"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/repository"
-	"YoudaoNoteLm/internal/service/external"
+	"YoudaoNoteLm/internal/service/external/storage"
 	"YoudaoNoteLm/pkg/logger"
 	"YoudaoNoteLm/pkg/response"
 	"context"
@@ -24,11 +24,11 @@ import (
 type userService struct {
 	userRepo      repository.UserRepository
 	verifyCodeSvc VerifyCodeService
-	storage       external.FileStorage
+	storage       storage.FileStorage
 }
 
 // NewUserService 创建用户服务
-func NewUserService(userRepo repository.UserRepository, verifyCodeSvc VerifyCodeService, storage external.FileStorage) UserService {
+func NewUserService(userRepo repository.UserRepository, verifyCodeSvc VerifyCodeService, storage storage.FileStorage) UserService {
 	return &userService{
 		userRepo:      userRepo,
 		verifyCodeSvc: verifyCodeSvc,
@@ -177,6 +177,11 @@ func (s *userService) UploadAvatar(id uint, file *multipart.FileHeader) (string,
 		return "", fmt.Errorf("读取上传文件失败: %w", err)
 	}
 	if err := s.storage.UploadBytes(objectName, fileBytes, file.Header.Get("Content-Type")); err != nil {
+		logger.Error("头像上传到存储服务失败",
+			zap.Uint("user_id", id),
+			zap.String("file", file.Filename),
+			zap.Error(err),
+		)
 		return "", fmt.Errorf("上传头像到 MinIO 失败: %w", err)
 	}
 
@@ -266,6 +271,7 @@ func (s *userService) GetUserResponse(user *entity.User) *dto.UserResponse {
 		Email:     user.Email,
 		Nickname:  user.Nickname,
 		Avatar:    avatarURL,
+		Role:      user.Role,
 		Status:    user.Status,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,

@@ -22,6 +22,8 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist servic
 	imp.Use(middleware.Auth(tokenBlacklist))
 	{
 		imp.POST("/audio/confirm", ctrl.ConfirmAudio)
+		imp.GET("/audio/preview/:previewId", ctrl.GetAudioPreviewStatus) // 查询音频转写状态
 		imp.GET("/tasks/:taskId", ctrl.GetTask)
+		imp.DELETE("/tasks/:taskId", ctrl.DeleteTask) // 删除/取消任务
 	}
 }
