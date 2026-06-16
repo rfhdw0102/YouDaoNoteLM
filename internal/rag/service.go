@@ -13,7 +13,8 @@ import (
 )
 
 // EmbedderProvider 根据 userID 获取对应的 Embedder
-type EmbedderProvider func(ctx context.Context, userID uint) (embedding.Embedder, error)
+// 返回: embedder, batchSize, vectorDim, error
+type EmbedderProvider func(ctx context.Context, userID uint) (embedding.Embedder, int, int, error)
 
 // IngestionService 入库服务接口
 type IngestionService interface {
@@ -23,6 +24,8 @@ type IngestionService interface {
 	IngestSingle(ctx context.Context, sourceID uint) error
 	// DeleteSource 删除源的向量数据
 	DeleteSource(ctx context.Context, userID uint, sourceID uint) error
+	// DropUserCollection 删除用户的整个 Milvus Collection（不可逆操作）
+	DropUserCollection(ctx context.Context, userID uint) error
 }
 
 type ingestionService struct {
@@ -141,7 +144,7 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 		zap.Uint("source_id", sourceID),
 		zap.Int("chunk_count", len(enhancedDocs)),
 	)
-	embedder, err := s.embedderProvider(ctx, source.UserID)
+	embedder, embedBatchSize, vectorDim, err := s.embedderProvider(ctx, source.UserID)
 	if err != nil {
 		errMsg := "获取 Embedder 失败: " + err.Error()
 		logger.Error(errMsg, zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID))
@@ -155,8 +158,6 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 		texts[i] = doc.Content
 	}
 
-	// 分批调用 Embedding API（豆包限制每次最多 256 条）
-	const embedBatchSize = 256
 	vectors := make([][]float32, len(texts))
 	logger.Info("调用 Embedding API", zap.Uint("source_id", sourceID), zap.Int("text_count", len(texts)))
 
@@ -212,7 +213,7 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 	logger.Info("Sparse vector 生成完成", zap.Uint("source_id", sourceID), zap.Int("count", len(sparseVectors)))
 
 	// 10. 确保用户的 Milvus Collection 存在
-	if err := s.milvusWriter.EnsureCollection(ctx, source.UserID); err != nil {
+	if err := s.milvusWriter.EnsureCollection(ctx, source.UserID, vectorDim); err != nil {
 		errMsg := "确保 Milvus Collection 失败: " + err.Error()
 		logger.Error(errMsg, zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID))
 		s.updateFailedStatus(sourceID, errMsg)
@@ -222,7 +223,7 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 	// 11. 写入 Milvus
 	logger.Info("写入 Milvus", zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID), zap.Int("doc_count", len(enhancedDocs)))
 	if err := s.retry(func() error {
-		return s.milvusWriter.StoreWithSparse(ctx, source.UserID, enhancedDocs, vectors, sparseVectors)
+		return s.milvusWriter.StoreWithSparse(ctx, source.UserID, enhancedDocs, vectors, sparseVectors, vectorDim)
 	}); err != nil {
 		errMsg := "写入 Milvus 失败: " + err.Error()
 		logger.Error(errMsg, zap.Uint("source_id", sourceID))
@@ -286,6 +287,25 @@ func (s *ingestionService) DeleteSource(ctx context.Context, userID uint, source
 	logger.Info("删除源数据成功",
 		zap.Uint("user_id", userID),
 		zap.Uint("source_id", sourceID),
+	)
+	return nil
+}
+
+// DropUserCollection 删除用户的整个 Milvus Collection
+// 注意：此操作不可逆，会永久删除该用户的所有向量数据
+func (s *ingestionService) DropUserCollection(ctx context.Context, userID uint) error {
+	logger.Info("删除用户 Milvus Collection",
+		zap.Uint("user_id", userID),
+	)
+	if err := s.milvusWriter.DropUserCollection(ctx, userID); err != nil {
+		logger.Error("删除用户 Milvus Collection 失败",
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+		)
+		return fmt.Errorf("删除用户 Collection 失败: %w", err)
+	}
+	logger.Info("删除用户 Milvus Collection 成功",
+		zap.Uint("user_id", userID),
 	)
 	return nil
 }

@@ -123,11 +123,6 @@ func (m *AnthropicChatModel) Stream(ctx context.Context, input []*schema.Message
 	return sr, nil
 }
 
-// BindTools 绑定工具（已废弃，使用 WithTools）
-func (m *AnthropicChatModel) BindTools(tools []*schema.ToolInfo) error {
-	return m.bindTools(tools)
-}
-
 // WithTools 返回绑定了工具的新实例（并发安全）
 func (m *AnthropicChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
 	newModel := &AnthropicChatModel{
