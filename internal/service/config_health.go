@@ -12,6 +12,8 @@ import (
 
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/service/external"
+	"YoudaoNoteLm/internal/service/external/asr"
+	"YoudaoNoteLm/internal/service/external/search"
 	"YoudaoNoteLm/pkg/logger"
 
 	"go.uber.org/zap"
@@ -275,13 +277,13 @@ func (h *ConfigHealthChecker) testLLMAnthropic(config *entity.UserConfig) *Healt
 }
 
 // testSearch 测试搜索配置
-// 策略：只验证配置格式和 API 可达性，不发真实搜索请求
+// 策略：发起真实的测试搜索请求验证配置有效性
 func (h *ConfigHealthChecker) testSearch(config *entity.UserConfig) *HealthCheckResult {
 	sc := external.NewServiceConfigFromEntity(
 		config.Provider, config.APIURL, config.APIKey, config.Model, config.ExtraConfig)
 
-	// 通过 Registry 验证配置格式
-	_, err := h.registry.Create("search", config.Provider, sc)
+	// 通过 Registry 创建搜索引擎实例
+	engineInterface, err := h.registry.Create("search", config.Provider, sc)
 	if err != nil {
 		return &HealthCheckResult{
 			Healthy: false,
@@ -290,38 +292,33 @@ func (h *ConfigHealthChecker) testSearch(config *entity.UserConfig) *HealthCheck
 		}
 	}
 
-	// 检查 API 可达性
-	apiURL := config.APIURL
-	if apiURL == "" {
-		// 从 provider 默认地址推断
-		defaults := map[string]string{
-			"searxng": "",
-			"tavily":  "https://api.tavily.com",
-			"serper":  "https://google.serper.dev",
-			"bing":    "https://api.bing.microsoft.com",
-			"bocha":   "https://api.bochaai.com",
+	// 类型断言为 SearchEngine
+	engine, ok := engineInterface.(search.SearchEngine)
+	if !ok {
+		return &HealthCheckResult{
+			Healthy: false,
+			Message: "搜索引擎类型断言失败",
 		}
-		apiURL = defaults[config.Provider]
 	}
 
-	if apiURL != "" {
-		if err := checkHTTPReachable(apiURL, 3*time.Second); err != nil {
-			return &HealthCheckResult{
-				Healthy: false,
-				Message: "搜索 API 地址不可达",
-				Detail:  err.Error(),
-			}
+	// 发起真实的测试搜索请求
+	_, err = engine.Search("test connectivity", 1)
+	if err != nil {
+		return &HealthCheckResult{
+			Healthy: false,
+			Message: "搜索 API 连接失败",
+			Detail:  err.Error(),
 		}
 	}
 
 	return &HealthCheckResult{
 		Healthy: true,
-		Message: "搜索配置格式正确，API 可达",
+		Message: fmt.Sprintf("搜索 API 连通正常（%s）", config.Provider),
 	}
 }
 
 // testASR 测试 ASR 配置
-// 策略：验证配置格式 + API 地址可达性
+// 策略：验证配置格式 + 验证 API 凭证有效性
 func (h *ConfigHealthChecker) testASR(config *entity.UserConfig) *HealthCheckResult {
 	if config.Provider == "" {
 		return &HealthCheckResult{Healthy: false, Message: "服务商为空"}
@@ -338,16 +335,96 @@ func (h *ConfigHealthChecker) testASR(config *entity.UserConfig) *HealthCheckRes
 		}
 	}
 
-	if config.APIURL != "" {
-		if err := checkHTTPReachable(config.APIURL, 3*time.Second); err != nil {
+	// Whisper 类型：使用 /models 端点验证 API Key
+	if config.Provider == "whisper" || config.Provider == "openai" {
+		apiURL := config.APIURL
+		if apiURL == "" {
+			apiURL = "https://api.openai.com/v1"
+		}
+		if config.APIKey == "" {
+			return &HealthCheckResult{Healthy: false, Message: "API Key 为空"}
+		}
+
+		url := strings.TrimRight(apiURL, "/") + "/models"
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return &HealthCheckResult{Healthy: false, Message: "创建请求失败"}
+		}
+		req.Header.Set("Authorization", "Bearer "+config.APIKey)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		req = req.WithContext(ctx)
+
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return &HealthCheckResult{Healthy: false, Message: "连接超时（5s）"}
+			}
+			return &HealthCheckResult{Healthy: false, Message: "连接失败", Detail: err.Error()}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
 			return &HealthCheckResult{
 				Healthy: false,
-				Message: "ASR 服务地址不可达",
-				Detail:  err.Error(),
+				Message: "API Key 无效或无权限",
+				Detail:  fmt.Sprintf("HTTP %d", resp.StatusCode),
 			}
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return &HealthCheckResult{Healthy: true, Message: "ASR API 连通正常，API Key 有效"}
+		}
+		if resp.StatusCode == 429 {
+			return &HealthCheckResult{Healthy: true, Message: "配置正确（当前被限流，但连通性正常）"}
+		}
+
+		return &HealthCheckResult{
+			Healthy: false,
+			Message: fmt.Sprintf("ASR API 返回异常状态码 %d", resp.StatusCode),
 		}
 	}
 
+	// 阿里云 NLS：验证 AccessKey 凭证
+	if config.Provider == "aliyun_nls" {
+		// 解析 extra_config
+		var extraConfig map[string]interface{}
+		if config.ExtraConfig != "" {
+			json.Unmarshal([]byte(config.ExtraConfig), &extraConfig)
+		}
+
+		accessKeyID := config.APIKey
+		if v, ok := extraConfig["access_key_id"].(string); ok && v != "" {
+			accessKeyID = v
+		}
+		accessKeySecret, _ := extraConfig["access_key_secret"].(string)
+		appKey, _ := extraConfig["app_key"].(string)
+
+		if accessKeyID == "" || accessKeySecret == "" || appKey == "" {
+			return &HealthCheckResult{
+				Healthy: false,
+				Message: "阿里云 ASR 配置不完整",
+				Detail:  "access_key_id, access_key_secret, app_key 均为必填",
+			}
+		}
+
+		// 尝试创建 SDK 客户端验证凭证格式
+		client := asr.NewAliyunNLSASRService(accessKeyID, accessKeySecret, appKey)
+		if client == nil {
+			return &HealthCheckResult{
+				Healthy: false,
+				Message: "创建阿里云 ASR 客户端失败",
+			}
+		}
+
+		return &HealthCheckResult{
+			Healthy: true,
+			Message: "阿里云 ASR 配置格式正确，凭证已初始化",
+		}
+	}
+
+	// 其他 ASR 服务：仅验证配置格式
 	return &HealthCheckResult{
 		Healthy: true,
 		Message: "ASR 配置格式正确",

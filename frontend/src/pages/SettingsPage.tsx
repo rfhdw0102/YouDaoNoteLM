@@ -970,6 +970,27 @@ export default function SettingsPage() {
                       </div>
                     )}
 
+                    {/* 测试结果展示 - 编辑模式 */}
+                    {testResult && (
+                      <div className={cn(
+                        'p-3 rounded-lg flex items-start gap-2 text-sm',
+                        testResult.healthy
+                          ? 'bg-success/5 border border-success/20 text-success'
+                          : 'bg-error/5 border border-error/20 text-error'
+                      )}>
+                        {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
+                        <div>
+                          <p className="font-medium">{testResult.message}</p>
+                          {testResult.latency_ms > 0 && (
+                            <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
+                          )}
+                          {testResult.detail && (
+                            <p className="text-xs opacity-70 mt-0.5 break-all">{testResult.detail}</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="flex justify-end gap-2">
                       <Button
                         variant="ghost"
