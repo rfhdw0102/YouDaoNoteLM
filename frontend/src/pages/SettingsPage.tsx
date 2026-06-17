@@ -759,15 +759,6 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* 配置数量限制提示 */}
-        {activeTab !== 'youdao' && configs.length > 0 && (
-          <div className="mb-4 p-3 rounded-xl bg-bg-tertiary">
-            <p className="text-xs text-text-muted">
-              💡 每种服务类型只能配置一个。如需更换，请先删除当前配置。
-            </p>
-          </div>
-        )}
-
         {/* 向量配置特殊提示 */}
         {activeTab === 'embedding' && configs.length > 0 && (
           <div className="mb-4 p-3 rounded-xl bg-warning/5 border border-warning/20">
@@ -881,12 +872,21 @@ export default function SettingsPage() {
                 className="bg-bg-card rounded-xl border border-border-light p-5"
               >
                 {editingId === config.id ? (
-                  /* Edit Form */
+                  /* Edit/View Form */
                   <div className="space-y-4">
+                    {/* 向量模型配置只读提示 */}
+                    {activeTab === 'embedding' && (
+                      <div className="p-3 bg-warning/5 border border-warning/20 rounded-lg">
+                        <p className="text-xs text-warning">
+                          ⚠️ 向量模型配置不可修改，如需更换请删除后重新配置
+                        </p>
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 gap-4">
                       <Input
                         label="配置名称"
                         value={formData.name}
+                        disabled={activeTab === 'embedding'}
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                       />
                       <div>
@@ -895,6 +895,7 @@ export default function SettingsPage() {
                         </label>
                         <select
                           value={formData.provider}
+                          disabled={activeTab === 'embedding'}
                           onChange={(e) => {
                             const newProvider = e.target.value;
                             setFormData({
@@ -906,7 +907,10 @@ export default function SettingsPage() {
                               extra_config: {},
                             });
                           }}
-                          className="w-full h-10 px-3 rounded-lg bg-bg-tertiary border border-border-light text-sm focus:outline-none focus:border-accent"
+                          className={cn(
+                            "w-full h-10 px-3 rounded-lg bg-bg-tertiary border border-border-light text-sm focus:outline-none focus:border-accent",
+                            activeTab === 'embedding' && "opacity-60 cursor-not-allowed"
+                          )}
                         >
                           <option value="">选择服务商</option>
                           {providerOptions.map((opt) => (
@@ -952,6 +956,7 @@ export default function SettingsPage() {
                               label={required ? `${label} *` : `${label} (可选)`}
                               type={isPassword ? 'password' : field === 'dimensions' || field === 'daily_quota' ? 'number' : 'text'}
                               value={getValue()}
+                              disabled={activeTab === 'embedding'}
                               onChange={(e) => setValue(e.target.value)}
                             />
                           );
@@ -964,26 +969,6 @@ export default function SettingsPage() {
                         </p>
                       </div>
                     )}
-                    {/* 测试结果展示 */}
-                    {testResult && (
-                      <div className={cn(
-                        'p-3 rounded-lg flex items-start gap-2 text-sm',
-                        testResult.healthy
-                          ? 'bg-success/5 border border-success/20 text-success'
-                          : 'bg-error/5 border border-error/20 text-error'
-                      )}>
-                        {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
-                        <div>
-                          <p className="font-medium">{testResult.message}</p>
-                          {testResult.latency_ms > 0 && (
-                            <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
-                          )}
-                          {testResult.detail && (
-                            <p className="text-xs opacity-70 mt-0.5 break-all">{testResult.detail}</p>
-                          )}
-                        </div>
-                      </div>
-                    )}
 
                     <div className="flex justify-end gap-2">
                       <Button
@@ -994,25 +979,30 @@ export default function SettingsPage() {
                           resetForm();
                         }}
                       >
-                        <X size={14} /> 取消
+                        <X size={14} /> {activeTab === 'embedding' ? '关闭' : '取消'}
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleTest}
-                        disabled={testing || !formData.provider}
-                      >
-                        {testing ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
-                        {testing ? '测试中...' : '测试连接'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => handleUpdate(config.id)}
-                        disabled={saving}
-                      >
-                        {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                        {saving ? '验证中...' : '保存'}
-                      </Button>
+                      {/* 非向量模型配置才显示测试和保存按钮 */}
+                      {activeTab !== 'embedding' && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleTest}
+                            disabled={testing || !formData.provider}
+                          >
+                            {testing ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
+                            {testing ? '测试中...' : '测试连接'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleUpdate(config.id)}
+                            disabled={saving}
+                          >
+                            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                            {saving ? '验证中...' : '保存'}
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </div>
                 ) : (
