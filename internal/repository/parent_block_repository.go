@@ -37,7 +37,10 @@ func (r *parentBlockRepository) FindByID(id uint) (*entity.ParentBlock, error) {
 
 func (r *parentBlockRepository) FindByIDs(ids []uint) ([]*entity.ParentBlock, error) {
 	var blocks []*entity.ParentBlock
-	err := r.db.Where("id IN ?", ids).Find(&blocks).Error
+	err := r.db.
+		Joins("JOIN source ON source.id = parent_blocks.source_id AND source.deleted_at IS NULL").
+		Where("parent_blocks.id IN ?", ids).
+		Find(&blocks).Error
 	return blocks, err
 }
 

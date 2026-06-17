@@ -14,4 +14,6 @@ type ConversationRepository interface {
 	Update(conv *entity.Conversation) error
 	// Delete 删除对话（软删除）
 	Delete(id uint) error
+	// DeleteByNotebookID 删除笔记本下的所有对话（软删除）
+	DeleteByNotebookID(notebookID uint) error
 }

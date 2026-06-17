@@ -44,7 +44,7 @@ const BASE_URL = 'http://localhost:5173';
         ] }) });
       }
       if (url.includes('/youdao/import')) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, data: { task_id: 'task-1', source_ids: [1, 2, 3] } }) });
-      if (url.includes('/user/config/llm')) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, data: [{ id: 1, name: 'GPT-4', provider: 'openai', api_key: '***', api_url: '', model: 'gpt-4', enabled: true, daily_quota: 100, dimensions: 1536 }] }) });
+      if (url.includes('/user/config/llm')) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, data: [{ id: 1, name: 'GPT-4', provider: 'openai', api_key: '***', api_url: '', model: 'gpt-4', enabled: true, daily_quota: 100, dimensions: 2048 }] }) });
       if (url.includes('/user/config/')) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, data: [] }) });
       if (url.includes('/providers/active')) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, data: { source: 'user', provider: 'openai', display_name: 'OpenAI' } }) });
       if (url.includes('/providers')) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, data: [{ provider: 'openai', display_name: 'OpenAI', required_keys: ['api_key'], optional_keys: ['api_url', 'model'], key_labels: {} }] }) });

@@ -1,19 +1,23 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Send, Plus, MessageSquare, Trash2, Save, Loader2,
-  ChevronDown, Sparkles, Edit3, Square, X
+  ChevronDown, Sparkles, Edit3, Square, X, Copy, Check
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { visit } from 'unist-util-visit';
 import { useNotebookStore } from '../../stores/useNotebookStore';
 import { cn } from '../../utils/cn';
 import type { NoteType, Reference } from '../../types';
+import type { Root, Text } from 'mdast';
 
 // Reference popover component
-function ReferencePopover({ references }: { references: Reference[] }) {
+function ReferencePopover({ references, startIndex = 1 }: { references: Reference[]; startIndex?: number }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({});
   const popoverRef = useRef<HTMLDivElement>(null);
+  const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -25,23 +29,69 @@ function ReferencePopover({ references }: { references: Reference[] }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const handleToggle = (idx: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (openIndex === idx) {
+      setOpenIndex(null);
+      return;
+    }
+
+    // Calculate position
+    const button = buttonRefs.current[idx];
+    if (button) {
+      const rect = button.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      const popoverHeight = 200; // approximate height
+
+      // Determine if popover should go above or below
+      const spaceAbove = rect.top;
+      const spaceBelow = viewportHeight - rect.bottom;
+
+      let top: number;
+      const left = rect.left + rect.width / 2;
+
+      if (spaceAbove > popoverHeight || spaceAbove > spaceBelow) {
+        // Show above
+        top = rect.top - 8;
+        setPopoverStyle({
+          position: 'fixed',
+          top: `${top}px`,
+          left: `${left}px`,
+          transform: 'translate(-50%, -100%)',
+          zIndex: 9999,
+        });
+      } else {
+        // Show below
+        top = rect.bottom + 8;
+        setPopoverStyle({
+          position: 'fixed',
+          top: `${top}px`,
+          left: `${left}px`,
+          transform: 'translateX(-50%)',
+          zIndex: 9999,
+        });
+      }
+    }
+
+    setOpenIndex(idx);
+  };
+
   return (
-    <span className="inline-flex gap-1 align-super text-xs">
+    <sup className="inline-flex gap-0.5 text-xs relative">
       {references.map((ref, idx) => (
-        <span key={idx} className="relative">
+        <span key={idx}>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpenIndex(openIndex === idx ? null : idx);
-            }}
+            ref={(el) => { buttonRefs.current[idx] = el; }}
+            onClick={(e) => handleToggle(idx, e)}
             className="inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-bold bg-accent/20 text-accent hover:bg-accent/30 transition-colors cursor-pointer"
           >
-            {idx + 1}
+            {startIndex + idx}
           </button>
           {openIndex === idx && (
             <div
               ref={popoverRef}
-              className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-72 bg-bg-card border border-border-light rounded-xl shadow-xl z-50 overflow-hidden"
+              style={popoverStyle}
+              className="w-72 bg-bg-card border border-border-light rounded-xl shadow-xl overflow-hidden"
             >
               <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bg-secondary/50">
                 <span className="text-xs font-medium text-accent truncate">{ref.sourceName}</span>
@@ -66,8 +116,67 @@ function ReferencePopover({ references }: { references: Reference[] }) {
           )}
         </span>
       ))}
-    </span>
+    </sup>
   );
+}
+
+// Remark plugin to extract reference markers [1], [2], etc.
+function remarkExtractReferences(references: Reference[]) {
+  return (tree: Root) => {
+    visit(tree, 'text', (node: Text, index: number | undefined, parent: Root | undefined) => {
+      if (!parent || index === undefined) return;
+
+      const refRegex = /\[(\d+)\]/g;
+      const parts: Array<Text | { type: string; data: Record<string, unknown> }> = [];
+      let lastIndex = 0;
+      let match;
+
+      while ((match = refRegex.exec(node.value)) !== null) {
+        const refIdx = parseInt(match[1]) - 1;
+
+        // Add text before the reference
+        if (match.index > lastIndex) {
+          parts.push({
+            type: 'text',
+            value: node.value.slice(lastIndex, match.index),
+          } as Text);
+        }
+
+        // Add reference node if valid
+        if (refIdx >= 0 && refIdx < references.length) {
+          parts.push({
+            type: 'referenceMarker',
+            data: {
+              hName: 'sup',
+              hProperties: {
+                className: 'ref-marker',
+                'data-ref-idx': refIdx,
+              },
+              hChildren: [{ type: 'text', value: match[0] }],
+            },
+          });
+        } else {
+          parts.push({ type: 'text', value: match[0] } as Text);
+        }
+
+        lastIndex = match.index + match[0].length;
+      }
+
+      // Add remaining text
+      if (lastIndex < node.value.length) {
+        parts.push({
+          type: 'text',
+          value: node.value.slice(lastIndex),
+        } as Text);
+      }
+
+      if (parts.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        parent.children.splice(index, 1, ...parts as any);
+        return index + parts.length;
+      }
+    });
+  };
 }
 
 // Custom markdown component with reference support
@@ -82,40 +191,79 @@ function MarkdownWithReferences({
     return null;
   }
 
-  if (!references || references.length === 0) {
-    return (
-      <div className="prose prose-sm prose-invert max-w-none">
-        <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
-      </div>
-    );
-  }
-
-  // Split content by reference markers like [1], [2], etc.
-  const parts = content.split(/(\[\d+\])/g);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const remarkPlugins: any[] = references && references.length > 0
+    ? [remarkGfm, [remarkExtractReferences, references]]
+    : [remarkGfm];
 
   return (
-    <div className="prose prose-sm prose-invert max-w-none">
-      {parts.map((part, i) => {
-        if (!part) return null;
-        const refMatch = part.match(/^\[(\d+)\]$/);
-        if (refMatch) {
-          const refIdx = parseInt(refMatch[1]) - 1;
-          if (refIdx >= 0 && refIdx < references.length) {
-            return (
-              <ReferencePopover
-                key={i}
-                references={[references[refIdx]]}
-              />
-            );
-          }
-        }
-        return (
-          <span key={i} className="inline">
-            <Markdown remarkPlugins={[remarkGfm]}>{part}</Markdown>
-          </span>
-        );
-      })}
+    <div className="prose prose-sm prose-invert max-w-none select-text">
+      <Markdown
+        remarkPlugins={remarkPlugins}
+        components={{
+          sup: (props) => {
+            const refIdx = (props as Record<string, unknown>)['data-ref-idx'] as string | undefined;
+            if (refIdx !== undefined && references) {
+              const idx = parseInt(refIdx);
+              const ref = references[idx];
+              if (ref) {
+                return (
+                  <ReferencePopover
+                    references={[ref]}
+                    startIndex={idx + 1}
+                  />
+                );
+              }
+            }
+            return <sup {...props} />;
+          },
+        }}
+      >
+        {content}
+      </Markdown>
     </div>
+  );
+}
+
+// Copy button component with feedback
+function CopyButton({
+  content,
+  onCopy,
+  variant = 'dark'
+}: {
+  content: string;
+  onCopy: (content: string) => Promise<boolean>;
+  variant?: 'light' | 'dark';
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    const success = await onCopy(content);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const baseClasses = variant === 'light'
+    ? 'text-white/70 hover:text-white'
+    : 'text-text-muted hover:text-accent';
+
+  return (
+    <button
+      onClick={handleCopy}
+      className={`flex items-center gap-1 text-xs transition-colors cursor-pointer ${baseClasses}`}
+    >
+      {copied ? (
+        <>
+          <Check size={11} /> 已复制
+        </>
+      ) : (
+        <>
+          <Copy size={11} /> 复制
+        </>
+      )}
+    </button>
   );
 }
 
@@ -155,9 +303,20 @@ export default function ChatPanel() {
     }
   }, [currentNotebookId, conversation?.id, fetchMessages]);
 
+  const handleCopy = useCallback(async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      return true;
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      return false;
+    }
+  }, []);
+
   if (!notebook || !currentNotebookId) return null;
 
-  const selectedSources = notebook.sources.filter((s) => s.selected && s.status !== 'error');
+  // 只有已入库且选中的资料才算资料来源
+  const selectedSources = notebook.sources.filter((s) => s.selected && s.vectorized && s.status !== 'error');
 
   const handleSend = async () => {
     if (!input.trim() || isStreaming || !conversation?.id) return;
@@ -188,7 +347,7 @@ export default function ChatPanel() {
 
   const handleSaveAsNote = (content: string) => {
     const note = {
-      id: `note-${Date.now()}`,
+      id: `note-${crypto.randomUUID()}`,
       title: content.slice(0, 20).replace(/[#*\n]/g, ''),
       type: 'note' as NoteType,
       content,
@@ -359,37 +518,36 @@ export default function ChatPanel() {
                 <Sparkles size={13} className="text-white" />
               </div>
             )}
-            <div
-              className={cn(
-                'max-w-[80%] rounded-2xl px-4 py-3 text-sm',
-                msg.role === 'user'
-                  ? 'bg-accent text-white rounded-br-md'
-                  : 'bg-bg-card border border-border-light rounded-bl-md'
-              )}
-            >
-              {msg.role === 'user' ? (
-                <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
-              ) : (
-                <>
-                  {/* AI message with loading state */}
-                  {msg.isStreaming && !msg.content ? (
-                    <div className="flex items-center gap-2 py-1">
-                      <Loader2 size={14} className="animate-spin text-accent" />
-                      <span className="text-sm text-text-muted">正在思考...</span>
-                    </div>
-                  ) : (
-                    <div>
-                      <MarkdownWithReferences
-                        content={msg.isStreaming ? displayContent : msg.content}
-                        references={msg.references}
-                      />
-                      {msg.isStreaming && (
-                        <span className="inline-block w-0.5 h-3 bg-accent ml-0.5 animate-pulse" />
-                      )}
-                    </div>
-                  )}
+            {msg.role === 'user' ? (
+              <div className="flex flex-col items-end gap-1.5 max-w-[80%]">
+                <div className="rounded-2xl rounded-br-md px-4 py-3 text-sm bg-accent text-white">
+                  <div className="whitespace-pre-wrap leading-relaxed select-text">{msg.content}</div>
+                </div>
+                <CopyButton content={msg.content} onCopy={handleCopy} variant="dark" />
+              </div>
+            ) : (
+              <div className="group relative max-w-[80%] rounded-2xl rounded-bl-md px-4 py-3 text-sm bg-bg-card border border-border-light">
+                {/* AI message with loading state */}
+                {msg.isStreaming && !msg.content ? (
+                  <div className="flex items-center gap-2 py-1">
+                    <Loader2 size={14} className="animate-spin text-accent" />
+                    <span className="text-sm text-text-muted">正在思考...</span>
+                  </div>
+                ) : (
+                  <div>
+                    <MarkdownWithReferences
+                      content={msg.isStreaming ? displayContent : msg.content}
+                      references={msg.references}
+                    />
+                    {msg.isStreaming && (
+                      <span className="inline-block w-0.5 h-3 bg-accent ml-0.5 animate-pulse" />
+                    )}
+                  </div>
+                )}
 
+                {!msg.isStreaming && (
                   <div className="flex items-center gap-2 mt-2 pt-2 border-t border-border">
+                    <CopyButton content={msg.content} onCopy={handleCopy} variant="dark" />
                     <button
                       onClick={() => handleSaveAsNote(msg.content)}
                       className="flex items-center gap-1 text-xs text-text-muted hover:text-accent transition-colors cursor-pointer"
@@ -397,9 +555,9 @@ export default function ChatPanel() {
                       <Save size={11} /> 保存为笔记
                     </button>
                   </div>
-                </>
-              )}
-            </div>
+                )}
+              </div>
+            )}
             {msg.role === 'user' && (
               <div className="w-7 h-7 rounded-lg bg-accent/20 flex items-center justify-center flex-shrink-0 mt-0.5">
                 <span className="text-xs font-bold text-accent">我</span>

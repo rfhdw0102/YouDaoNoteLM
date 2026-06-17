@@ -108,6 +108,7 @@ frontend/*.tsbuildinfo
 
 # Testing
 frontend/coverage/
+/claude.md
 
 
 ffmpeg.zip

@@ -8,6 +8,7 @@ require (
 	github.com/bytedance/sonic v1.15.0
 	github.com/cloudwego/eino v0.9.4
 	github.com/cloudwego/eino-ext/components/embedding/ark v0.1.2
+	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20260612103359-5b10d0299532
 	github.com/cloudwego/eino-ext/components/model/ark v0.1.68
 	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.6
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13

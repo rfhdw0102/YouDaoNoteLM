@@ -201,3 +201,35 @@ func (ctrl *Controller) GetDownloadURL(c *gin.Context) {
 
 	response.Success(c, map[string]string{"url": url})
 }
+
+// ReimportAll 重新导入用户所有未向量化的资料
+func (ctrl *Controller) ReimportAll(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	count, err := ctrl.sourceService.ReimportAll(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, map[string]int{"reimported_count": count})
+}
+
+// ReimportSelected 重新导入指定的未向量化资料
+func (ctrl *Controller) ReimportSelected(c *gin.Context) {
+	var req struct {
+		SourceIDs []uint `json:"source_ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "请选择要导入的资料")
+		return
+	}
+
+	count, err := ctrl.sourceService.ReimportSelected(req.SourceIDs)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, map[string]int{"reimported_count": count})
+}

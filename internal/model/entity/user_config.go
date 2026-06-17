@@ -6,7 +6,7 @@ import "time"
 type UserConfig struct {
 	BaseEntity
 	UserID       uint       `gorm:"not null;uniqueIndex:uk_user_type" json:"user_id"` // 所属用户
-	User         User       `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+	User         User       `gorm:"foreignKey:UserID"`
 	ConfigType   string     `gorm:"type:varchar(20);not null;uniqueIndex:uk_user_type" json:"config_type"` // 类型: search/asr/embedding
 	Name         string     `gorm:"type:varchar(100);not null" json:"name"`                                // 配置名称
 	Provider     string     `gorm:"type:varchar(50);not null" json:"provider"`                             // 服务商

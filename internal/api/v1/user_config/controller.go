@@ -1,25 +1,35 @@
 package user_config
 
 import (
+	"encoding/json"
 	"strconv"
 
 	"YoudaoNoteLm/internal/middleware"
 	"YoudaoNoteLm/internal/model/dto/request"
 	"YoudaoNoteLm/internal/model/entity"
+	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/service"
 	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
-type Controller struct {
-	configService  service.UserConfigService
-	tokenBlacklist service.TokenBlacklistService
+var logger *zap.Logger
+
+func init() {
+	logger = zap.L()
 }
 
-func NewController(configService service.UserConfigService, tokenBlacklist service.TokenBlacklistService) *Controller {
-	return &Controller{configService: configService, tokenBlacklist: tokenBlacklist}
+type Controller struct {
+	configService    service.UserConfigService
+	tokenBlacklist   service.TokenBlacklistService
+	ingestionService rag.IngestionService
+}
+
+func NewController(configService service.UserConfigService, tokenBlacklist service.TokenBlacklistService, ingestionService rag.IngestionService) *Controller {
+	return &Controller{configService: configService, tokenBlacklist: tokenBlacklist, ingestionService: ingestionService}
 }
 
 // ===== Config Health Check =====
@@ -380,9 +390,14 @@ func (ctrl *Controller) GetActiveConfig(c *gin.Context) {
 	}
 
 	// 检查来源
-	source := config.Source
-	if source == "" {
-		source = "user"
+	source := "user"
+	if config.ExtraConfig != "" {
+		var extra map[string]interface{}
+		if json.Unmarshal([]byte(config.ExtraConfig), &extra) == nil {
+			if s, ok := extra["source"].(string); ok {
+				source = s
+			}
+		}
 	}
 
 	response.Success(c, gin.H{
@@ -470,4 +485,33 @@ func (ctrl *Controller) DeleteEmbeddingConfig(c *gin.Context) {
 		return
 	}
 	response.SuccessWithMessage(c, "删除成功", nil)
+}
+
+// DeleteEmbeddingAndCollection 删除 Embedding 配置并清除用户的 Milvus Collection
+func (ctrl *Controller) DeleteEmbeddingAndCollection(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		response.BadRequest(c, "无效的配置ID")
+		return
+	}
+
+	// 1. 删除用户的 Milvus Collection
+	if ctrl.ingestionService != nil {
+		if err := ctrl.ingestionService.DropUserCollection(c.Request.Context(), userID); err != nil {
+			// 记录错误但不阻止删除配置
+			logger.Warn("删除用户 Milvus Collection 失败",
+				zap.Uint("user_id", userID),
+				zap.Error(err),
+			)
+		}
+	}
+
+	// 2. 删除 Embedding 配置
+	if err := ctrl.configService.DeleteEmbeddingConfig(uint(id)); err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.SuccessWithMessage(c, "删除成功，知识库数据已清除", nil)
 }

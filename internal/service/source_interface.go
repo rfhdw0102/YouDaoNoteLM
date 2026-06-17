@@ -16,4 +16,8 @@ type SourceService interface {
 	GetContent(id uint) (string, error)
 	GetOriginalContent(id uint) (content string, contentType string, err error)
 	GetDownloadURL(id uint) (string, error)
+	// ReimportAll 重新导入用户所有未向量化的资料
+	ReimportAll(userID uint) (int, error)
+	// ReimportSelected 重新导入指定的未向量化资料
+	ReimportSelected(sourceIDs []uint) (int, error)
 }

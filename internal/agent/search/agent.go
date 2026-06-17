@@ -26,8 +26,8 @@ const maxAgentRounds = 2
 type SearchAgent struct {
 	configService service.ConfigService
 	importer      service.ImporterService
-	youdaoService service.YoudaoService  // 用于 import_document tool
-	youdaoCLI     externalYoudao.CLI     // 用于 import_document tool
+	youdaoService service.YoudaoService // 用于 import_document tool
+	youdaoCLI     externalYoudao.CLI    // 用于 import_document tool
 }
 
 // NewSearchAgent 创建搜索 Agent

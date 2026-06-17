@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"YoudaoNoteLm/internal/repository"
 	"YoudaoNoteLm/pkg/logger"
@@ -14,7 +13,8 @@ import (
 )
 
 // EmbedderProvider 根据 userID 获取对应的 Embedder
-type EmbedderProvider func(ctx context.Context, userID uint) (embedding.Embedder, error)
+// 返回: embedder, batchSize, vectorDim, error
+type EmbedderProvider func(ctx context.Context, userID uint) (embedding.Embedder, int, int, error)
 
 // IngestionService 入库服务接口
 type IngestionService interface {
@@ -24,6 +24,8 @@ type IngestionService interface {
 	IngestSingle(ctx context.Context, sourceID uint) error
 	// DeleteSource 删除源的向量数据
 	DeleteSource(ctx context.Context, userID uint, sourceID uint) error
+	// DropUserCollection 删除用户的整个 Milvus Collection（不可逆操作）
+	DropUserCollection(ctx context.Context, userID uint) error
 }
 
 type ingestionService struct {
@@ -52,8 +54,6 @@ func NewIngestionService(
 
 // IngestSingle 单个源入库
 func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) error {
-	totalStart := time.Now()
-
 	// 1. 查询源
 	source, err := s.sourceRepo.FindByID(sourceID)
 	if err != nil {
@@ -75,60 +75,36 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 	}
 
 	// 3. AST 解析
-	stepStart := time.Now()
 	p := NewMarkdownParser()
 	docs, err := p.Parse(ctx, strings.NewReader(source.MarkdownContent))
 	if err != nil {
 		s.updateFailedStatus(sourceID, err.Error())
 		return err
 	}
-	logger.Info("AST 解析完成",
-		zap.Uint("source_id", sourceID),
-		zap.Int("doc_count", len(docs)),
-		zap.Duration("elapsed", time.Since(stepStart)),
-	)
 
 	// 4. 构建 ParentBlock
-	stepStart = time.Now()
 	parentTransformer := NewParentTransformer(1000)
 	parentDocs, err := parentTransformer.Transform(ctx, docs)
 	if err != nil {
 		s.updateFailedStatus(sourceID, err.Error())
 		return err
 	}
-	logger.Info("ParentBlock 构建完成",
-		zap.Uint("source_id", sourceID),
-		zap.Int("parent_count", len(parentDocs)),
-		zap.Duration("elapsed", time.Since(stepStart)),
-	)
 
 	// 5. 分割 ChildChunk
-	stepStart = time.Now()
 	childTransformer := NewChildTransformer(400)
 	childDocs, err := childTransformer.Transform(ctx, parentDocs)
 	if err != nil {
 		s.updateFailedStatus(sourceID, err.Error())
 		return err
 	}
-	logger.Info("ChildChunk 分割完成",
-		zap.Uint("source_id", sourceID),
-		zap.Int("child_count", len(childDocs)),
-		zap.Duration("elapsed", time.Since(stepStart)),
-	)
 
 	// 6. 语义增强
-	stepStart = time.Now()
 	enhancer := NewSemanticTransformer()
 	enhancedDocs, err := enhancer.Transform(ctx, childDocs)
 	if err != nil {
 		s.updateFailedStatus(sourceID, err.Error())
 		return err
 	}
-	logger.Info("语义增强完成",
-		zap.Uint("source_id", sourceID),
-		zap.Int("enhanced_count", len(enhancedDocs)),
-		zap.Duration("elapsed", time.Since(stepStart)),
-	)
 
 	// 7. 检查是否有可入库的文档
 	if len(enhancedDocs) == 0 {
@@ -137,24 +113,44 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 	}
 
 	enhancedDocs = WrapDocuments(enhancedDocs, sourceID)
+
+	// 8. 先写入 MySQL ParentBlock，拿到真实的自增 ID
+	blocks := ToParentBlocks(parentDocs, sourceID)
+	if err := s.retry(func() error {
+		return s.parentRepo.BatchCreate(blocks)
+	}); err != nil {
+		s.updateFailedStatus(sourceID, "写入 MySQL 失败: "+err.Error())
+		return err
+	}
+	logger.Info("MySQL ParentBlock 写入成功",
+		zap.Uint("source_id", sourceID),
+		zap.Int("block_count", len(blocks)),
+	)
+
+	// 8.5 构建 parent_index → MySQL ID 的映射，更新子块 metadata
+	parentIndexToID := make(map[int]uint, len(blocks))
+	for _, b := range blocks {
+		parentIndexToID[b.ChunkIndex] = b.ID
+	}
+	for _, doc := range enhancedDocs {
+		if pidx, ok := doc.MetaData["parent_index"].(int); ok {
+			if realID, exists := parentIndexToID[pidx]; exists {
+				doc.MetaData["parent_block_id"] = realID
+			}
+		}
+	}
+
 	logger.Info("准备向量化",
 		zap.Uint("source_id", sourceID),
 		zap.Int("chunk_count", len(enhancedDocs)),
 	)
-
-	// 获取 Embedder
-	stepStart = time.Now()
-	embedder, err := s.embedderProvider(ctx, source.UserID)
+	embedder, embedBatchSize, vectorDim, err := s.embedderProvider(ctx, source.UserID)
 	if err != nil {
 		errMsg := "获取 Embedder 失败: " + err.Error()
-		logger.Error(errMsg, zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID), zap.Duration("elapsed", time.Since(stepStart)))
+		logger.Error(errMsg, zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID))
 		s.updateFailedStatus(sourceID, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
-	logger.Info("获取 Embedder 完成",
-		zap.Uint("source_id", sourceID),
-		zap.Duration("elapsed", time.Since(stepStart)),
-	)
 
 	// 提取所有文本用于批量 embedding
 	texts := make([]string, len(enhancedDocs))
@@ -162,11 +158,8 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 		texts[i] = doc.Content
 	}
 
-	// 分批调用 Embedding API（豆包限制每次最多 256 条）
-	const embedBatchSize = 256
 	vectors := make([][]float32, len(texts))
-	stepStart = time.Now()
-	logger.Info("开始调用 Embedding API", zap.Uint("source_id", sourceID), zap.Int("text_count", len(texts)))
+	logger.Info("调用 Embedding API", zap.Uint("source_id", sourceID), zap.Int("text_count", len(texts)))
 
 	for start := 0; start < len(texts); start += embedBatchSize {
 		end := start + embedBatchSize
@@ -176,7 +169,6 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 		batchTexts := texts[start:end]
 
 		var batchVectors [][]float64
-		batchStart := time.Now()
 		if err := s.retry(func() error {
 			var err error
 			batchVectors, err = embedder.EmbedStrings(ctx, batchTexts)
@@ -192,7 +184,7 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 			return nil
 		}); err != nil {
 			errMsg := "Embedding 失败: " + err.Error()
-			logger.Error(errMsg, zap.Uint("source_id", sourceID), zap.Duration("elapsed", time.Since(stepStart)))
+			logger.Error(errMsg, zap.Uint("source_id", sourceID))
 			s.updateFailedStatus(sourceID, errMsg)
 			return fmt.Errorf("%s", errMsg)
 		}
@@ -209,87 +201,44 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 			zap.Uint("source_id", sourceID),
 			zap.Int("batch_start", start),
 			zap.Int("batch_end", end),
-			zap.Duration("batch_elapsed", time.Since(batchStart)),
 		)
 	}
-	logger.Info("Embedding 全部完成",
-		zap.Uint("source_id", sourceID),
-		zap.Int("vector_count", len(vectors)),
-		zap.Duration("total_elapsed", time.Since(stepStart)),
-	)
+	logger.Info("Embedding 全部完成", zap.Uint("source_id", sourceID), zap.Int("vector_count", len(vectors)))
 
-	// 8.5 生成 sparse vector
-	stepStart = time.Now()
+	// 9. 生成 sparse vector
 	sparseVectors := make([]map[int32]float32, len(enhancedDocs))
 	for i, doc := range enhancedDocs {
 		sparseVectors[i] = GenerateSparseVector(doc.Content)
 	}
-	logger.Info("Sparse vector 生成完成",
-		zap.Uint("source_id", sourceID),
-		zap.Int("count", len(sparseVectors)),
-		zap.Duration("elapsed", time.Since(stepStart)),
-	)
+	logger.Info("Sparse vector 生成完成", zap.Uint("source_id", sourceID), zap.Int("count", len(sparseVectors)))
 
-	// 9. 确保用户的 Milvus Collection 存在
-	stepStart = time.Now()
-	if err := s.milvusWriter.EnsureCollection(ctx, source.UserID); err != nil {
+	// 10. 确保用户的 Milvus Collection 存在
+	if err := s.milvusWriter.EnsureCollection(ctx, source.UserID, vectorDim); err != nil {
 		errMsg := "确保 Milvus Collection 失败: " + err.Error()
-		logger.Error(errMsg, zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID), zap.Duration("elapsed", time.Since(stepStart)))
+		logger.Error(errMsg, zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID))
 		s.updateFailedStatus(sourceID, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
-	logger.Info("Milvus Collection 确认完成",
-		zap.Uint("source_id", sourceID),
-		zap.Duration("elapsed", time.Since(stepStart)),
-	)
 
-	// 10. 写入 Milvus
-	stepStart = time.Now()
-	logger.Info("开始写入 Milvus",
-		zap.Uint("source_id", sourceID),
-		zap.Uint("user_id", source.UserID),
-		zap.Int("doc_count", len(enhancedDocs)),
-	)
+	// 11. 写入 Milvus
+	logger.Info("写入 Milvus", zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID), zap.Int("doc_count", len(enhancedDocs)))
 	if err := s.retry(func() error {
-		return s.milvusWriter.StoreWithSparse(ctx, source.UserID, enhancedDocs, vectors, sparseVectors)
+		return s.milvusWriter.StoreWithSparse(ctx, source.UserID, enhancedDocs, vectors, sparseVectors, vectorDim)
 	}); err != nil {
 		errMsg := "写入 Milvus 失败: " + err.Error()
-		logger.Error(errMsg, zap.Uint("source_id", sourceID), zap.Duration("elapsed", time.Since(stepStart)))
+		logger.Error(errMsg, zap.Uint("source_id", sourceID))
 		s.updateFailedStatus(sourceID, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
-	logger.Info("Milvus 写入成功",
-		zap.Uint("source_id", sourceID),
-		zap.Duration("elapsed", time.Since(stepStart)),
-	)
+	logger.Info("Milvus 写入成功", zap.Uint("source_id", sourceID))
 
-	// 11. 写入 MySQL ParentBlock
-	stepStart = time.Now()
-	blocks := ToParentBlocks(parentDocs, sourceID)
-	if err := s.retry(func() error {
-		return s.parentRepo.BatchCreate(blocks)
-	}); err != nil {
-		s.updateFailedStatus(sourceID, "写入 MySQL 失败: "+err.Error())
-		return err
-	}
-	logger.Info("MySQL ParentBlock 写入成功",
-		zap.Uint("source_id", sourceID),
-		zap.Int("block_count", len(blocks)),
-		zap.Duration("elapsed", time.Since(stepStart)),
-	)
-
-	// 12. 更新状态为就绪
+	// 11. 更新状态为就绪
 	if err := s.sourceRepo.UpdateStatus(sourceID, "ready", ""); err != nil {
 		logger.Warn("更新源状态为就绪失败", zap.Uint("source_id", sourceID), zap.Error(err))
 	}
 	if err := s.sourceRepo.SetVectorized(sourceID); err != nil {
 		logger.Warn("标记源已向量化失败", zap.Uint("source_id", sourceID), zap.Error(err))
 	}
-
-	logger.Info("入库流程完成",
-		zap.Uint("source_id", sourceID),
-		zap.Duration("total_elapsed", time.Since(totalStart)),
-	)
 	return nil
 }
 
@@ -313,9 +262,9 @@ func (s *ingestionService) Ingest(ctx context.Context, sourceIDs []uint) error {
 	return lastErr
 }
 
-// DeleteSource 删除源的向量数据
+// DeleteSource 删除源的向量数据和父块数据
 func (s *ingestionService) DeleteSource(ctx context.Context, userID uint, sourceID uint) error {
-	logger.Info("删除源向量数据",
+	logger.Info("删除源数据",
 		zap.Uint("user_id", userID),
 		zap.Uint("source_id", sourceID),
 	)
@@ -327,9 +276,46 @@ func (s *ingestionService) DeleteSource(ctx context.Context, userID uint, source
 		)
 		return fmt.Errorf("删除向量数据失败: %w", err)
 	}
-	logger.Info("删除源向量数据成功",
+	// 删除 MySQL 中的 parent_blocks（source 软删除不会触发 CASCADE）
+	if err := s.parentRepo.DeleteBySourceID(sourceID); err != nil {
+		logger.Error("删除 parent_blocks 失败",
+			zap.Uint("source_id", sourceID),
+			zap.Error(err),
+		)
+		return fmt.Errorf("删除 parent_blocks 失败: %w", err)
+	}
+	logger.Info("删除源数据成功",
 		zap.Uint("user_id", userID),
 		zap.Uint("source_id", sourceID),
+	)
+	return nil
+}
+
+// DropUserCollection 删除用户的整个 Milvus Collection
+// 注意：此操作不可逆，会永久删除该用户的所有向量数据
+func (s *ingestionService) DropUserCollection(ctx context.Context, userID uint) error {
+	logger.Info("删除用户 Milvus Collection",
+		zap.Uint("user_id", userID),
+	)
+	if err := s.milvusWriter.DropUserCollection(ctx, userID); err != nil {
+		logger.Error("删除用户 Milvus Collection 失败",
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+		)
+		return fmt.Errorf("删除用户 Collection 失败: %w", err)
+	}
+
+	// 重置用户所有资料的向量化状态，使其可以重新导入
+	if err := s.sourceRepo.ResetVectorizedByUserID(userID); err != nil {
+		logger.Error("重置用户资料向量化状态失败",
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+		)
+		// 不返回错误，因为 collection 已经删除成功
+	}
+
+	logger.Info("删除用户 Milvus Collection 成功",
+		zap.Uint("user_id", userID),
 	)
 	return nil
 }

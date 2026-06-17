@@ -8,22 +8,25 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 
+	"YoudaoNoteLm/internal/model/dto/response"
 	"YoudaoNoteLm/internal/rag"
 )
 
 // RAGRetrieverTool 知识库检索工具
 type RAGRetrieverTool struct {
-	retriever rag.RAGRetriever
-	userID    uint
-	sourceIDs []uint
+	retriever  rag.RAGRetriever
+	userID     uint
+	sourceIDs  []uint
+	references *[]response.Reference // 引用收集器
 }
 
 // NewRAGRetrieverTool 创建检索工具
-func NewRAGRetrieverTool(retriever rag.RAGRetriever, userID uint, sourceIDs []uint) tool.InvokableTool {
+func NewRAGRetrieverTool(retriever rag.RAGRetriever, userID uint, sourceIDs []uint, references *[]response.Reference) tool.InvokableTool {
 	return &RAGRetrieverTool{
-		retriever: retriever,
-		userID:    userID,
-		sourceIDs: sourceIDs,
+		retriever:  retriever,
+		userID:     userID,
+		sourceIDs:  sourceIDs,
+		references: references,
 	}
 }
 
@@ -70,6 +73,24 @@ func (t *RAGRetrieverTool) InvokableRun(ctx context.Context, argumentsInJSON str
 	})
 	if err != nil {
 		return "检索失败: " + err.Error(), nil
+	}
+
+	if t.references != nil {
+		*t.references = (*t.references)[:0]
+		for _, r := range results {
+			*t.references = append(*t.references, response.Reference{
+				SourceID:      r.SourceID,
+				SourceName:    r.SourceName,
+				ParentBlockID: r.ParentBlockID,
+				ChunkContent: func() string {
+					if r.ParentContent != "" {
+						return r.ParentContent
+					}
+					return r.Content
+				}(),
+				Score: r.Score,
+			})
+		}
 	}
 
 	return FormatRetrievalResults(results), nil

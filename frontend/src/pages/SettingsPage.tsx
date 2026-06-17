@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Settings, Cpu, Search, Mic, Database, Plus, Trash2,
   Check, AlertCircle, ArrowLeft, Save, X, BookOpen,
@@ -19,6 +19,20 @@ import type { YoudaoBindStatus } from '../api/youdao';
 import { getErrorMessage } from '../utils/error';
 
 type ConfigTab = 'llm' | 'search' | 'asr' | 'embedding' | 'youdao';
+
+// 默认 API 地址映射
+const DEFAULT_API_URLS: Record<string, string> = {
+  openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com',
+  deepseek: 'https://api.deepseek.com/v1',
+  doubao: 'https://ark.cn-beijing.volces.com/api/v3',
+  volcengine: 'https://ark.cn-beijing.volces.com/api/v3',
+  zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+  qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  baichuan: 'https://api.baichuan-ai.com/v1',
+  moonshot: 'https://api.moonshot.cn/v1',
+  minimax: 'https://api.minimax.chat/v1',
+};
 
 export default function SettingsPage() {
   const navigate = useNavigate();
@@ -43,6 +57,9 @@ export default function SettingsPage() {
   const [youdaoLoading, setYoudaoLoading] = useState(false);
   const [youdaoError, setYoudaoError] = useState<string | null>(null);
 
+  // 删除确认弹窗状态
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+
   // Form state
   const [formData, setFormData] = useState<UserConfigRequest>({
     name: '',
@@ -52,7 +69,7 @@ export default function SettingsPage() {
     model: '',
     daily_quota: 100,
     extra_config: {},
-    dimensions: 1536,
+    dimensions: 2048,
   });
 
   // 获取当前选中 provider 的配置要求
@@ -418,6 +435,12 @@ export default function SettingsPage() {
   };
 
   const handleDelete = async (id: number) => {
+    // 如果是向量配置，显示确认弹窗
+    if (activeTab === 'embedding') {
+      setDeleteConfirmId(id);
+      return;
+    }
+
     try {
       let res;
       switch (activeTab) {
@@ -430,9 +453,6 @@ export default function SettingsPage() {
         case 'asr':
           res = await userConfigApi.deleteASRConfig(id);
           break;
-        case 'embedding':
-          res = await userConfigApi.deleteEmbeddingConfig(id);
-          break;
       }
       if (res && res.code === 0) {
         fetchConfigs();
@@ -440,6 +460,27 @@ export default function SettingsPage() {
       }
     } catch (error) {
       console.error('Failed to delete config:', error);
+    }
+  };
+
+  // 确认删除向量配置（包含删除 Milvus Collection）
+  const handleConfirmDeleteEmbedding = async () => {
+    if (!deleteConfirmId) return;
+
+    try {
+      const res = await userConfigApi.deleteEmbeddingAndCollection(deleteConfirmId);
+      if (res && res.code === 0) {
+        setDeleteConfirmId(null);
+        fetchConfigs();
+        fetchActiveProvider();
+      } else if (res && res.message) {
+        setError(res.message);
+        setDeleteConfirmId(null);
+      }
+    } catch (error) {
+      console.error('Failed to delete embedding config:', error);
+      setError('删除配置失败');
+      setDeleteConfirmId(null);
     }
   };
 
@@ -546,7 +587,7 @@ export default function SettingsPage() {
       api_url: '',
       model: '',
       daily_quota: 100,
-      dimensions: 1536,
+      dimensions: 2048,
       extra_config: {},
     });
     setTestResult(null);
@@ -571,7 +612,7 @@ export default function SettingsPage() {
       api_url: config.api_url,
       model: config.model || '',
       daily_quota: config.daily_quota || 100,
-      dimensions: config.dimensions || 1536,
+      dimensions: config.dimensions || 2048,
       extra_config: extraConfig,
     });
   };
@@ -718,11 +759,11 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* 配置数量限制提示 */}
-        {activeTab !== 'youdao' && configs.length > 0 && (
-          <div className="mb-4 p-3 rounded-xl bg-bg-tertiary">
-            <p className="text-xs text-text-muted">
-              💡 每种服务类型只能配置一个。如需更换，请先删除当前配置。
+        {/* 向量配置特殊提示 */}
+        {activeTab === 'embedding' && configs.length > 0 && (
+          <div className="mb-4 p-3 rounded-xl bg-warning/5 border border-warning/20">
+            <p className="text-xs text-warning">
+              ⚠️ 建议配置好向量模型之后不要再进行更换。更换向量模型将导致原有知识库不可用，需要重新导入所有资料。
             </p>
           </div>
         )}
@@ -831,12 +872,21 @@ export default function SettingsPage() {
                 className="bg-bg-card rounded-xl border border-border-light p-5"
               >
                 {editingId === config.id ? (
-                  /* Edit Form */
+                  /* Edit/View Form */
                   <div className="space-y-4">
+                    {/* 向量模型配置只读提示 */}
+                    {activeTab === 'embedding' && (
+                      <div className="p-3 bg-warning/5 border border-warning/20 rounded-lg">
+                        <p className="text-xs text-warning">
+                          ⚠️ 向量模型配置不可修改，如需更换请删除后重新配置
+                        </p>
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 gap-4">
                       <Input
                         label="配置名称"
                         value={formData.name}
+                        disabled={activeTab === 'embedding'}
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                       />
                       <div>
@@ -845,8 +895,22 @@ export default function SettingsPage() {
                         </label>
                         <select
                           value={formData.provider}
-                          onChange={(e) => setFormData({ ...formData, provider: e.target.value })}
-                          className="w-full h-10 px-3 rounded-lg bg-bg-tertiary border border-border-light text-sm focus:outline-none focus:border-accent"
+                          disabled={activeTab === 'embedding'}
+                          onChange={(e) => {
+                            const newProvider = e.target.value;
+                            setFormData({
+                              ...formData,
+                              provider: newProvider,
+                              api_url: DEFAULT_API_URLS[newProvider] || '',
+                              api_key: '',
+                              model: '',
+                              extra_config: {},
+                            });
+                          }}
+                          className={cn(
+                            "w-full h-10 px-3 rounded-lg bg-bg-tertiary border border-border-light text-sm focus:outline-none focus:border-accent",
+                            activeTab === 'embedding' && "opacity-60 cursor-not-allowed"
+                          )}
                         >
                           <option value="">选择服务商</option>
                           {providerOptions.map((opt) => (
@@ -877,7 +941,7 @@ export default function SettingsPage() {
                             if (field === 'api_key' || field === 'api_url' || field === 'model') {
                               setFormData({ ...formData, [field]: val });
                             } else if (field === 'dimensions' || field === 'daily_quota') {
-                              setFormData({ ...formData, [field]: parseInt(val) || (field === 'dimensions' ? 1536 : 100) });
+                              setFormData({ ...formData, [field]: parseInt(val) || (field === 'dimensions' ? 2048 : 100) });
                             } else {
                               setFormData({
                                 ...formData,
@@ -892,6 +956,7 @@ export default function SettingsPage() {
                               label={required ? `${label} *` : `${label} (可选)`}
                               type={isPassword ? 'password' : field === 'dimensions' || field === 'daily_quota' ? 'number' : 'text'}
                               value={getValue()}
+                              disabled={activeTab === 'embedding'}
                               onChange={(e) => setValue(e.target.value)}
                             />
                           );
@@ -904,7 +969,8 @@ export default function SettingsPage() {
                         </p>
                       </div>
                     )}
-                    {/* 测试结果展示 */}
+
+                    {/* 测试结果展示 - 编辑模式 */}
                     {testResult && (
                       <div className={cn(
                         'p-3 rounded-lg flex items-start gap-2 text-sm',
@@ -934,25 +1000,30 @@ export default function SettingsPage() {
                           resetForm();
                         }}
                       >
-                        <X size={14} /> 取消
+                        <X size={14} /> {activeTab === 'embedding' ? '关闭' : '取消'}
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleTest}
-                        disabled={testing || !formData.provider}
-                      >
-                        {testing ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
-                        {testing ? '测试中...' : '测试连接'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => handleUpdate(config.id)}
-                        disabled={saving}
-                      >
-                        {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                        {saving ? '验证中...' : '保存'}
-                      </Button>
+                      {/* 非向量模型配置才显示测试和保存按钮 */}
+                      {activeTab !== 'embedding' && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleTest}
+                            disabled={testing || !formData.provider}
+                          >
+                            {testing ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
+                            {testing ? '测试中...' : '测试连接'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleUpdate(config.id)}
+                            disabled={saving}
+                          >
+                            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                            {saving ? '验证中...' : '保存'}
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -1059,7 +1130,17 @@ export default function SettingsPage() {
                     </label>
                     <select
                       value={formData.provider}
-                      onChange={(e) => setFormData({ ...formData, provider: e.target.value })}
+                      onChange={(e) => {
+                        const newProvider = e.target.value;
+                        setFormData({
+                          ...formData,
+                          provider: newProvider,
+                          api_url: DEFAULT_API_URLS[newProvider] || '',
+                          api_key: '',
+                          model: '',
+                          extra_config: {},
+                        });
+                      }}
                       className="w-full h-10 px-3 rounded-lg bg-bg-tertiary border border-border-light text-sm focus:outline-none focus:border-accent"
                     >
                       <option value="">选择服务商</option>
@@ -1091,7 +1172,7 @@ export default function SettingsPage() {
                         if (field === 'api_key' || field === 'api_url' || field === 'model') {
                           setFormData({ ...formData, [field]: val });
                         } else if (field === 'dimensions' || field === 'daily_quota') {
-                          setFormData({ ...formData, [field]: parseInt(val) || (field === 'dimensions' ? 1536 : 100) });
+                          setFormData({ ...formData, [field]: parseInt(val) || (field === 'dimensions' ? 2048 : 100) });
                         } else {
                           setFormData({
                             ...formData,
@@ -1173,6 +1254,48 @@ export default function SettingsPage() {
             )
           )
         )}
+
+        {/* 删除向量配置确认弹窗 */}
+        <AnimatePresence>
+          {deleteConfirmId && (
+            <>
+              <div className="fixed inset-0 bg-black/50 z-50" onClick={() => setDeleteConfirmId(null)} />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[420px] bg-bg-card rounded-2xl border border-border-light shadow-2xl p-6"
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-full bg-error/10 flex items-center justify-center">
+                    <AlertCircle size={20} className="text-error" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-text-primary">确认删除向量模型</h3>
+                </div>
+                <div className="mb-6 p-4 rounded-xl bg-warning/5 border border-warning/20">
+                  <p className="text-sm text-warning font-medium mb-2">⚠️ 此操作不可逆！</p>
+                  <p className="text-sm text-text-secondary">
+                    更换向量模型将导致原有知识库不可用，需要重新导入。删除后，系统将自动清除该账号下的所有向量数据。
+                  </p>
+                </div>
+                <div className="flex justify-end gap-3">
+                  <Button
+                    variant="ghost"
+                    onClick={() => setDeleteConfirmId(null)}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={handleConfirmDeleteEmbedding}
+                  >
+                    确认删除
+                  </Button>
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
