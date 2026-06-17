@@ -116,20 +116,21 @@ func NewEmbedderFromConfig(ctx context.Context, cfg *entity.UserConfig) (embeddi
 	return NewEmbedder(ctx, embeddingCfg)
 }
 
-// GetBatchSizeByAPIKey 根据 API Key 前缀判断模型商，返回对应的批量限制
-// 火山引擎/豆包: ark- 前缀，限制 256
-// OpenAI 兼容: sk- 前缀，限制 2048
-// 其他未知: 默认 25（保守值），比如通义，智谱
-func GetBatchSizeByAPIKey(apiKey string) int {
-	switch {
-	case strings.HasPrefix(apiKey, "ark-"):
+// GetBatchSizeByProvider 根据 provider 和 baseURL 返回对应的批量限制
+func GetBatchSizeByProvider(provider, baseURL string) int {
+	switch EmbeddingProvider(provider) {
+	case ProviderArk, ProviderVolcengine:
 		// 火山引擎/豆包
 		return 256
-	case strings.HasPrefix(apiKey, "sk-"):
-		// OpenAI 兼容接口
+	case ProviderOpenAI:
+		// 检查是否是通义千问
+		if strings.Contains(baseURL, "dashscope.aliyuncs.com") {
+			return 10
+		}
+		// OpenAI
 		return 2048
 	default:
 		// 未知厂商，使用保守值
-		return 25
+		return 10
 	}
 }

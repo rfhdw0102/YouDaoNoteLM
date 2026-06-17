@@ -116,7 +116,13 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 
 	// 2. 获取用户的 LLM 配置
 	logger.Info("[Agent] 步骤1: 获取用户 LLM 配置")
-	llmConfig, err := s.llmConfigRepo.FindDefaultByUserID(req.UserID)
+	var llmConfig *entity.UserLLMConfig
+	var err error
+	if req.LLMConfigID > 0 {
+		llmConfig, err = s.llmConfigRepo.FindByIDAndUserID(req.LLMConfigID, req.UserID)
+	} else {
+		llmConfig, err = s.llmConfigRepo.FindDefaultByUserID(req.UserID)
+	}
 	if err != nil || llmConfig == nil {
 		logger.Error("[Agent] 获取 LLM 配置失败", zap.Error(err))
 		s.sendAgentError(eventCh, "获取 AI 配置失败，请先在设置中配置 LLM 服务")
