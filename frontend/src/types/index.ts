@@ -16,6 +16,7 @@ export interface Source {
   errorMessage?: string;
   previewId?: string;     // for audio: pending preview ID (not yet confirmed)
   taskId?: string;        // 后端导入任务 ID（loading 状态下用于取消）
+  vectorized?: boolean;   // 是否已向量化入库
   createdAt: string;
   updatedAt: string;
 }

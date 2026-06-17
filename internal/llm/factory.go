@@ -13,7 +13,7 @@ import (
 )
 
 // NewChatModel 根据用户 LLM 配置创建 ChatModel
-func NewChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ChatModel, error) {
+func NewChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCallingChatModel, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("LLM 配置不能为空")
 	}
@@ -50,7 +50,7 @@ func NewToolCallingChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (mo
 }
 
 // newArkChatModel 创建火山引擎 Ark ChatModel
-func newArkChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ChatModel, error) {
+func newArkChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCallingChatModel, error) {
 	arkCfg := &ark.ChatModelConfig{
 		APIKey: cfg.APIKey,
 		Model:  cfg.Model,
@@ -62,7 +62,7 @@ func newArkChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.Chat
 }
 
 // newDeepSeekChatModel 创建 DeepSeek ChatModel
-func newDeepSeekChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ChatModel, error) {
+func newDeepSeekChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCallingChatModel, error) {
 	dsCfg := &deepseek.ChatModelConfig{
 		APIKey: cfg.APIKey,
 		Model:  cfg.Model,
@@ -74,7 +74,7 @@ func newDeepSeekChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model
 }
 
 // newOpenAIChatModel 创建 OpenAI ChatModel
-func newOpenAIChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ChatModel, error) {
+func newOpenAIChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCallingChatModel, error) {
 	oaiCfg := &openai.ChatModelConfig{
 		APIKey: cfg.APIKey,
 		Model:  cfg.Model,
@@ -86,7 +86,7 @@ func newOpenAIChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.C
 }
 
 // newQianwenChatModel 创建千问 ChatModel（使用 OpenAI 兼容接口）
-func newQianwenChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ChatModel, error) {
+func newQianwenChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCallingChatModel, error) {
 	qwCfg := &openai.ChatModelConfig{
 		APIKey:  cfg.APIKey,
 		Model:   cfg.Model,
@@ -99,7 +99,7 @@ func newQianwenChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.
 }
 
 // newAnthropicChatModel 创建 Anthropic (Claude) ChatModel
-func newAnthropicChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ChatModel, error) {
+func newAnthropicChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCallingChatModel, error) {
 	baseURL := "https://api.anthropic.com"
 	if cfg.APIURL != "" {
 		baseURL = cfg.APIURL

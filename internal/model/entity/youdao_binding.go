@@ -4,7 +4,7 @@ package entity
 type YoudaoBinding struct {
 	BaseEntity
 	UserID uint   `gorm:"not null;uniqueIndex:uk_user" json:"user_id"` // 所属用户
-	User   User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+	User   User   `gorm:"foreignKey:UserID"`
 	APIKey string `gorm:"type:varchar(512);not null" json:"api_key"`     // 有道API密钥
 	Status string `gorm:"type:varchar(20);default:active" json:"status"` // 状态: active/revoked
 }

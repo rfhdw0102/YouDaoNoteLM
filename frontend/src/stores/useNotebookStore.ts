@@ -87,6 +87,10 @@ interface NotebookState {
   renameNote: (notebookId: string, noteId: string, title: string) => void;
   updateNoteContent: (notebookId: string, noteId: string, content: string) => void;
   toggleNoteSource: (notebookId: string, noteId: string) => void;
+
+  // Reimport actions
+  reimportAll: () => Promise<number>;
+  reimportSelected: (sourceIds: string[]) => Promise<number>;
 }
 
 // Helper: convert backend SourceData to frontend Source
@@ -107,9 +111,10 @@ function toSource(s: sourceApi.SourceData): Source {
     type: s.type === 'note' ? 'youdao' : s.type,
     size: s.file_size || undefined,
     url: s.original_url || undefined,
-    selected: true, // default selected
+    selected: s.vectorized, // 只有已入库的默认选中
     status,
     errorMessage: s.error_message || undefined,
+    vectorized: s.vectorized,
     createdAt: s.created_at,
     updatedAt: s.updated_at,
   };
@@ -1357,5 +1362,32 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           : n
       ),
     }));
+  },
+
+  reimportAll: async () => {
+    const res = await sourceApi.reimportAll();
+    if (res.code === 0) {
+      // 刷新所有笔记本的 sources
+      const { notebooks } = get();
+      for (const notebook of notebooks) {
+        await get().fetchSources(notebook.id);
+      }
+      return res.data.reimported_count;
+    }
+    throw new Error(res.message || '重新导入失败');
+  },
+
+  reimportSelected: async (sourceIds: string[]) => {
+    const numericIds = sourceIds.map(id => Number(id));
+    const res = await sourceApi.reimportSources(numericIds);
+    if (res.code === 0) {
+      // 刷新当前笔记本的 sources
+      const { currentNotebookId } = get();
+      if (currentNotebookId) {
+        await get().fetchSources(currentNotebookId);
+      }
+      return res.data.reimported_count;
+    }
+    throw new Error(res.message || '重新导入失败');
   },
 }));

@@ -51,3 +51,8 @@ func (r *conversationRepository) Update(conv *entity.Conversation) error {
 func (r *conversationRepository) Delete(id uint) error {
 	return r.db.Delete(&entity.Conversation{}, id).Error
 }
+
+// DeleteByNotebookID 删除笔记本下的所有对话（软删除）
+func (r *conversationRepository) DeleteByNotebookID(notebookID uint) error {
+	return r.db.Where("notebook_id = ?", notebookID).Delete(&entity.Conversation{}).Error
+}

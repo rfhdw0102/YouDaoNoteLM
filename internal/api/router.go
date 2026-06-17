@@ -14,6 +14,7 @@ import (
 	userconfig "YoudaoNoteLm/internal/api/v1/user_config"
 	youdao "YoudaoNoteLm/internal/api/v1/youdao"
 	"YoudaoNoteLm/internal/middleware"
+	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -51,8 +52,10 @@ func NewRouter(
 	captchaSvc service.CaptchaService,
 	tokenBlacklist service.TokenBlacklistService,
 	chatAgentService service.ChatAgentService,
+	convService service.ConversationService,
 	configService service.ConfigService,
 	youdaoService service.YoudaoService,
+	ingestionService rag.IngestionService,
 ) *Router {
 	return &Router{
 		userCtrl:       user.NewController(userService, tokenBlacklist),
@@ -60,14 +63,14 @@ func NewRouter(
 		notebookCtrl:   notebook.NewController(notebookService),
 		sourceCtrl:     source.NewController(sourceService, tokenBlacklist),
 		generationCtrl: generation.NewController(generationService),
-		chatCtrl:       chat.NewController(chatAgentService),
+		chatCtrl:       chat.NewController(chatAgentService, convService),
 		tokenBlacklist: tokenBlacklist,
 		importCtrl:     importn.NewController(importerService),
 		searchCtrl:     search.NewController(searchAgentService, tokenBlacklist),
 		adminCtrl:      admin.NewController(adminService),
 		providerCtrl:   providers.NewController(configService),
 		youdaoCtrl:     youdao.NewController(youdaoService),
-		userConfigCtrl: userconfig.NewController(userConfigService, tokenBlacklist),
+		userConfigCtrl: userconfig.NewController(userConfigService, tokenBlacklist, ingestionService),
 	}
 }
 

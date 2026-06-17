@@ -1,9 +1,8 @@
 package repository
 
 import (
-	"errors"
-
 	"YoudaoNoteLm/internal/model/entity"
+	"errors"
 
 	"gorm.io/gorm"
 )
@@ -12,6 +11,7 @@ type userLLMConfigRepository struct {
 	db *gorm.DB
 }
 
+// NewUserLLMConfigRepository 创建用户 LLM 配置仓储
 func NewUserLLMConfigRepository(db *gorm.DB) UserLLMConfigRepository {
 	return &userLLMConfigRepository{db: db}
 }

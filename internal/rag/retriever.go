@@ -43,7 +43,7 @@ type RetrieveResult struct {
 }
 
 const (
-	defaultTopK        = 5
+	defaultTopK        = 8
 	semanticCandidateK = 20
 	keywordCandidateK  = 20
 	rrfK               = 60
@@ -240,7 +240,6 @@ func (r *ragRetriever) parentRecovery(ctx context.Context, candidates []*Retriev
 	if err != nil {
 		return nil, fmt.Errorf("查询 ParentBlock 失败: %w", err)
 	}
-
 	parentMap := make(map[uint]*entity.ParentBlock)
 	for _, pb := range parentBlocks {
 		parentMap[pb.ID] = pb
@@ -269,6 +268,11 @@ func (r *ragRetriever) parentRecovery(ctx context.Context, candidates []*Retriev
 			c.ParentContent = pb.Content
 			c.Heading = pb.Heading
 			c.ChapterPath = pb.ChapterPath
+		} else {
+			logger.Warn("[DEBUG] parentRecovery miss",
+				zap.Int64("parent_block_id", c.ParentBlockID),
+				zap.Uint("source_id", c.SourceID),
+			)
 		}
 		if name, ok := sourceNames[c.SourceID]; ok {
 			c.SourceName = name

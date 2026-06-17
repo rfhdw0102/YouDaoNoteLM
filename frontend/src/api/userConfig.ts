@@ -183,6 +183,14 @@ export async function deleteEmbeddingConfig(
   return res.data;
 }
 
+// 删除 Embedding 配置并清除用户的 Milvus Collection
+export async function deleteEmbeddingAndCollection(
+  id: number
+): Promise<{ code: number; message?: string }> {
+  const res = await client.delete(`/user/config/embedding/${id}/collection`);
+  return res.data;
+}
+
 // ===== Health Check =====
 
 export async function testConfig(

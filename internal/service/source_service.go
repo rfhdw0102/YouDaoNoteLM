@@ -1,22 +1,27 @@
 package service
 
 import (
+	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/service/external/storage"
+	"context"
 	"time"
 
 	"YoudaoNoteLm/internal/model/dto/response"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/repository"
 	bizerrors "YoudaoNoteLm/pkg/errors"
+	"YoudaoNoteLm/pkg/logger"
+	"go.uber.org/zap"
 )
 
 type sourceService struct {
-	sourceRepo repository.SourceRepository
-	storage    storage.FileStorage
+	sourceRepo   repository.SourceRepository
+	storage      storage.FileStorage
+	ingestionSvc rag.IngestionService
 }
 
-func NewSourceService(sourceRepo repository.SourceRepository, storage storage.FileStorage) SourceService {
-	return &sourceService{sourceRepo: sourceRepo, storage: storage}
+func NewSourceService(sourceRepo repository.SourceRepository, storage storage.FileStorage, ingestionSvc rag.IngestionService) SourceService {
+	return &sourceService{sourceRepo: sourceRepo, storage: storage, ingestionSvc: ingestionSvc}
 }
 
 func (s *sourceService) List(userID, notebookID uint, keyword string, page, size int) ([]*response.SourceResponse, int64, error) {
@@ -65,14 +70,49 @@ func (s *sourceService) Rename(id uint, name string) error {
 }
 
 func (s *sourceService) Delete(id uint) error {
-	_, err := s.GetByID(id)
+	source, err := s.GetByID(id)
 	if err != nil {
 		return err
 	}
+
+	// 删除 Milvus 中的向量数据
+	if s.ingestionSvc != nil && source.Vectorized {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := s.ingestionSvc.DeleteSource(ctx, source.UserID, id); err != nil {
+			logger.Error("删除源向量数据失败",
+				zap.Uint("source_id", id),
+				zap.Error(err),
+			)
+			// 向量删除失败不阻塞主流程，记录日志继续
+		}
+	}
+
 	return s.sourceRepo.Delete(id)
 }
 
 func (s *sourceService) BatchDelete(ids []uint) error {
+	// 批量删除前，先删除每个 source 的向量数据
+	if s.ingestionSvc != nil && len(ids) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		for _, id := range ids {
+			source, err := s.sourceRepo.FindByID(id)
+			if err != nil || source == nil {
+				continue
+			}
+			if source.Vectorized {
+				if err := s.ingestionSvc.DeleteSource(ctx, source.UserID, id); err != nil {
+					logger.Error("批量删除时删除源向量数据失败",
+						zap.Uint("source_id", id),
+						zap.Error(err),
+					)
+				}
+			}
+		}
+	}
+
 	return s.sourceRepo.BatchDelete(ids)
 }
 
@@ -149,4 +189,115 @@ func toSourceResponse(src *entity.Source) *response.SourceResponse {
 		CreatedAt:    src.CreatedAt,
 		UpdatedAt:    src.UpdatedAt,
 	}
+}
+
+// ReimportAll 重新导入用户所有未向量化的资料
+func (s *sourceService) ReimportAll(userID uint) (int, error) {
+	if s.ingestionSvc == nil {
+		return 0, bizerrors.New(bizerrors.CodeInternalServiceError, "向量入库服务未初始化")
+	}
+
+	// 获取用户所有未向量化的资料
+	sources, err := s.sourceRepo.FindUnvectorizedByUserID(userID)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(sources) == 0 {
+		return 0, nil
+	}
+
+	// 收集所有 source ID
+	sourceIDs := make([]uint, 0, len(sources))
+	for _, src := range sources {
+		sourceIDs = append(sourceIDs, src.ID)
+	}
+
+	// 批量入库
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// 即使部分失败也继续，返回成功导入的数量
+	ingestErr := s.ingestionSvc.Ingest(ctx, sourceIDs)
+
+	// 统计实际成功导入的数量（vectorized=true 的数量）
+	successCount := 0
+	for _, src := range sources {
+		updated, err := s.sourceRepo.FindByID(src.ID)
+		if err == nil && updated != nil && updated.Vectorized {
+			successCount++
+		}
+	}
+
+	if ingestErr != nil {
+		logger.Warn("批量重新入库部分失败",
+			zap.Uint("user_id", userID),
+			zap.Int("total", len(sourceIDs)),
+			zap.Int("success", successCount),
+			zap.Error(ingestErr),
+		)
+	}
+
+	logger.Info("批量重新入库完成",
+		zap.Uint("user_id", userID),
+		zap.Int("total", len(sourceIDs)),
+		zap.Int("success", successCount),
+	)
+
+	return successCount, nil
+}
+
+// ReimportSelected 重新导入指定的未向量化资料
+func (s *sourceService) ReimportSelected(sourceIDs []uint) (int, error) {
+	if s.ingestionSvc == nil {
+		return 0, bizerrors.New(bizerrors.CodeInternalServiceError, "向量入库服务未初始化")
+	}
+
+	if len(sourceIDs) == 0 {
+		return 0, nil
+	}
+
+	// 验证所有 source 都存在且未向量化
+	for _, id := range sourceIDs {
+		source, err := s.sourceRepo.FindByID(id)
+		if err != nil {
+			return 0, err
+		}
+		if source == nil {
+			return 0, bizerrors.New(bizerrors.CodeNotFound, "资料不存在")
+		}
+		if source.Vectorized {
+			return 0, bizerrors.New(bizerrors.CodeBadRequest, "资料已入库，无需重复导入")
+		}
+	}
+
+	// 批量入库
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	ingestErr := s.ingestionSvc.Ingest(ctx, sourceIDs)
+
+	// 统计实际成功导入的数量
+	successCount := 0
+	for _, id := range sourceIDs {
+		updated, err := s.sourceRepo.FindByID(id)
+		if err == nil && updated != nil && updated.Vectorized {
+			successCount++
+		}
+	}
+
+	if ingestErr != nil {
+		logger.Warn("批量重新入库部分失败",
+			zap.Int("total", len(sourceIDs)),
+			zap.Int("success", successCount),
+			zap.Error(ingestErr),
+		)
+	}
+
+	logger.Info("批量重新入库完成",
+		zap.Int("total", len(sourceIDs)),
+		zap.Int("success", successCount),
+	)
+
+	return successCount, nil
 }

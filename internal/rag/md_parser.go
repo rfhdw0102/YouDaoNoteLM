@@ -13,7 +13,7 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-// ASTDocument 解析后的文档结构（内部使用）
+// ASTDocument 解析后的文档结构
 type ASTDocument struct {
 	Sections []*Section
 }
@@ -30,7 +30,7 @@ type Section struct {
 type ContentBlock struct {
 	Type     string // paragraph/code/table/image/mermaid/quote
 	Content  string
-	Language string // 代码块语言（仅 code 类型使用）
+	Language string // 代码块语言
 }
 
 // MarkdownParser Markdown AST 解析器，实现 eino parser.Parser 接口
@@ -38,7 +38,7 @@ type MarkdownParser struct {
 	md goldmark.Markdown
 }
 
-// NewMarkdownParser 创建 Markdown 解析器（启用表格扩展）
+// NewMarkdownParser 创建 Markdown 解析器
 func NewMarkdownParser() *MarkdownParser {
 	md := goldmark.New(
 		goldmark.WithExtensions(
@@ -79,41 +79,45 @@ func (p *MarkdownParser) Parse(ctx context.Context, reader io.Reader, opts ...pa
 	return docs, nil
 }
 
-// buildASTDocument 遍历 goldmark AST，构建结构化文档
+// 解析 markdown 语法树 doc，生成自定义的 ASTDocument 结构
 func (p *MarkdownParser) buildASTDocument(doc ast.Node, source []byte) *ASTDocument {
-	result := &ASTDocument{}
-	var currentSection *Section
-	var headingStack []string
+	result := &ASTDocument{}    // 结果容器
+	var currentSection *Section // 当前正在处理的章节
+	var headingStack []string   // 记录标题层级路径
 
+	// 遍历 doc 的所有子节点，广度优先
 	for n := doc.FirstChild(); n != nil; n = n.NextSibling() {
 		switch n.Kind() {
-		case ast.KindHeading:
-			heading := n.(*ast.Heading)
-			headingText := string(n.Text(source))
-			level := heading.Level
+		case ast.KindHeading: // 标题节点
+			heading := n.(*ast.Heading)           // 类型断言为具体 Heading 结构
+			headingText := string(n.Text(source)) // 提取标题文本
+			level := heading.Level                // 标题等级（1-6）
 
+			// 若新标题等级 ≤ 当前栈长度，弹出栈顶元素直到长度匹配
 			if level <= len(headingStack) {
 				headingStack = headingStack[:level-1]
 			}
+			// 将当前标题文本加入路径栈
 			headingStack = append(headingStack, headingText)
 
+			// 创建新章节
 			currentSection = &Section{
 				Heading:     headingText,
 				Level:       level,
-				ChapterPath: joinPath(headingStack),
+				ChapterPath: joinPath(headingStack), // 用 "." 拼接路径栈
 			}
 			result.Sections = append(result.Sections, currentSection)
 
-		default:
-			if currentSection == nil {
-				currentSection = &Section{
+		default: // 非标题节点（段落、列表等）
+			if currentSection == nil { // 如果没有标题开头的章节
+				currentSection = &Section{ // 创建一个无标题章节
 					Heading:     "",
 					Level:       0,
 					ChapterPath: "",
 				}
 				result.Sections = append(result.Sections, currentSection)
 			}
-			block := p.extractContentBlock(n, source)
+			block := p.extractContentBlock(n, source) // 提取内容块
 			if block != nil {
 				currentSection.Content = append(currentSection.Content, *block)
 			}
@@ -122,41 +126,44 @@ func (p *MarkdownParser) buildASTDocument(doc ast.Node, source []byte) *ASTDocum
 	return result
 }
 
-// extractContentBlock 从 AST 节点提取内容块
+// 将 Markdown AST 节点转换为自定义的 ContentBlock
 func (p *MarkdownParser) extractContentBlock(n ast.Node, source []byte) *ContentBlock {
 	switch n.Kind() {
-	case ast.KindParagraph:
+	case ast.KindParagraph: // 段落
 		return &ContentBlock{Type: "paragraph", Content: string(n.Text(source))}
-	case ast.KindFencedCodeBlock:
+
+	case ast.KindFencedCodeBlock: // 代码块
 		lang := ""
-		codeBlock := n.(*ast.FencedCodeBlock)
-		if codeBlock.Info != nil {
+		codeBlock := n.(*ast.FencedCodeBlock) // 类型断言
+		if codeBlock.Info != nil {            // 代码块头部的语言标识
 			lang = string(codeBlock.Info.Text(source))
 		}
 		var code []byte
-		lines := codeBlock.Lines()
-		for i := 0; i < lines.Len(); i++ {
-			seg := lines.At(i)
+		lines := codeBlock.Lines()         // 获取代码行集合
+		for i := 0; i < lines.Len(); i++ { // 遍历所有行
+			seg := lines.At(i) // 每行的文本片段
 			code = append(code, seg.Value(source)...)
-			code = append(code, '\n')
+			code = append(code, '\n') // 补回换行符
 		}
-		if lang == "mermaid" {
+		if lang == "mermaid" { // 特殊处理 mermaid 图表
 			return &ContentBlock{Type: "mermaid", Content: string(code)}
 		}
 		return &ContentBlock{Type: "code", Content: string(code), Language: lang}
-	case ast.KindBlockquote:
+
+	case ast.KindBlockquote: // 引用块
 		return &ContentBlock{Type: "quote", Content: string(n.Text(source))}
-	case ast.KindList:
+
+	case ast.KindList: // 列表
 		return &ContentBlock{Type: "paragraph", Content: string(n.Text(source))}
-	default:
-		// 尝试提取表格内容
-		tableContent := p.extractTable(n, source)
+
+	default: // 其他类型（如图片、表格等）
+		tableContent := p.extractTable(n, source) // 尝试解析表格
 		if tableContent != "" {
 			return &ContentBlock{Type: "table", Content: tableContent}
 		}
 
 		nodeText := string(n.Text(source))
-		if strings.TrimSpace(nodeText) == "" {
+		if strings.TrimSpace(nodeText) == "" { // 忽略空节点
 			return nil
 		}
 		return &ContentBlock{Type: "paragraph", Content: nodeText}
@@ -165,7 +172,7 @@ func (p *MarkdownParser) extractContentBlock(n ast.Node, source []byte) *Content
 
 // extractTable 提取表格内容为 Markdown 格式
 func (p *MarkdownParser) extractTable(n ast.Node, source []byte) string {
-	// 检查是否是表格节点（通过节点类型名称判断）
+	// 检查是否是表格节点
 	if n.Kind().String() != "Table" {
 		return ""
 	}
@@ -188,7 +195,7 @@ func (p *MarkdownParser) extractTable(n ast.Node, source []byte) string {
 			rowStr := "| " + strings.Join(cells, " | ") + " |"
 			if isHeader {
 				headerRow = rowStr
-				// 添加分隔行
+				// 首行作为表头，其后添加分隔行如 | --- | --- |
 				separator := "| " + strings.Repeat("--- | ", len(cells))
 				rows = append(rows, headerRow)
 				rows = append(rows, separator)

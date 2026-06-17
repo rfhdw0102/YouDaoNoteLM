@@ -55,4 +55,3 @@ func NewWebSearchTool(configService service.ConfigService) (tool.InvokableTool, 
 		},
 	)
 }
-

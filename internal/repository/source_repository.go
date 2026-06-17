@@ -43,6 +43,10 @@ func (r *sourceRepository) BatchDelete(ids []uint) error {
 	return r.db.Delete(&entity.Source{}, "id IN ?", ids).Error
 }
 
+func (r *sourceRepository) DeleteByNotebookID(notebookID uint) error {
+	return r.db.Where("notebook_id = ?", notebookID).Delete(&entity.Source{}).Error
+}
+
 func (r *sourceRepository) ListByNotebook(userID, notebookID uint, keyword string, offset, limit int) ([]*entity.Source, int64, error) {
 	var sources []*entity.Source
 	var total int64
@@ -95,4 +99,24 @@ func (r *sourceRepository) SetVectorized(id uint) error {
 func (r *sourceRepository) DeleteFailedByNotebook(userID, notebookID uint) (int64, error) {
 	result := r.db.Where("user_id = ? AND notebook_id = ? AND status = ?", userID, notebookID, "failed").Delete(&entity.Source{})
 	return result.RowsAffected, result.Error
+}
+
+// ResetVectorizedByUserID 重置用户所有资料的向量化状态
+// 删除向量模型后调用，将所有已向量化的资料标记为未向量化，状态改为 ready 以便重新导入
+func (r *sourceRepository) ResetVectorizedByUserID(userID uint) error {
+	return r.db.Model(&entity.Source{}).
+		Where("user_id = ? AND vectorized = ?", userID, true).
+		Updates(map[string]interface{}{
+			"vectorized":    false,
+			"status":        "ready",
+			"error_message": "",
+		}).Error
+}
+
+// FindUnvectorizedByUserID 获取用户所有未向量化的资料（状态为 ready 且未向量化）
+func (r *sourceRepository) FindUnvectorizedByUserID(userID uint) ([]*entity.Source, error) {
+	var sources []*entity.Source
+	err := r.db.Where("user_id = ? AND status = ? AND vectorized = ?", userID, "ready", false).
+		Find(&sources).Error
+	return sources, err
 }

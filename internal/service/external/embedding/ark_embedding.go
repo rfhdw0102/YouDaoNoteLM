@@ -18,9 +18,10 @@ type ArkEmbeddingService struct {
 // NewArkEmbeddingService 创建火山引擎 Embedding 服务
 // apiKey: API Key
 // model: 接入点 ID（如 ep-20260505091808-5tmzc）
-// apiType: "text_api" 或 "multi_modal_api"，为空默认 "text_api"
-// baseURL: API 地址，为空默认 https://ark.cn-beijing.volces.com/api/v3
-func NewArkEmbeddingService(apiKey, model, apiType, baseURL string) (*ArkEmbeddingService, error) {
+// apiType: "text_api" 或 "multi_modal_api"
+// baseURL: API 地址（如 https://ark.cn-beijing.volces.com/api/v3）
+// dimensions: 向量维度（如 2048）
+func NewArkEmbeddingService(apiKey, model, apiType, baseURL string, dimensions int) (*ArkEmbeddingService, error) {
 	if model == "" {
 		return nil, fmt.Errorf("Embedding 模型名称或接入点 ID 未配置")
 	}
@@ -35,6 +36,9 @@ func NewArkEmbeddingService(apiKey, model, apiType, baseURL string) (*ArkEmbeddi
 	if apiType != "" {
 		t := einoArk.APIType(apiType)
 		conf.APIType = &t
+	}
+	if dimensions > 0 {
+		conf.Dimensions = &dimensions
 	}
 
 	embedder, err := einoArk.NewEmbedder(context.Background(), conf)

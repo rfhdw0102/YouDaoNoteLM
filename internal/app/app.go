@@ -147,6 +147,7 @@ func (a *App) initDependencies() {
 	llmConfigRepo := repository.NewUserLLMConfigRepository(a.mysqlDB)
 	conversationRepo := repository.NewConversationRepository(a.mysqlDB)
 	messageRepo := repository.NewMessageRepository(a.mysqlDB)
+	chatCache := cache.NewChatCache(a.redis)
 
 	// 创建外部服务客户端
 	markitdownClient := externalMarkitdown.NewClient(a.cfg.External.MarkItDown.URL)
@@ -168,8 +169,6 @@ func (a *App) initDependencies() {
 	tokenBlacklistSvc := service.NewTokenBlacklistService(a.redis)
 	userSvc := service.NewUserService(userRepo, verifyCodeSvc, minioStorage)
 	authSvc := service.NewAuthService(userRepo, userSvc, verifyCodeSvc, captchaSvc, tokenBlacklistSvc)
-	notebookSvc := service.NewNotebookService(notebookRepo)
-	sourceSvc := service.NewSourceService(sourceRepo, minioStorage)
 	// 创建缓存
 	redisCache := cache.New(a.redis)
 	importTaskCache := cache.NewImportTaskCache(redisCache)
@@ -191,6 +190,10 @@ func (a *App) initDependencies() {
 		logger.Warn("ingestion service unavailable, vector ingestion disabled")
 	}
 
+	// 创建笔记本和资料来源服务（需要依赖 IngestionService 来删除向量数据）
+	notebookSvc := service.NewNotebookService(notebookRepo, sourceRepo, conversationRepo, messageRepo, ingestionSvc, chatCache)
+	sourceSvc := service.NewSourceService(sourceRepo, minioStorage, ingestionSvc)
+
 	// 创建导入服务（ASR 通过 ConfigService 动态获取，RAG 通过 IngestionService）
 	importerSvc := service.NewImporterService(
 		configSvc, markitdownClient, minioStorage,
@@ -200,7 +203,6 @@ func (a *App) initDependencies() {
 
 	// 创建 RAGRetriever
 	parentBlockRepo := repository.NewParentBlockRepository(a.mysqlDB)
-	registry := external.GetGlobalRegistry()
 	retrieverEmbedderProvider := func(ctx context.Context, userID uint) (embedding.Embedder, error) {
 		cfg, err := configSvc.GetUserConfig(userID, "embedding")
 		if err != nil {
@@ -209,7 +211,7 @@ func (a *App) initDependencies() {
 		if cfg == nil {
 			return nil, fmt.Errorf("请先在设置中配置 Embedding 服务")
 		}
-		return rag.NewEmbedderFromRegistry(ctx, registry, cfg)
+		return rag.NewEmbedderFromConfig(ctx, cfg)
 	}
 
 	// 创建独立的 MilvusWriter 用于检索
@@ -253,10 +255,11 @@ func (a *App) initDependencies() {
 	}
 	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory)
 
-	// 创建 ChatAgentService
-	chatCache := cache.NewChatCache(a.redis)
+	// 创建 ChatAgentService 和 ConversationService
 	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache)
+	convSvc := service.NewConversationService(conversationRepo, messageRepo, chatCache)
 	logger.Info("ChatAgentService 初始化成功")
+	logger.Info("ConversationService 初始化成功")
 
 	a.router = api.NewRouter(
 		userSvc,
@@ -272,8 +275,10 @@ func (a *App) initDependencies() {
 		captchaSvc,
 		tokenBlacklistSvc,
 		chatAgentSvc,
+		convSvc,
 		configSvc,
 		youdaoSvc,
+		ingestionSvc,
 	)
 }
 
@@ -292,17 +297,25 @@ func (a *App) initIngestionService(sourceRepo repository.SourceRepository, confi
 		return nil
 	}
 
-	// 创建 EmbedderProvider：通过 ConfigService + Registry 创建
-	registry := external.GetGlobalRegistry()
-	embedderProvider := func(ctx context.Context, userID uint) (embedding.Embedder, error) {
+	// 创建 EmbedderProvider：通过 ConfigService 创建
+	embedderProvider := func(ctx context.Context, userID uint) (embedding.Embedder, int, int, error) {
 		cfg, err := configSvc.GetUserConfig(userID, "embedding")
 		if err != nil {
-			return nil, fmt.Errorf("获取 Embedding 配置失败: %w", err)
+			return nil, 0, 0, fmt.Errorf("获取 Embedding 配置失败: %w", err)
 		}
 		if cfg == nil {
-			return nil, fmt.Errorf("请先在设置中配置 Embedding 服务")
+			return nil, 0, 0, fmt.Errorf("请先在设置中配置 Embedding 服务")
 		}
-		return rag.NewEmbedderFromRegistry(ctx, registry, cfg)
+		embedder, err := rag.NewEmbedderFromConfig(ctx, cfg)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		batchSize := rag.GetBatchSizeByAPIKey(cfg.APIKey)
+		vectorDim := 0
+		if cfg.Dimensions != nil {
+			vectorDim = *cfg.Dimensions
+		}
+		return embedder, batchSize, vectorDim, nil
 	}
 
 	parentRepo := repository.NewParentBlockRepository(a.mysqlDB)
@@ -329,7 +342,7 @@ func (a *App) initServer() {
 		Addr:           fmt.Sprintf(":%d", a.cfg.App.Port),
 		Handler:        engine,
 		ReadTimeout:    60 * time.Second,
-		WriteTimeout:   300 * time.Second, // 文件导入（MarkItDown + LLM 结构化 + RAG 入库）可能需要较长时间
+		WriteTimeout:   100 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
 }

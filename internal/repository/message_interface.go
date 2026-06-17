@@ -12,6 +12,8 @@ type MessageRepository interface {
 	FindByConversationID(conversationID uint) ([]*entity.Message, error)
 	// FindRecentByConversationID 查找对话的最近 N 条消息
 	FindRecentByConversationID(conversationID uint, limit int) ([]*entity.Message, error)
+	// FindOlderThan 查找对话中较早的消息（跳过最近 skip 条）
+	FindOlderThan(conversationID uint, skip int) ([]*entity.Message, error)
 	// CountByConversationID 统计对话消息数
 	CountByConversationID(conversationID uint) (int64, error)
 	// DeleteByConversationID 软删除对话下的所有消息

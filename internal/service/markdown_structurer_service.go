@@ -67,7 +67,7 @@ func hasSufficientStructure(content string) bool {
 // cachedModel 缓存的 ChatModel 及其配置指纹
 type cachedModel struct {
 	configKey string // provider:model:apiKey:fingerprint
-	model     model.ChatModel
+	model     model.ToolCallingChatModel
 }
 
 type markdownStructurer struct {
@@ -88,7 +88,7 @@ func configFingerprint(cfg *entity.UserLLMConfig) string {
 }
 
 // getOrCreateChatModel 获取缓存的 ChatModel，配置变化时自动重建
-func (s *markdownStructurer) getOrCreateChatModel(ctx context.Context, userID uint) (model.ChatModel, error) {
+func (s *markdownStructurer) getOrCreateChatModel(ctx context.Context, userID uint) (model.ToolCallingChatModel, error) {
 	llmConfig, err := s.configService.GetUserLLMConfig(userID)
 	if err != nil {
 		return nil, err
@@ -224,7 +224,7 @@ func (s *markdownStructurer) Structure(ctx context.Context, userID uint, content
 	return StructureResult{Content: structured, ActuallyCalled: true}, nil
 }
 
-func (s *markdownStructurer) callLLM(ctx context.Context, chatModel model.ChatModel, content string, meta StructureMeta) (string, error) {
+func (s *markdownStructurer) callLLM(ctx context.Context, chatModel model.ToolCallingChatModel, content string, meta StructureMeta) (string, error) {
 	title := meta.Title
 	if title == "" {
 		title = "（无）"
@@ -255,7 +255,7 @@ func (s *markdownStructurer) callLLM(ctx context.Context, chatModel model.ChatMo
 }
 
 // callLLMForceful 强制重试：用更直接的指令要求 LLM 添加标题
-func (s *markdownStructurer) callLLMForceful(ctx context.Context, chatModel model.ChatModel, content string, meta StructureMeta) (string, error) {
+func (s *markdownStructurer) callLLMForceful(ctx context.Context, chatModel model.ToolCallingChatModel, content string, meta StructureMeta) (string, error) {
 	title := meta.Title
 	if title == "" {
 		title = "（无）"

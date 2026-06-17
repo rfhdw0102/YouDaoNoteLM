@@ -31,7 +31,7 @@ func NewChatHistoryTool(messageRepo repository.MessageRepository, cache *cache.C
 func (t *ChatHistoryTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "get_chat_history",
-		Desc: "获取当前对话的历史消息，用于理解上下文、指代消解（如\"它\"、\"这个\"指代什么）。",
+		Desc: "获取当前对话的历史消息和摘要，用于理解上下文、指代消解（如\"它\"、\"这个\"指代什么）。",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"conversation_id": {
 				Type:     schema.Integer,
@@ -62,7 +62,14 @@ func (t *ChatHistoryTool) InvokableRun(ctx context.Context, argumentsInJSON stri
 		params.Limit = 10
 	}
 
-	// 优先从缓存获取
+	// 获取摘要
+	summary, hasSummary, err := t.cache.GetSummary(ctx, params.ConversationID)
+	if err != nil {
+		summary = ""
+		hasSummary = false
+	}
+
+	// 优先从缓存获取历史消息
 	history, err := t.cache.GetRecentMessages(ctx, params.ConversationID)
 	if err != nil || len(history) == 0 {
 		// 降级到数据库
@@ -73,11 +80,11 @@ func (t *ChatHistoryTool) InvokableRun(ctx context.Context, argumentsInJSON stri
 		history = convertToCachePairs(msgs, params.Limit)
 	}
 
-	if len(history) == 0 {
-		return "暂无对话历史", nil
+	if !hasSummary && len(history) == 0 {
+		return "暂无对话历史和摘要", nil
 	}
 
-	return FormatChatHistory(history), nil
+	return FormatChatHistoryWithSummary(summary, hasSummary, history), nil
 }
 
 // convertToCachePairs 将数据库消息转为缓存格式的 MessagePair

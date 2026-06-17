@@ -4,6 +4,7 @@ app:
   mode: "debug"  # debug, release, test
   port: 8080
 
+# 数据库配置
 database:
   mysql:
     host: "localhost"
@@ -17,9 +18,10 @@ database:
     host: "localhost"
     port: 6379
     password: ""
-    db: 0
+    db: 15
     pool_size: 10
 
+# JWT 配置
 jwt:
   secret: "YouDaoNoteBookLM-API-Web-wangzhiwei-zhaojingchao-renfuhang"  # 请修改为随机生成的密钥
   access_token_exp: "15m"     # Access Token 过期时间：15 分钟
@@ -54,6 +56,7 @@ external:
     cache_ttl_seconds: 300
     max_count: 10
 
+# 日志配置
 log:
   level: "debug"  # debug, info, warn, error
   filename: "logs/app.log"
@@ -62,6 +65,7 @@ log:
   max_age: 28      # 保留旧文件的最大天数
   compress: true   # 是否压缩
 
+#邮箱配置
 cors:
   enabled: true
   allow_origins:

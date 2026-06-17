@@ -3,7 +3,8 @@ import { motion } from 'framer-motion';
 import {
   Upload, Link, Globe, Search, FileText, File, Music,
   Check, MoreHorizontal, Trash2, Edit3,
-  SquareCheck, Square, X, Loader2, ArrowLeft, Plus, AlertCircle
+  SquareCheck, Square, X, Loader2, ArrowLeft, Plus, AlertCircle,
+  ChevronDown
 } from 'lucide-react';
 import { useNotebookStore } from '../../stores/useNotebookStore';
 import { cn } from '../../utils/cn';
@@ -45,7 +46,8 @@ export default function SourcesPanel() {
   const {
     currentNotebookId, getCurrentNotebook, toggleSourceSelection,
     removeSource, batchRemoveSources, deleteFailedSources, renameSource, selectAllSources, deselectAllSources,
-    importFile, previewAudio, confirmAudio, searchSourcesStream, importFromURL, importSearchResults, fetchSourceContent, getSourceDownloadURL, fetchSources
+    importFile, previewAudio, confirmAudio, searchSourcesStream, importFromURL, importSearchResults, fetchSourceContent, getSourceDownloadURL, fetchSources,
+    reimportSelected
   } = useNotebookStore();
   const notebook = getCurrentNotebook();
 
@@ -77,6 +79,14 @@ export default function SourcesPanel() {
   // 已确认但 API 未完成的 previewId 集合（用于立即阻止点击和隐藏通知）
   const [confirmedPreviewIds, setConfirmedPreviewIds] = useState<Set<string>>(new Set());
 
+  // Reimport state
+  const [reimporting, setReimporting] = useState(false);
+  const [reimportResult, setReimportResult] = useState<{ count: number; message: string } | null>(null);
+
+  // 折叠状态
+  const [expandedVectorized, setExpandedVectorized] = useState(true);
+  const [expandedUnvectorized, setExpandedUnvectorized] = useState(true);
+
   // 监听 store 中 audio source 状态变化，转写完成时自动更新预览面板
   useEffect(() => {
     if (!audioPreview || !audioTranscribing || !notebook) return;
@@ -104,13 +114,12 @@ export default function SourcesPanel() {
       .filter(s => s.type === 'audio' && s.previewId != null && !confirmedPreviewIds.has(s.previewId))
       .map(s => s.id)
   );
-  // 不可选择的 source：未确认的音频 + 导入失败的 + 正在导入中的
-  const nonSelectableIds = new Set([
-    ...unconfirmedAudioIds,
-    ...notebook.sources.filter(s => s.status === 'error' || s.status === 'loading').map(s => s.id),
-  ]);
-  const selectableSources = notebook.sources.filter(s => !nonSelectableIds.has(s.id));
-  const selectedCount = selectableSources.filter((s) => s.selected).length;
+
+  // 分别统计已入库和未入库的选中数量
+  const vectorizedSources = notebook.sources.filter(s => s.vectorized);
+  const unvectorizedSources = notebook.sources.filter(s => !s.vectorized);
+  const selectedVectorizedCount = vectorizedSources.filter((s) => s.selected).length;
+  const selectedUnvectorizedCount = unvectorizedSources.filter((s) => s.selected).length;
 
   // 检测转写完成但未确认的音频（排除已确认但 API 未完成的）
   const pendingReadyAudios = notebook.sources.filter(
@@ -118,9 +127,32 @@ export default function SourcesPanel() {
   );
   const showAudioNotification = pendingReadyAudios.length > 0 && audioPreview == null;
 
-  const handleSelectAll = () => {
-    if (selectedCount === selectableSources.length) deselectAllSources(currentNotebookId);
-    else selectAllSources(currentNotebookId);
+  const handleSelectAllVectorized = () => {
+    if (selectedVectorizedCount === vectorizedSources.length) {
+      // 取消选中所有已入库
+      vectorizedSources.forEach(s => {
+        if (s.selected) toggleSourceSelection(currentNotebookId, s.id);
+      });
+    } else {
+      // 选中所有已入库
+      vectorizedSources.forEach(s => {
+        if (!s.selected) toggleSourceSelection(currentNotebookId, s.id);
+      });
+    }
+  };
+
+  const handleSelectAllUnvectorized = () => {
+    if (selectedUnvectorizedCount === unvectorizedSources.length) {
+      // 取消选中所有未入库
+      unvectorizedSources.forEach(s => {
+        if (s.selected) toggleSourceSelection(currentNotebookId, s.id);
+      });
+    } else {
+      // 选中所有未入库
+      unvectorizedSources.forEach(s => {
+        if (!s.selected) toggleSourceSelection(currentNotebookId, s.id);
+      });
+    }
   };
 
   const handleStartRename = (id: string, name: string) => {
@@ -154,6 +186,32 @@ export default function SourcesPanel() {
       }
     } catch (err) {
       console.error('Delete failed sources failed:', err);
+    }
+  };
+
+  const handleReimportSelected = async () => {
+    if (!currentNotebookId) return;
+
+    // 获取选中的未入库资料 ID
+    const selectedIds = unvectorizedSources.filter(s => s.selected).map(s => s.id);
+    if (selectedIds.length === 0) return;
+
+    setReimporting(true);
+    setReimportResult(null);
+    try {
+      const count = await reimportSelected(selectedIds);
+      setReimportResult({
+        count,
+        message: count > 0 ? `已开始重新导入 ${count} 份资料` : '导入失败，请检查向量模型配置',
+      });
+      // 3秒后自动清除结果提示
+      setTimeout(() => setReimportResult(null), 3000);
+    } catch (err) {
+      console.error('Reimport selected failed:', err);
+      setReimportResult({ count: 0, message: '重新导入失败，请检查向量模型配置' });
+      setTimeout(() => setReimportResult(null), 3000);
+    } finally {
+      setReimporting(false);
     }
   };
 
@@ -623,24 +681,37 @@ export default function SourcesPanel() {
             className="w-full h-7 pl-8 pr-3 rounded-md bg-bg-tertiary border border-border text-xs text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none" />
         </div>
         {notebook.sources.length > 0 && (
-          <div className="flex items-center justify-between">
-            <button onClick={handleSelectAll} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors cursor-pointer">
-              {selectedCount === selectableSources.length ? <SquareCheck size={14} className="text-accent" /> : <Square size={14} />}
-              {selectedCount === selectableSources.length ? '取消全选' : '全选'}
-              <span className="text-text-muted">({selectedCount}/{selectableSources.length})</span>
-            </button>
-            <div className="flex items-center gap-2">
-              {failedCount > 0 && (
-                <button onClick={handleDeleteFailed} className="flex items-center gap-1 text-xs text-warning hover:text-warning/80 transition-colors cursor-pointer">
-                  <AlertCircle size={11} /> 清除失效 ({failedCount})
-                </button>
-              )}
-              {selectedCount > 0 && (
-                <button onClick={handleBatchDelete} className="flex items-center gap-1 text-xs text-error hover:text-error/80 transition-colors cursor-pointer">
-                  <Trash2 size={11} /> 删除选中 ({selectedCount})
-                </button>
-              )}
-            </div>
+          <div className="flex items-center justify-end gap-2">
+            {selectedUnvectorizedCount > 0 && (
+              <button
+                onClick={handleReimportSelected}
+                disabled={reimporting}
+                className="flex items-center gap-1 text-xs text-accent hover:text-accent-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {reimporting ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
+                {reimporting ? '导入中...' : `导入选中 (${selectedUnvectorizedCount})`}
+              </button>
+            )}
+            {failedCount > 0 && (
+              <button onClick={handleDeleteFailed} className="flex items-center gap-1 text-xs text-warning hover:text-warning/80 transition-colors cursor-pointer">
+                <AlertCircle size={11} /> 清除失效 ({failedCount})
+              </button>
+            )}
+            {(selectedVectorizedCount > 0 || selectedUnvectorizedCount > 0) && (
+              <button onClick={handleBatchDelete} className="flex items-center gap-1 text-xs text-error hover:text-error/80 transition-colors cursor-pointer">
+                <Trash2 size={11} /> 删除选中 ({selectedVectorizedCount + selectedUnvectorizedCount})
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Reimport result notification */}
+        {reimportResult && (
+          <div className={cn(
+            'px-3 py-2 text-xs',
+            reimportResult.count > 0 ? 'bg-success/5 text-success' : 'bg-warning/5 text-warning'
+          )}>
+            {reimportResult.message}
           </div>
         )}
       </div>
@@ -667,101 +738,218 @@ export default function SourcesPanel() {
       {/* Content area */}
       <div className="flex-1 overflow-y-auto">
         <motion.div key="sources" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="py-1">
-          {filteredSources.map((source) => {
-            const Icon = sourceIcons[source.type] || FileText;
-            const isLoading = source.status === 'loading';
-            const isError = source.status === 'error';
-            // 已确认但 API 未完成的音频源
-            const isConfirmingAudio = source.type === 'audio' && source.previewId && confirmedPreviewIds.has(source.previewId);
-            return (
-              <motion.div key={source.id} layout initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }}
-                className={cn(
-                  'group relative flex items-start gap-2.5 px-3 py-2.5 mx-1.5 rounded-lg hover:bg-bg-hover border transition-all',
-                  isError ? 'border-error/30 bg-error/5' :
-                  unconfirmedAudioIds.has(source.id) ? 'border-amber-500/20 bg-amber-500/5' :
-                  isConfirmingAudio ? 'border-accent/20 bg-accent/5' :
-                  'border-transparent'
-                )}>
-
-                {/* Checkbox - controls selection (disabled for unconfirmed audio, error sources, and confirming audio) */}
-                <div
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (nonSelectableIds.has(source.id) || isConfirmingAudio) return;
-                    toggleSourceSelection(currentNotebookId, source.id);
-                  }}
-                  className={cn(
-                    'mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all',
-                    (nonSelectableIds.has(source.id) || isConfirmingAudio)
-                      ? 'border-border-light opacity-40 cursor-default'
-                      : cn('cursor-pointer', source.selected ? 'bg-accent border-accent' : 'border-border-light hover:border-accent/50')
-                  )}
+          {/* 已入库资料 */}
+          {filteredSources.filter(s => s.vectorized).length > 0 && (
+            <div className="mb-2">
+              <div className="px-3 py-1.5 flex items-center justify-between hover:bg-bg-hover">
+                <button
+                  onClick={() => setExpandedVectorized(!expandedVectorized)}
+                  className="flex items-center gap-1.5 cursor-pointer"
                 >
-                  {source.selected && !nonSelectableIds.has(source.id) && !isConfirmingAudio && <Check size={10} className="text-white" />}
-                </div>
+                  <ChevronDown size={12} className={cn('text-text-muted transition-transform', !expandedVectorized && '-rotate-90')} />
+                  <div className="w-1.5 h-1.5 rounded-full bg-success" />
+                  <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">已入库</span>
+                  <span className="text-[10px] text-text-muted">({filteredSources.filter(s => s.vectorized).length})</span>
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleSelectAllVectorized(); }}
+                  className="flex items-center gap-1 text-[10px] text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+                >
+                  {selectedVectorizedCount === vectorizedSources.length ? <SquareCheck size={12} className="text-accent" /> : <Square size={12} />}
+                  {selectedVectorizedCount === vectorizedSources.length ? '取消' : '全选'}
+                </button>
+              </div>
+              {expandedVectorized && filteredSources.filter(s => s.vectorized).map((source) => {
+                const Icon = sourceIcons[source.type] || FileText;
+                const isLoading = source.status === 'loading';
+                const isError = source.status === 'error';
+                const isConfirmingAudio = source.type === 'audio' && source.previewId && confirmedPreviewIds.has(source.previewId);
+                return (
+                  <motion.div key={source.id} layout initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }}
+                    className={cn(
+                      'group relative flex items-start gap-2.5 px-3 py-2.5 mx-1.5 rounded-lg hover:bg-bg-hover border transition-all',
+                      isError ? 'border-error/30 bg-error/5' :
+                      isConfirmingAudio ? 'border-accent/20 bg-accent/5' :
+                      'border-transparent'
+                    )}>
 
-                {/* Main content - click to view (disabled while loading or confirming) */}
-                <div className={cn('flex-1 min-w-0', (isLoading || isError || isConfirmingAudio) ? 'cursor-default' : 'cursor-pointer')} onClick={() => { if (!isLoading && !isError && !isConfirmingAudio) handleViewSource(source); }}>
-                  <div className="flex items-center gap-1.5">
-                    <div className={cn('p-1 rounded', isError ? 'bg-error/10 text-error' : '', !isError && source.type === 'file' && 'bg-blue-500/10 text-blue-400', !isError && source.type === 'url' && 'bg-teal/10 text-teal', !isError && source.type === 'audio' && 'bg-purple-500/10 text-purple-400', !isError && source.type === 'search' && 'bg-orange-500/10 text-orange-400', !isError && source.type === 'youdao' && 'bg-green-500/10 text-green-400')}>
-                      {(isLoading || isConfirmingAudio) ? <Loader2 size={12} className="animate-spin" /> : isError ? <AlertCircle size={12} /> : <Icon size={12} />}
+                    {/* Checkbox - 已入库的资料可以被选中 */}
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isError || isConfirmingAudio) return;
+                        toggleSourceSelection(currentNotebookId, source.id);
+                      }}
+                      className={cn(
+                        'mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all',
+                        (isError || isConfirmingAudio)
+                          ? 'border-border-light opacity-40 cursor-default'
+                          : cn('cursor-pointer', source.selected ? 'bg-accent border-accent' : 'border-border-light hover:border-accent/50')
+                      )}
+                    >
+                      {source.selected && !isError && !isConfirmingAudio && <Check size={10} className="text-white" />}
                     </div>
-                    {editingId === source.id ? (
-                      <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} onBlur={handleFinishRename}
-                        onKeyDown={(e) => e.key === 'Enter' && handleFinishRename()} className="flex-1 bg-transparent text-xs outline-none border-b border-accent" onClick={(e) => e.stopPropagation()} />
+
+                    {/* Main content */}
+                    <div className={cn('flex-1 min-w-0', (isLoading || isError || isConfirmingAudio) ? 'cursor-default' : 'cursor-pointer')} onClick={() => { if (!isLoading && !isError && !isConfirmingAudio) handleViewSource(source); }}>
+                      <div className="flex items-center gap-1.5">
+                        <div className={cn('p-1 rounded', isError ? 'bg-error/10 text-error' : '', !isError && source.type === 'file' && 'bg-blue-500/10 text-blue-400', !isError && source.type === 'url' && 'bg-teal/10 text-teal', !isError && source.type === 'audio' && 'bg-purple-500/10 text-purple-400', !isError && source.type === 'search' && 'bg-orange-500/10 text-orange-400', !isError && source.type === 'youdao' && 'bg-green-500/10 text-green-400')}>
+                          {(isLoading || isConfirmingAudio) ? <Loader2 size={12} className="animate-spin" /> : isError ? <AlertCircle size={12} /> : <Icon size={12} />}
+                        </div>
+                        {editingId === source.id ? (
+                          <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} onBlur={handleFinishRename}
+                            onKeyDown={(e) => e.key === 'Enter' && handleFinishRename()} className="flex-1 bg-transparent text-xs outline-none border-b border-accent" onClick={(e) => e.stopPropagation()} />
+                        ) : (
+                          <p className={cn('text-xs font-medium truncate', isError ? 'text-error' : 'text-text-primary')}>{source.name}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5 ml-5">
+                        {(isLoading || isConfirmingAudio) && <span className="text-[10px] text-accent animate-pulse">导入中...</span>}
+                        {isError && (
+                          <span className="text-[10px] text-error cursor-help" title={source.errorMessage || '导入失败'}>
+                            {source.errorMessage || '导入失败'}
+                          </span>
+                        )}
+                        {!isLoading && !isError && !isConfirmingAudio && source.size !== undefined && <span className="text-[10px] text-text-muted">{formatFileSize(source.size)}</span>}
+                        <span className="text-[10px] text-success">✓ 已入库</span>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    {(isLoading || isConfirmingAudio) ? (
+                      <button onClick={(e) => { e.stopPropagation(); removeSource(currentNotebookId, source.id); }}
+                        className="p-1 rounded text-error hover:bg-error/10 transition-all cursor-pointer" title="中止导入">
+                        <X size={13} />
+                      </button>
                     ) : (
-                      <p className={cn('text-xs font-medium truncate', isError ? 'text-error' : 'text-text-primary')}>{source.name}</p>
+                      <button onClick={(e) => { e.stopPropagation(); setContextMenuId(contextMenuId === source.id ? null : source.id); }}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-bg-active transition-all cursor-pointer">
+                        <MoreHorizontal size={13} />
+                      </button>
                     )}
-                  </div>
-                  <div className="flex items-center gap-2 mt-0.5 ml-5">
-                    {(isLoading || isConfirmingAudio) && <span className="text-[10px] text-accent animate-pulse">导入中...</span>}
-                    {isError && (
-                      <span
-                        className="text-[10px] text-error cursor-help"
-                        title={source.errorMessage || '导入失败'}
-                      >
-                        {source.errorMessage || '导入失败'}
-                      </span>
+                    {contextMenuId === source.id && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setContextMenuId(null)} />
+                        <div className="absolute right-0 top-full mt-1 w-32 bg-bg-card border border-border-light rounded-lg shadow-xl z-50 py-1">
+                          {!isError && !isLoading && !isConfirmingAudio && <button onClick={(e) => { e.stopPropagation(); handleStartRename(source.id, source.name); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-hover cursor-pointer"><Edit3 size={11} /> 重命名</button>}
+                          <button onClick={(e) => { e.stopPropagation(); removeSource(currentNotebookId, source.id); setContextMenuId(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-error hover:bg-error/5 cursor-pointer"><Trash2 size={11} /> 删除</button>
+                        </div>
+                      </>
                     )}
-                    {!isLoading && !isError && !isConfirmingAudio && source.size !== undefined && <span className="text-[10px] text-text-muted">{formatFileSize(source.size)}</span>}
-                    {unconfirmedAudioIds.has(source.id) && !isError && (
-                      <span className="text-[10px] text-amber-500 font-medium">待确认导入</span>
-                    )}
-                    {source.url && <span className="text-[10px] text-text-muted truncate max-w-[120px]">{source.url}</span>}
-                  </div>
-                </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
 
-                {/* Actions: loading 或 confirming 状态显示中止按钮，其他状态显示菜单 */}
-                {(isLoading || isConfirmingAudio) ? (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      // 中止导入：删除 placeholder 并取消后端任务
-                      removeSource(currentNotebookId, source.id);
-                    }}
-                    className="p-1 rounded text-error hover:bg-error/10 transition-all cursor-pointer"
-                    title="中止导入"
-                  >
-                    <X size={13} />
-                  </button>
-                ) : (
-                  <button onClick={(e) => { e.stopPropagation(); setContextMenuId(contextMenuId === source.id ? null : source.id); }}
-                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-bg-active transition-all cursor-pointer">
-                    <MoreHorizontal size={13} />
-                  </button>
-                )}
-                {contextMenuId === source.id && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setContextMenuId(null)} />
-                    <div className="absolute right-0 top-full mt-1 w-32 bg-bg-card border border-border-light rounded-lg shadow-xl z-50 py-1">
-                      {!isError && !isLoading && !isConfirmingAudio && <button onClick={(e) => { e.stopPropagation(); handleStartRename(source.id, source.name); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-hover cursor-pointer"><Edit3 size={11} /> 重命名</button>}
-                      <button onClick={(e) => { e.stopPropagation(); removeSource(currentNotebookId, source.id); setContextMenuId(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-error hover:bg-error/5 cursor-pointer"><Trash2 size={11} /> 删除</button>
+          {/* 未入库资料 */}
+          {filteredSources.filter(s => !s.vectorized).length > 0 && (
+            <div className="mt-2">
+              <div className="px-3 py-1.5 flex items-center justify-between hover:bg-bg-hover">
+                <button
+                  onClick={() => setExpandedUnvectorized(!expandedUnvectorized)}
+                  className="flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ChevronDown size={12} className={cn('text-text-muted transition-transform', !expandedUnvectorized && '-rotate-90')} />
+                  <div className="w-1.5 h-1.5 rounded-full bg-warning" />
+                  <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">未入库</span>
+                  <span className="text-[10px] text-text-muted">({filteredSources.filter(s => !s.vectorized).length})</span>
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleSelectAllUnvectorized(); }}
+                  className="flex items-center gap-1 text-[10px] text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+                >
+                  {selectedUnvectorizedCount === unvectorizedSources.length ? <SquareCheck size={12} className="text-accent" /> : <Square size={12} />}
+                  {selectedUnvectorizedCount === unvectorizedSources.length ? '取消' : '全选'}
+                </button>
+              </div>
+              {expandedUnvectorized && filteredSources.filter(s => !s.vectorized).map((source) => {
+                const Icon = sourceIcons[source.type] || FileText;
+                const isLoading = source.status === 'loading';
+                const isError = source.status === 'error';
+                const isConfirmingAudio = source.type === 'audio' && source.previewId && confirmedPreviewIds.has(source.previewId);
+                return (
+                  <motion.div key={source.id} layout initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }}
+                    className={cn(
+                      'group relative flex items-start gap-2.5 px-3 py-2.5 mx-1.5 rounded-lg hover:bg-bg-hover border transition-all',
+                      isError ? 'border-error/30 bg-error/5' :
+                      isConfirmingAudio ? 'border-accent/20 bg-accent/5' :
+                      'border-transparent'
+                    )}>
+
+                    {/* 未入库的资料也可以选中 */}
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isError || isConfirmingAudio) return;
+                        toggleSourceSelection(currentNotebookId, source.id);
+                      }}
+                      className={cn(
+                        'mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all',
+                        (isError || isConfirmingAudio)
+                          ? 'border-border-light opacity-40 cursor-default'
+                          : cn('cursor-pointer', source.selected ? 'bg-accent border-accent' : 'border-border-light hover:border-accent/50')
+                      )}
+                    >
+                      {source.selected && !isError && !isConfirmingAudio && <Check size={10} className="text-white" />}
+                      {isLoading && <Loader2 size={10} className="animate-spin text-accent" />}
                     </div>
-                  </>
-                )}
-              </motion.div>
-            );
-          })}
+
+                    {/* Main content */}
+                    <div className={cn('flex-1 min-w-0', (isLoading || isError || isConfirmingAudio) ? 'cursor-default' : 'cursor-pointer')} onClick={() => { if (!isLoading && !isError && !isConfirmingAudio) handleViewSource(source); }}>
+                      <div className="flex items-center gap-1.5">
+                        <div className={cn('p-1 rounded', isError ? 'bg-error/10 text-error' : '', !isError && source.type === 'file' && 'bg-blue-500/10 text-blue-400', !isError && source.type === 'url' && 'bg-teal/10 text-teal', !isError && source.type === 'audio' && 'bg-purple-500/10 text-purple-400', !isError && source.type === 'search' && 'bg-orange-500/10 text-orange-400', !isError && source.type === 'youdao' && 'bg-green-500/10 text-green-400')}>
+                          {(isLoading || isConfirmingAudio) ? <Loader2 size={12} className="animate-spin" /> : isError ? <AlertCircle size={12} /> : <Icon size={12} />}
+                        </div>
+                        {editingId === source.id ? (
+                          <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} onBlur={handleFinishRename}
+                            onKeyDown={(e) => e.key === 'Enter' && handleFinishRename()} className="flex-1 bg-transparent text-xs outline-none border-b border-accent" onClick={(e) => e.stopPropagation()} />
+                        ) : (
+                          <p className={cn('text-xs font-medium truncate', isError ? 'text-error' : 'text-text-primary')}>{source.name}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5 ml-5">
+                        {(isLoading || isConfirmingAudio) && <span className="text-[10px] text-accent animate-pulse">导入中...</span>}
+                        {isError && (
+                          <span className="text-[10px] text-error cursor-help" title={source.errorMessage || '导入失败'}>
+                            {source.errorMessage || '导入失败'}
+                          </span>
+                        )}
+                        {!isLoading && !isError && !isConfirmingAudio && source.size !== undefined && <span className="text-[10px] text-text-muted">{formatFileSize(source.size)}</span>}
+                        {!isLoading && !isError && <span className="text-[10px] text-warning">待入库</span>}
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    {(isLoading || isConfirmingAudio) ? (
+                      <button onClick={(e) => { e.stopPropagation(); removeSource(currentNotebookId, source.id); }}
+                        className="p-1 rounded text-error hover:bg-error/10 transition-all cursor-pointer" title="中止导入">
+                        <X size={13} />
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <button onClick={(e) => { e.stopPropagation(); setContextMenuId(contextMenuId === source.id ? null : source.id); }}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-bg-active transition-all cursor-pointer">
+                          <MoreHorizontal size={13} />
+                        </button>
+                      </div>
+                    )}
+                    {contextMenuId === source.id && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setContextMenuId(null)} />
+                        <div className="absolute right-0 top-full mt-1 w-32 bg-bg-card border border-border-light rounded-lg shadow-xl z-50 py-1">
+                          {!isError && !isLoading && <button onClick={(e) => { e.stopPropagation(); handleStartRename(source.id, source.name); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-hover cursor-pointer"><Edit3 size={11} /> 重命名</button>}
+                          <button onClick={(e) => { e.stopPropagation(); removeSource(currentNotebookId, source.id); setContextMenuId(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-error hover:bg-error/5 cursor-pointer"><Trash2 size={11} /> 删除</button>
+                        </div>
+                      </>
+                    )}
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Empty state */}
           {filteredSources.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 text-text-muted">
               <Upload size={32} className="mb-3 opacity-30" />

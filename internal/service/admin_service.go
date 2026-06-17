@@ -86,12 +86,19 @@ func (s *adminService) UpdateConfig(group, key string, value json.RawMessage, en
 }
 
 func (s *adminService) AddConfig(group, key string, value json.RawMessage, description string) error {
-	// 使用 Upsert 操作，避免并发请求导致的唯一键冲突
+	existing, err := s.configRepo.FindByGroupAndKey(group, key)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return bizerrors.New(bizerrors.CodeResourceAlreadyExists, "配置已存在")
+	}
+
 	config := &entity.SysConfig{
 		ConfigGroup: group, ConfigKey: key,
 		ConfigValue: string(value), Enabled: true, Description: description,
 	}
-	if err := s.configRepo.Upsert(config); err != nil {
+	if err := s.configRepo.Create(config); err != nil {
 		return err
 	}
 	// 清除系统配置缓存
