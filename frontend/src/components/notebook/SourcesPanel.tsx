@@ -495,6 +495,20 @@ export default function SourcesPanel() {
             </button>
           </div>
         )}
+        {/* Visit original URL for url types */}
+        {viewingSource.type === 'url' && viewingSource.url && (
+          <div className="px-4 py-2 border-b border-border flex-shrink-0">
+            <a
+              href={viewingSource.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-xs text-accent hover:text-accent-light transition-colors"
+            >
+              <Globe size={13} />
+              访问原网站
+            </a>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto p-4">
           <div className="bg-bg-card rounded-lg border border-border-light p-4">
             {viewLoading ? (
