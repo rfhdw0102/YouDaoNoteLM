@@ -7,6 +7,7 @@ import (
 	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/repository"
 	"YoudaoNoteLm/internal/service"
+	"YoudaoNoteLm/internal/service/external"
 	externalMarkitdown "YoudaoNoteLm/internal/service/external/markitdown"
 	externalStorage "YoudaoNoteLm/internal/service/external/storage"
 	externalYoudao "YoudaoNoteLm/internal/service/external/youdao"
@@ -21,6 +22,12 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	// 触发 provider 注册（各子包 init() 会自动注册到全局 Registry）
+	_ "YoudaoNoteLm/internal/service/external/asr"
+	_ "YoudaoNoteLm/internal/service/external/embedding"
+	_ "YoudaoNoteLm/internal/service/external/llm"
+	_ "YoudaoNoteLm/internal/service/external/search"
 
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/gin-gonic/gin"
@@ -50,17 +57,12 @@ func NewApp() *App {
 
 // Initialize 初始化应用依赖。
 func (a *App) Initialize() error {
-	// 1. 加载配置
 	if err := a.initConfig(); err != nil {
 		return err
 	}
-
-	// 2. 初始化日志
 	if err := a.initLogger(); err != nil {
 		return err
 	}
-
-	// 3. 初始化数据库
 	if err := a.initDatabase(); err != nil {
 		return err
 	}
@@ -121,13 +123,13 @@ func (a *App) initDatabase() error {
 		&entity.YoudaoBinding{},
 		&entity.SysConfig{},
 	); err != nil {
-		return fmt.Errorf("database migration failed: %w", err)
+		logger.Warn("database migration failed", zap.Error(err))
 	}
 
-	// 初始化 Redis
+	// 初始化 Redis（可选）
 	rs, err := database.InitRedis(&a.cfg.Database.Redis)
 	if err != nil {
-		return fmt.Errorf("init redis failed: %w", err)
+		logger.Warn("init redis failed, continue without redis", zap.Error(err))
 	}
 	a.redis = rs
 
@@ -156,8 +158,9 @@ func (a *App) initDependencies() {
 		a.cfg.External.MinIO.Bucket,
 	)
 	if err != nil {
-		logger.Fatal("MinIO 初始化失败", zap.Error(err))
+		logger.Fatal("MinIO 初始化失败，文件上传功能将不可用", zap.Error(err))
 	}
+	bochaClient := external.NewBochaSearchClient(&http.Client{}, a.cfg.External.Bocha.Endpoint)
 
 	// 创建 Service
 	emailSvc := service.NewEmailService()
@@ -166,8 +169,6 @@ func (a *App) initDependencies() {
 	tokenBlacklistSvc := service.NewTokenBlacklistService(a.redis)
 	userSvc := service.NewUserService(userRepo, verifyCodeSvc, minioStorage)
 	authSvc := service.NewAuthService(userRepo, userSvc, verifyCodeSvc, captchaSvc, tokenBlacklistSvc)
-	adminSvc := service.NewAdminService(userRepo, sysConfigRepo, nil)
-
 	// 创建缓存
 	redisCache := cache.New(a.redis)
 	importTaskCache := cache.NewImportTaskCache(redisCache)
@@ -176,8 +177,18 @@ func (a *App) initDependencies() {
 	// 创建 ConfigService（配置路由降级，管理 ASR/Search/LLM/Embedding 等动态服务）
 	configSvc := service.NewConfigService(sysConfigRepo, userConfigRepo, llmConfigRepo, redisCache, minioStorage)
 
-	// 创建 IngestionService（向量入库）
+	// 创建 AdminService（依赖 configSvc 用于清除配置缓存，必须在 configSvc 之后创建）
+	adminSvc := service.NewAdminService(userRepo, sysConfigRepo, configSvc)
+
+	// 创建 MarkdownStructurer（LLM 结构化服务）
+	structurer := service.NewMarkdownStructurer(configSvc)
+
+	searchSvc := service.NewSearchService(bochaClient, userConfigRepo, redisCache, a.cfg.External.Bocha)
+	// 创建 IngestionService
 	ingestionSvc := a.initIngestionService(sourceRepo, configSvc)
+	if ingestionSvc == nil {
+		logger.Warn("ingestion service unavailable, vector ingestion disabled")
+	}
 
 	// 创建笔记本和资料来源服务（需要依赖 IngestionService 来删除向量数据）
 	notebookSvc := service.NewNotebookService(notebookRepo, sourceRepo, conversationRepo, messageRepo, ingestionSvc, chatCache)
@@ -187,7 +198,7 @@ func (a *App) initDependencies() {
 	importerSvc := service.NewImporterService(
 		configSvc, markitdownClient, minioStorage,
 		sourceRepo, importTaskCache, audioPreviewCache,
-		ingestionSvc,
+		ingestionSvc, structurer,
 	)
 
 	// 创建 RAGRetriever
@@ -225,17 +236,24 @@ func (a *App) initDependencies() {
 	// 创建用户配置服务
 	userCfgSvc := service.NewUserConfigService(userConfigRepo, llmConfigRepo, configSvc)
 
-	// 创建搜索 Agent
-	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc)
+	// 创建有道云笔记服务（CLI 不可用时仅打 warning，不影响启动）
+	youdaoCLI := externalYoudao.NewCLI(a.cfg.External.Youdao.CLIPath, a.cfg.External.Youdao.ConverterScriptPath)
+	if err := youdaoCLI.CheckAvailable(); err != nil {
+		logger.Warn("youdaonote CLI 不可用，有道云笔记导入功能将无法使用", zap.Error(err))
+	}
+	youdaoBindingRepo := repository.NewYoudaoBindingRepository(a.mysqlDB)
+	youdaoSvc := service.NewYoudaoService(youdaoCLI, youdaoBindingRepo, sourceRepo, ingestionSvc, a.cfg.External.Youdao.CookiesPath, structurer)
+
+	// 创建搜索 Agent（依赖 youdaoSvc、youdaoCLI 和 importerSvc）
+	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc, youdaoSvc, youdaoCLI)
 	searchAgentSvc := service.NewSearchAgentService(configSvc, importerSvc, searchAgentInst)
 
-	// 创建有道云笔记服务
-	youdaoCLI := externalYoudao.NewCLI(a.cfg.External.Youdao.CLIPath, a.cfg.External.Youdao.ConverterScriptPath)
-	youdaoBindingRepo := repository.NewYoudaoBindingRepository(a.mysqlDB)
-	youdaoSvc := service.NewYoudaoService(youdaoCLI, youdaoBindingRepo, sourceRepo, ingestionSvc, a.cfg.External.Youdao.CookiesPath)
-
 	// 创建生成服务（SearchService 暂为 nil，后续可接入）
-	generationSvc := service.NewGenerationService(a.ragRetriever, nil, nil)
+	var generationMemory service.GenerationMemoryStore
+	if a.redis != nil {
+		generationMemory = service.NewGenerationMemoryCacheStore(cache.NewGenerationMemoryCache(a.redis))
+	}
+	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory)
 
 	// 创建 ChatAgentService 和 ConversationService
 	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache)
@@ -248,7 +266,7 @@ func (a *App) initDependencies() {
 		authSvc,
 		notebookSvc,
 		sourceSvc,
-		nil, // searchService 暂为 nil
+		searchSvc,
 		generationSvc,
 		importerSvc,
 		adminSvc,
@@ -264,7 +282,7 @@ func (a *App) initDependencies() {
 }
 
 // initIngestionService 初始化入库服务
-// 通过 ConfigService + Registry 创建 Embedder，支持所有已注册的 embedding provider
+// 从数据库读取用户的 Embedding 配置，创建 EmbedderProvider 和 MilvusWriter
 func (a *App) initIngestionService(sourceRepo repository.SourceRepository, configSvc service.ConfigService) rag.IngestionService {
 	ctx, cancel := milvusInitContext()
 	defer cancel()
@@ -274,7 +292,8 @@ func (a *App) initIngestionService(sourceRepo repository.SourceRepository, confi
 		Address: a.cfg.Milvus.GetAddress(),
 	})
 	if err != nil {
-		logger.Fatal("init milvus writer failed", zap.Error(err))
+		logger.Warn("init milvus writer failed", zap.Error(err))
+		return nil
 	}
 
 	// 创建 EmbedderProvider：通过 ConfigService 创建
@@ -322,7 +341,7 @@ func (a *App) initServer() {
 		Addr:           fmt.Sprintf(":%d", a.cfg.App.Port),
 		Handler:        engine,
 		ReadTimeout:    60 * time.Second,
-		WriteTimeout:   60 * time.Second,
+		WriteTimeout:   100 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
 }

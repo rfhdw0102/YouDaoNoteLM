@@ -6,12 +6,16 @@ import (
 
 	"YoudaoNoteLm/internal/rag"
 	bizerrors "YoudaoNoteLm/pkg/errors"
+	"YoudaoNoteLm/pkg/logger"
+
+	"go.uber.org/zap"
 )
 
 type generationService struct {
 	retriever rag.RAGRetriever
 	search    SearchService
 	model     GenerationModel
+	memory    GenerationMemoryStore
 	agents    map[GenerationType]generationAgent
 }
 
@@ -34,10 +38,15 @@ type generationAgentOutput struct {
 
 // NewGenerationService creates the supervisor generation service.
 func NewGenerationService(retriever rag.RAGRetriever, search SearchService, model GenerationModel) GenerationService {
+	return NewGenerationServiceWithMemory(retriever, search, model, nil)
+}
+
+func NewGenerationServiceWithMemory(retriever rag.RAGRetriever, search SearchService, model GenerationModel, memory GenerationMemoryStore) GenerationService {
 	return &generationService{
 		retriever: retriever,
 		search:    search,
 		model:     model,
+		memory:    memory,
 		agents: map[GenerationType]generationAgent{
 			GenerationTypeMindmap: newMindmapAgent(model),
 			GenerationTypePPT:     newPPTAgent(model),
@@ -53,10 +62,11 @@ func (s *generationService) Generate(ctx context.Context, req *GenerationRequest
 	}
 
 	plan := buildGenerationQueryPlan(req)
-	refs, err := s.retrieve(ctx, req, plan)
+	selection, err := s.retrieve(ctx, req, plan)
 	if err != nil {
 		return nil, err
 	}
+	refs := selection.References
 	searchResp, err := s.searchWeb(ctx, req, plan)
 	if err != nil {
 		return nil, err
@@ -75,15 +85,46 @@ func (s *generationService) Generate(ctx context.Context, req *GenerationRequest
 		}
 	}
 
+	memoryEntries := []GenerationMemoryEntry{}
+	memoryEnabled := s.memory != nil
+	if memoryEnabled {
+		entries, readErr := s.memory.GetRecent(ctx, generationMemoryScopeFromRequest(req), generationMemoryDefaultLimit)
+		if readErr != nil {
+			logger.Warn("read generation memory failed",
+				zap.Uint("user_id", req.UserID),
+				zap.Uint("notebook_id", req.NotebookID),
+				zap.String("type", string(req.Type)),
+				zap.Error(readErr),
+			)
+		} else {
+			memoryEntries = entries
+		}
+	}
+
+	contextValue := buildGenerationContext(req, refs, searchSummary, searchResults)
+	contextValue = appendGenerationMemoryContext(contextValue, memoryEntries)
+
 	agent := s.agents[req.Type]
 	agentOutput, err := agent.Generate(ctx, generationAgentInput{
 		Request:       req,
-		Context:       buildGenerationContext(req, refs, searchSummary, searchResults),
+		Context:       contextValue,
 		References:    refs,
 		SearchResults: searchResults,
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if memoryEnabled {
+		entry := buildGenerationMemoryEntry(req, agentOutput.Content)
+		if writeErr := s.memory.Add(ctx, generationMemoryScopeFromRequest(req), entry); writeErr != nil {
+			logger.Warn("write generation memory failed",
+				zap.Uint("user_id", req.UserID),
+				zap.Uint("notebook_id", req.NotebookID),
+				zap.String("type", string(req.Type)),
+				zap.Error(writeErr),
+			)
+		}
 	}
 
 	return &GenerationResponse{
@@ -92,15 +133,20 @@ func (s *generationService) Generate(ctx context.Context, req *GenerationRequest
 		References:    refs,
 		SearchResults: searchResults,
 		Meta: map[string]any{
-			"agent":               string(req.Type),
-			"reference_count":     len(refs),
-			"search_count":        len(searchResults),
-			"search_degraded":     searchDegraded,
-			"local_query":         plan.LocalQuery,
-			"web_query":           plan.WebQuery,
-			"format_valid":        agentOutput.FormatValid,
-			"fallback_used":       agentOutput.FallbackUsed,
-			"orchestration_steps": generationOrchestrationSteps(),
+			"agent":                    string(req.Type),
+			"reference_count":          len(refs),
+			"local_reference_count":    selection.StrongLocalCount,
+			"filtered_reference_count": selection.IrrelevantLocalCount + selection.WeakLocalCount,
+			"local_filter_reason":      selection.WebSupplementReason,
+			"search_count":             len(searchResults),
+			"search_degraded":          searchDegraded,
+			"local_query":              plan.LocalQuery,
+			"web_query":                plan.WebQuery,
+			"format_valid":             agentOutput.FormatValid,
+			"fallback_used":            agentOutput.FallbackUsed,
+			"memory_enabled":           memoryEnabled,
+			"memory_count":             len(memoryEntries),
+			"orchestration_steps":      generationOrchestrationSteps(),
 		},
 	}, nil
 }
@@ -120,14 +166,17 @@ func validateGenerationRequest(req *GenerationRequest) error {
 	}
 }
 
-func (s *generationService) retrieve(ctx context.Context, req *GenerationRequest, plan generationQueryPlan) ([]GenerationReference, error) {
+func (s *generationService) retrieve(ctx context.Context, req *GenerationRequest, plan generationQueryPlan) (generationReferenceSelection, error) {
 	inlineLimit := optionInt(req.Options, "inline_top_k", 6)
 	inlineRefs, err := buildInlineMarkdownReferences(ctx, req.Markdown, plan, inlineLimit)
 	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "preprocess input markdown failed", err)
+		return generationReferenceSelection{}, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "preprocess input markdown failed", err)
 	}
+	selectionLimit := inlineLimit + optionInt(req.Options, "top_k", 5)
 	if s.retriever == nil {
-		return inlineRefs, nil
+		return generationReferenceSelection{
+			References: inlineRefs,
+		}, nil
 	}
 	results, err := s.retriever.Retrieve(ctx, &rag.RetrieveRequest{
 		Query:     plan.LocalQuery,
@@ -136,7 +185,7 @@ func (s *generationService) retrieve(ctx context.Context, req *GenerationRequest
 		TopK:      optionInt(req.Options, "top_k", 5),
 	})
 	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "retrieve generation context failed", err)
+		return generationReferenceSelection{}, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "retrieve generation context failed", err)
 	}
 
 	ragRefs := make([]GenerationReference, 0, len(results))
@@ -157,7 +206,7 @@ func (s *generationService) retrieve(ctx context.Context, req *GenerationRequest
 			ChapterPath: item.ChapterPath,
 		})
 	}
-	return mergeGenerationReferences(inlineRefs, ragRefs, inlineLimit+optionInt(req.Options, "top_k", 5)), nil
+	return selectGenerationReferences(inlineRefs, ragRefs, plan, selectionLimit), nil
 }
 
 func (s *generationService) searchWeb(ctx context.Context, req *GenerationRequest, plan generationQueryPlan) (*SearchResponse, error) {
@@ -165,14 +214,15 @@ func (s *generationService) searchWeb(ctx context.Context, req *GenerationReques
 		return nil, nil
 	}
 	resp, err := s.search.SearchAndSummarize(ctx, &SearchRequest{
-		UserID:       req.UserID,
-		Scene:        SearchSceneGeneration,
-		Query:        plan.WebQuery,
-		Count:        optionInt(req.Options, "search_count", 5),
-		NeedSummary:  true,
-		NeedContent:  true,
-		NotebookID:   req.NotebookID,
-		AllowDegrade: req.AllowDegrade,
+		UserID:         req.UserID,
+		Scene:          SearchSceneGeneration,
+		Query:          plan.WebQuery,
+		Count:          optionInt(req.Options, "search_count", 5),
+		NeedSummary:    true,
+		NeedContent:    true,
+		NotebookID:     req.NotebookID,
+		AllowDegrade:   req.AllowDegrade,
+		SkipUserConfig: true, // 生成 Agent 直接使用 YAML 配置，不查数据库用户配置
 	})
 	if err != nil {
 		if req.AllowDegrade {
@@ -226,5 +276,16 @@ func optionInt(options map[string]any, key string, fallback int) int {
 }
 
 func generationOrchestrationSteps() []string {
-	return []string{"context_prepare", "draft_generate", "structure_check", "fact_enhance", "format_validate", "finalize"}
+	return []string{
+		"context_prepare",
+		"content_analyze",
+		"outline_plan",
+		"content_expand",
+		"draft_generate",
+		"structure_check",
+		"structure_repair",
+		"fact_enhance",
+		"format_validate",
+		"finalize",
+	}
 }

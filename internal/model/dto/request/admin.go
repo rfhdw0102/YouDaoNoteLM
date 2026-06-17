@@ -15,7 +15,7 @@ type ConfigUpdateRequest struct {
 
 // ConfigAddRequest 新增配置请求
 type ConfigAddRequest struct {
-	ConfigKey   string          `json:"config_key" binding:"required"`
+	ConfigKey   string          `json:"config_key" binding:"required,min=1"`
 	ConfigValue json.RawMessage `json:"config_value" binding:"required"`
 	Description string          `json:"description"`
 }

@@ -39,7 +39,7 @@ func (s *userConfigService) CreateLLMConfig(userID uint, config *entity.UserLLMC
 	return s.llmConfigRepo.Create(config)
 }
 
-func (s *userConfigService) UpdateLLMConfig(id uint, config *entity.UserLLMConfig) error {
+func (s *userConfigService) UpdateLLMConfig(userID uint, id uint, config *entity.UserLLMConfig) error {
 	existing, err := s.llmConfigRepo.FindByID(id)
 	if err != nil {
 		logger.Error("查找配置失败", zap.Uint("id", id), zap.Error(err))
@@ -48,13 +48,28 @@ func (s *userConfigService) UpdateLLMConfig(id uint, config *entity.UserLLMConfi
 	if existing == nil {
 		return bizerrors.ErrNotFound
 	}
+	if existing.UserID != userID {
+		return bizerrors.New(bizerrors.CodeForbidden, "无权操作此配置")
+	}
 	config.ID = id
 	config.UserID = existing.UserID
+	config.CreatedAt = existing.CreatedAt
+	config.UpdatedAt = existing.UpdatedAt
 	logger.Info("更新LLM配置", zap.Uint("id", id), zap.Any("config", config))
 	return s.llmConfigRepo.Update(config)
 }
 
-func (s *userConfigService) DeleteLLMConfig(id uint) error {
+func (s *userConfigService) DeleteLLMConfig(userID uint, id uint) error {
+	existing, err := s.llmConfigRepo.FindByID(id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return bizerrors.ErrNotFound
+	}
+	if existing.UserID != userID {
+		return bizerrors.New(bizerrors.CodeForbidden, "无权操作此配置")
+	}
 	return s.llmConfigRepo.Delete(id)
 }
 
@@ -87,6 +102,8 @@ func (s *userConfigService) CreateSearchConfig(userID uint, config *entity.UserC
 	if existing != nil {
 		// 如果存在已删除的记录，则更新它并恢复为未删除状态
 		config.ID = existing.ID
+		config.CreatedAt = existing.CreatedAt
+		config.UpdatedAt = existing.UpdatedAt
 		config.DeletedAt = gorm.DeletedAt{} // 恢复为未删除状态
 		return s.configRepo.Update(config)
 	}
@@ -105,6 +122,8 @@ func (s *userConfigService) UpdateSearchConfig(id uint, config *entity.UserConfi
 	config.ID = id
 	config.UserID = existing.UserID
 	config.ConfigType = "search"
+	config.CreatedAt = existing.CreatedAt
+	config.UpdatedAt = existing.UpdatedAt
 	if config.ExtraConfig == "" {
 		config.ExtraConfig = "{}"
 	}
@@ -120,12 +139,13 @@ func (s *userConfigService) DeleteSearchConfig(id uint) error {
 	if err != nil {
 		return err
 	}
+	if existing == nil {
+		return bizerrors.ErrNotFound
+	}
 	if err := s.configRepo.Delete(id); err != nil {
 		return err
 	}
-	if existing != nil {
-		s.configSvc.ClearUserConfigCache(existing.UserID, "search")
-	}
+	s.configSvc.ClearUserConfigCache(existing.UserID, "search")
 	return nil
 }
 
@@ -158,6 +178,8 @@ func (s *userConfigService) CreateASRConfig(userID uint, config *entity.UserConf
 	if existing != nil {
 		// 如果存在已删除的记录，则更新它并恢复为未删除状态
 		config.ID = existing.ID
+		config.CreatedAt = existing.CreatedAt
+		config.UpdatedAt = existing.UpdatedAt
 		config.DeletedAt = gorm.DeletedAt{} // 恢复为未删除状态
 		return s.configRepo.Update(config)
 	}
@@ -176,6 +198,8 @@ func (s *userConfigService) UpdateASRConfig(id uint, config *entity.UserConfig) 
 	config.ID = id
 	config.UserID = existing.UserID
 	config.ConfigType = "asr"
+	config.CreatedAt = existing.CreatedAt
+	config.UpdatedAt = existing.UpdatedAt
 	if config.ExtraConfig == "" {
 		config.ExtraConfig = "{}"
 	}
@@ -191,12 +215,13 @@ func (s *userConfigService) DeleteASRConfig(id uint) error {
 	if err != nil {
 		return err
 	}
+	if existing == nil {
+		return bizerrors.ErrNotFound
+	}
 	if err := s.configRepo.Delete(id); err != nil {
 		return err
 	}
-	if existing != nil {
-		s.configSvc.ClearUserConfigCache(existing.UserID, "asr")
-	}
+	s.configSvc.ClearUserConfigCache(existing.UserID, "asr")
 	return nil
 }
 
@@ -229,6 +254,8 @@ func (s *userConfigService) CreateEmbeddingConfig(userID uint, config *entity.Us
 	if existing != nil {
 		// 如果存在已删除的记录，则更新它并恢复为未删除状态
 		config.ID = existing.ID
+		config.CreatedAt = existing.CreatedAt
+		config.UpdatedAt = existing.UpdatedAt
 		config.DeletedAt = gorm.DeletedAt{} // 恢复为未删除状态
 		return s.configRepo.Update(config)
 	}
@@ -247,6 +274,8 @@ func (s *userConfigService) UpdateEmbeddingConfig(id uint, config *entity.UserCo
 	config.ID = id
 	config.UserID = existing.UserID
 	config.ConfigType = "embedding"
+	config.CreatedAt = existing.CreatedAt
+	config.UpdatedAt = existing.UpdatedAt
 	if config.ExtraConfig == "" {
 		config.ExtraConfig = "{}"
 	}
@@ -262,12 +291,13 @@ func (s *userConfigService) DeleteEmbeddingConfig(id uint) error {
 	if err != nil {
 		return err
 	}
+	if existing == nil {
+		return bizerrors.ErrNotFound
+	}
 	if err := s.configRepo.Delete(id); err != nil {
 		return err
 	}
-	if existing != nil {
-		s.configSvc.ClearUserConfigCache(existing.UserID, "embedding")
-	}
+	s.configSvc.ClearUserConfigCache(existing.UserID, "embedding")
 	return nil
 }
 
@@ -276,8 +306,7 @@ func (s *userConfigService) GetActiveConfig(userID uint, configType string) (*en
 	// 1. 优先返回用户配置（必须启用）
 	userCfg, err := s.configRepo.FindByUserAndType(userID, configType)
 	if err == nil && userCfg != nil && userCfg.Enabled {
-		// 标记为用户配置
-		userCfg.ExtraConfig = `{"source":"user"}` // 临时用 ExtraConfig 标记来源
+		userCfg.Source = "user"
 		return userCfg, nil
 	}
 
@@ -287,7 +316,6 @@ func (s *userConfigService) GetActiveConfig(userID uint, configType string) (*en
 		// 解析系统配置的 JSON 值
 		var params map[string]interface{}
 		if jsonErr := json.Unmarshal([]byte(sysCfg.ConfigValue), &params); jsonErr == nil {
-			// 从 JSON 中提取配置
 			getStr := func(key string) string {
 				if v, ok := params[key].(string); ok {
 					return v
@@ -296,25 +324,25 @@ func (s *userConfigService) GetActiveConfig(userID uint, configType string) (*en
 			}
 
 			return &entity.UserConfig{
-				ConfigType:  configType,
-				Name:        getStr("name"),
-				Provider:    getStr("provider"),
-				APIURL:      getStr("api_url"),
-				APIKey:      getStr("api_key"),
-				Model:       getStr("model"),
-				Enabled:     sysCfg.Enabled,
-				ExtraConfig: `{"source":"system","description":"` + sysCfg.Description + `"}`,
+				ConfigType: configType,
+				Name:       getStr("name"),
+				Provider:   getStr("provider"),
+				APIURL:     getStr("api_url"),
+				APIKey:     getStr("api_key"),
+				Model:      getStr("model"),
+				Enabled:    sysCfg.Enabled,
+				Source:     "system",
 			}, nil
 		}
 
 		// 如果解析失败，尝试作为纯 URL 处理
 		return &entity.UserConfig{
-			ConfigType:  configType,
-			Name:        sysCfg.ConfigKey,
-			Provider:    sysCfg.ConfigKey,
-			APIURL:      sysCfg.ConfigValue,
-			Enabled:     sysCfg.Enabled,
-			ExtraConfig: `{"source":"system","description":"` + sysCfg.Description + `"}`,
+			ConfigType: configType,
+			Name:       sysCfg.ConfigKey,
+			Provider:   sysCfg.ConfigKey,
+			APIURL:     sysCfg.ConfigValue,
+			Enabled:    sysCfg.Enabled,
+			Source:     "system",
 		}, nil
 	}
 

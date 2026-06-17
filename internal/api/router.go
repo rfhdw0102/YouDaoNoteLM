@@ -104,7 +104,7 @@ func (r *Router) Setup(engine *gin.Engine) {
 		r.userConfigCtrl.RegisterRoutes(v1)
 
 		// 后台管理路由（需认证）
-		r.adminCtrl.RegisterRoutes(v1)
+		r.adminCtrl.RegisterRoutes(v1, r.tokenBlacklist)
 
 		// 有道云笔记路由（需认证）
 		r.youdaoCtrl.RegisterRoutes(v1, r.tokenBlacklist)

@@ -38,7 +38,7 @@ func (ctrl *Controller) TestConfig(c *gin.Context) {
 
 	var req request.UserConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -86,7 +86,7 @@ func (ctrl *Controller) CreateLLMConfig(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req request.UserConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -110,6 +110,7 @@ func (ctrl *Controller) CreateLLMConfig(c *gin.Context) {
 }
 
 func (ctrl *Controller) UpdateLLMConfig(c *gin.Context) {
+	userID := middleware.GetUserID(c)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "无效的配置ID")
@@ -117,7 +118,7 @@ func (ctrl *Controller) UpdateLLMConfig(c *gin.Context) {
 	}
 	var req request.UserConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -139,7 +140,7 @@ func (ctrl *Controller) UpdateLLMConfig(c *gin.Context) {
 		return
 	}
 
-	if err := ctrl.configService.UpdateLLMConfig(uint(id), config); err != nil {
+	if err := ctrl.configService.UpdateLLMConfig(userID, uint(id), config); err != nil {
 		response.BizError(c, err)
 		return
 	}
@@ -147,12 +148,13 @@ func (ctrl *Controller) UpdateLLMConfig(c *gin.Context) {
 }
 
 func (ctrl *Controller) DeleteLLMConfig(c *gin.Context) {
+	userID := middleware.GetUserID(c)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "无效的配置ID")
 		return
 	}
-	if err := ctrl.configService.DeleteLLMConfig(uint(id)); err != nil {
+	if err := ctrl.configService.DeleteLLMConfig(userID, uint(id)); err != nil {
 		response.BizError(c, err)
 		return
 	}
@@ -175,7 +177,7 @@ func (ctrl *Controller) CreateSearchConfig(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req request.UserConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -205,7 +207,7 @@ func (ctrl *Controller) UpdateSearchConfig(c *gin.Context) {
 	}
 	var req request.UserConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -262,7 +264,7 @@ func (ctrl *Controller) CreateASRConfig(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req request.UserConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -291,7 +293,7 @@ func (ctrl *Controller) UpdateASRConfig(c *gin.Context) {
 	}
 	var req request.UserConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -405,7 +407,7 @@ func (ctrl *Controller) CreateEmbeddingConfig(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req request.UserConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -435,7 +437,7 @@ func (ctrl *Controller) UpdateEmbeddingConfig(c *gin.Context) {
 	}
 	var req request.UserConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 

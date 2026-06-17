@@ -15,6 +15,7 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 		sources.PUT("/:id", ctrl.Rename)
 		sources.DELETE("/:id", ctrl.Delete)
 		sources.POST("/batch-delete", ctrl.BatchDelete)
+		sources.POST("/delete-failed", ctrl.DeleteFailed)
 		sources.GET("/:id/content", ctrl.GetContent)
 		sources.GET("/:id/original", ctrl.GetOriginal)
 		sources.GET("/:id/download", ctrl.GetDownloadURL)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/rag"
@@ -21,8 +22,9 @@ type youdaoService struct {
 	bindingRepo  repository.YoudaoBindingRepository
 	sourceRepo   repository.SourceRepository
 	ingestionSvc rag.IngestionService
-	cancelFuncs  sync.Map // taskID -> context.CancelFunc
-	cookiesPath  string   // youdaonote cookies 文件路径（用于 .note 格式转换）
+	structurer   MarkdownStructurer // LLM 结构化服务
+	cancelFuncs  sync.Map           // taskID -> context.CancelFunc
+	cookiesPath  string             // youdaonote cookies 文件路径（用于 .note 格式转换）
 }
 
 // NewYoudaoService 创建有道云笔记服务
@@ -32,6 +34,7 @@ func NewYoudaoService(
 	sourceRepo repository.SourceRepository,
 	ingestionSvc rag.IngestionService,
 	cookiesPath string,
+	structurer MarkdownStructurer,
 ) YoudaoService {
 	return &youdaoService{
 		cli:          cli,
@@ -39,6 +42,7 @@ func NewYoudaoService(
 		sourceRepo:   sourceRepo,
 		ingestionSvc: ingestionSvc,
 		cookiesPath:  cookiesPath,
+		structurer:   structurer,
 	}
 }
 
@@ -64,7 +68,7 @@ func (s *youdaoService) Bind(userID uint, apiKey string) error {
 	// 2. 验证 Key 有效性（调用 list 测试）
 	_, err := s.cli.List(apiKey, "")
 	if err != nil {
-		return fmt.Errorf("API Key 无效，请检查后重试")
+		return fmt.Errorf("API Key 验证失败（CLI 返回错误: %w），请检查 Key 是否正确或网络是否正常", err)
 	}
 
 	// 3. 使用 Upsert 原子操作，避免并发冲突
@@ -103,16 +107,35 @@ func (s *youdaoService) ListNotes(userID uint, folderID string) ([]externalYouda
 
 // ImportNote 导入单篇有道云笔记到本系统
 func (s *youdaoService) ImportNote(userID uint, notebookID uint, fileID string) (*entity.Source, error) {
+	totalStart := time.Now()
+
 	apiKey, err := s.getAPIKey(userID)
 	if err != nil {
 		return nil, err
 	}
 
+	logger.Info("开始导入有道笔记",
+		zap.Uint("user_id", userID),
+		zap.String("file_id", fileID),
+	)
+
 	// 1. 读取笔记内容
+	stepStart := time.Now()
 	readResult, err := s.cli.Read(apiKey, fileID)
 	if err != nil {
+		logger.Error("读取有道笔记内容失败",
+			zap.String("file_id", fileID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("读取笔记内容失败: %w", err)
 	}
+
+	logger.Info("有道笔记内容读取成功",
+		zap.String("file_id", fileID),
+		zap.String("format", readResult.RawFormat),
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
 
 	content := strings.TrimSpace(readResult.Content)
 
@@ -126,24 +149,35 @@ func (s *youdaoService) ImportNote(userID uint, notebookID uint, fileID string) 
 			return nil, fmt.Errorf("笔记为 .note 格式，但未配置 cookies 文件路径，无法转换")
 		}
 		logger.Info("笔记为 .note 格式，开始转换为 Markdown", zap.String("file_id", fileID))
+		convertStart := time.Now()
 		convertedContent, convertErr := s.cli.ConvertNote(fileID, s.cookiesPath)
 		if convertErr != nil {
+			logger.Error(".note 格式转换失败",
+				zap.String("file_id", fileID),
+				zap.Duration("elapsed", time.Since(convertStart)),
+				zap.Error(convertErr),
+			)
 			return nil, fmt.Errorf(".note 格式转换失败: %w", convertErr)
 		}
 		if strings.TrimSpace(convertedContent) == "" {
 			return nil, fmt.Errorf(".note 格式转换后内容为空")
 		}
 		content = convertedContent
-		logger.Info(".note 格式转换成功", zap.String("file_id", fileID))
+		logger.Info(".note 格式转换成功",
+			zap.String("file_id", fileID),
+			zap.Int("content_len", len(content)),
+			zap.Duration("elapsed", time.Since(convertStart)),
+		)
 	} else if content == "" && s.cookiesPath != "" {
 		// 非 .note 格式但内容为空，尝试转换（可能是格式识别错误）
 		logger.Info("内容为空，尝试使用 youdaonote-pull 转换", zap.String("file_id", fileID))
+		convertStart := time.Now()
 		convertedContent, convertErr := s.cli.ConvertNote(fileID, s.cookiesPath)
 		if convertErr != nil {
-			logger.Warn("youdaonote-pull 转换失败", zap.String("file_id", fileID), zap.Error(convertErr))
+			logger.Warn("youdaonote-pull 转换失败", zap.String("file_id", fileID), zap.Duration("elapsed", time.Since(convertStart)), zap.Error(convertErr))
 		} else if strings.TrimSpace(convertedContent) != "" {
 			content = convertedContent
-			logger.Info("youdaonote-pull 转换成功", zap.String("file_id", fileID))
+			logger.Info("youdaonote-pull 转换成功", zap.String("file_id", fileID), zap.Duration("elapsed", time.Since(convertStart)))
 		}
 	}
 
@@ -153,6 +187,7 @@ func (s *youdaoService) ImportNote(userID uint, notebookID uint, fileID string) 
 	}
 
 	// 2. 通过 list 获取笔记名称
+	stepStart = time.Now()
 	noteName := fileID // 降级使用 fileID
 	items, listErr := s.cli.List(apiKey, "")
 	if listErr == nil {
@@ -163,8 +198,52 @@ func (s *youdaoService) ImportNote(userID uint, notebookID uint, fileID string) 
 			}
 		}
 	}
+	logger.Info("获取笔记名称完成",
+		zap.String("file_id", fileID),
+		zap.String("note_name", noteName),
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
+	// LLM 结构化
+	stepStart = time.Now()
+	if s.structurer != nil {
+		result, err := s.structurer.Structure(context.Background(), userID, content, StructureMeta{
+			Title:      noteName,
+			SourceType: "youdao",
+		})
+		if err != nil {
+			logger.Error("LLM 结构化失败，使用原始内容",
+				zap.String("file_id", fileID),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(err),
+			)
+		} else if result.ActuallyCalled && result.Content != content {
+			logger.Info("LLM 结构化成功，内容已优化",
+				zap.String("file_id", fileID),
+				zap.Int("original_len", len(content)),
+				zap.Int("structured_len", len(result.Content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+			content = result.Content
+		} else if result.ActuallyCalled {
+			logger.Info("LLM 判断内容已有结构，无需结构化",
+				zap.String("file_id", fileID),
+				zap.Int("content_len", len(content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+		} else {
+			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
+				zap.String("file_id", fileID),
+				zap.Int("content_len", len(content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+		}
+	} else {
+		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.String("file_id", fileID))
+	}
 
 	// 3. 创建 Source 记录
+	stepStart = time.Now()
 	source := &entity.Source{
 		UserID:          userID,
 		NotebookID:      notebookID,
@@ -176,20 +255,45 @@ func (s *youdaoService) ImportNote(userID uint, notebookID uint, fileID string) 
 	}
 
 	if err := s.sourceRepo.Create(source); err != nil {
+		logger.Error("创建 Source 记录失败",
+			zap.String("file_id", fileID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("创建 Source 记录失败: %w", err)
 	}
 
+	logger.Info("Source 记录创建成功",
+		zap.String("file_id", fileID),
+		zap.Uint("source_id", source.ID),
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
 	// 4. 同步触发 RAG 入库
+	stepStart = time.Now()
 	if s.ingestionSvc != nil {
 		if err := s.ingestionSvc.IngestSingle(context.Background(), source.ID); err != nil {
+			logger.Error("RAG 入库失败",
+				zap.String("file_id", fileID),
+				zap.Uint("source_id", source.ID),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(err),
+			)
 			return nil, fmt.Errorf("RAG 入库失败: %w", err)
 		}
+		logger.Info("RAG 入库成功",
+			zap.String("file_id", fileID),
+			zap.Uint("source_id", source.ID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+		)
 	}
 
-	logger.Info("有道笔记导入成功",
+	logger.Info("有道笔记导入完成",
 		zap.Uint("user_id", userID),
 		zap.String("file_id", fileID),
 		zap.String("name", noteName),
+		zap.Uint("source_id", source.ID),
+		zap.Duration("total_elapsed", time.Since(totalStart)),
 	)
 
 	return source, nil
@@ -318,9 +422,16 @@ func (s *youdaoService) processBatch(taskCtx context.Context, taskID string, api
 
 // processSingleNote 处理单篇有道笔记导入
 func (s *youdaoService) processSingleNote(taskCtx context.Context, apiKey string, sourceID uint, fileID string) {
+	totalStart := time.Now()
+
 	if taskCtx.Err() != nil {
 		return
 	}
+
+	logger.Info("开始处理有道笔记导入",
+		zap.Uint("source_id", sourceID),
+		zap.String("file_id", fileID),
+	)
 
 	// 更新状态为 processing
 	if err := s.sourceRepo.UpdateStatus(sourceID, "processing", ""); err != nil {
@@ -328,16 +439,30 @@ func (s *youdaoService) processSingleNote(taskCtx context.Context, apiKey string
 	}
 
 	// 读取笔记内容
+	stepStart := time.Now()
 	readResult, err := s.cli.Read(apiKey, fileID)
 	if err != nil {
 		if taskCtx.Err() != nil {
 			return
 		}
+		logger.Error("读取有道笔记内容失败",
+			zap.Uint("source_id", sourceID),
+			zap.String("file_id", fileID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+			zap.Error(err),
+		)
 		if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", fmt.Sprintf("读取失败: %v", err)); updateErr != nil {
 			logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
 		}
 		return
 	}
+
+	logger.Info("有道笔记内容读取成功",
+		zap.Uint("source_id", sourceID),
+		zap.String("file_id", fileID),
+		zap.String("format", readResult.RawFormat),
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
 
 	content := strings.TrimSpace(readResult.Content)
 
@@ -352,36 +477,58 @@ func (s *youdaoService) processSingleNote(taskCtx context.Context, apiKey string
 			return
 		}
 		if s.cookiesPath == "" {
+			logger.Error("笔记为 .note 格式，但未配置 cookies 文件路径",
+				zap.Uint("source_id", sourceID),
+				zap.String("file_id", fileID),
+			)
 			if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", "笔记为 .note 格式，但未配置 cookies 文件路径"); updateErr != nil {
 				logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
 			}
 			return
 		}
 		logger.Info("笔记为 .note 格式，开始转换为 Markdown", zap.String("file_id", fileID))
+		convertStart := time.Now()
 		convertedContent, convertErr := s.cli.ConvertNote(fileID, s.cookiesPath)
 		if convertErr != nil {
+			logger.Error(".note 格式转换失败",
+				zap.Uint("source_id", sourceID),
+				zap.String("file_id", fileID),
+				zap.Duration("elapsed", time.Since(convertStart)),
+				zap.Error(convertErr),
+			)
 			if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", fmt.Sprintf(".note 格式转换失败: %v", convertErr)); updateErr != nil {
 				logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
 			}
 			return
 		}
 		if strings.TrimSpace(convertedContent) == "" {
+			logger.Error(".note 格式转换后内容为空",
+				zap.Uint("source_id", sourceID),
+				zap.String("file_id", fileID),
+				zap.Duration("elapsed", time.Since(convertStart)),
+			)
 			if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", ".note 格式转换后内容为空"); updateErr != nil {
 				logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
 			}
 			return
 		}
 		content = convertedContent
-		logger.Info(".note 格式转换成功", zap.String("file_id", fileID))
+		logger.Info(".note 格式转换成功",
+			zap.Uint("source_id", sourceID),
+			zap.String("file_id", fileID),
+			zap.Int("content_len", len(content)),
+			zap.Duration("elapsed", time.Since(convertStart)),
+		)
 	} else if content == "" && s.cookiesPath != "" {
 		// 非 .note 格式但内容为空，尝试转换（可能是格式识别错误）
 		logger.Info("内容为空，尝试使用 youdaonote-pull 转换", zap.String("file_id", fileID))
+		convertStart := time.Now()
 		convertedContent, convertErr := s.cli.ConvertNote(fileID, s.cookiesPath)
 		if convertErr != nil {
-			logger.Warn("youdaonote-pull 转换失败", zap.String("file_id", fileID), zap.Error(convertErr))
+			logger.Warn("youdaonote-pull 转换失败", zap.String("file_id", fileID), zap.Duration("elapsed", time.Since(convertStart)), zap.Error(convertErr))
 		} else if strings.TrimSpace(convertedContent) != "" {
 			content = convertedContent
-			logger.Info("youdaonote-pull 转换成功", zap.String("file_id", fileID))
+			logger.Info("youdaonote-pull 转换成功", zap.String("file_id", fileID), zap.Duration("elapsed", time.Since(convertStart)))
 		}
 	}
 
@@ -390,6 +537,10 @@ func (s *youdaoService) processSingleNote(taskCtx context.Context, apiKey string
 		if taskCtx.Err() != nil {
 			return
 		}
+		logger.Error("笔记内容为空或格式不支持",
+			zap.Uint("source_id", sourceID),
+			zap.String("file_id", fileID),
+		)
 		if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", "笔记内容为空或格式不支持"); updateErr != nil {
 			logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
 		}
@@ -406,24 +557,92 @@ func (s *youdaoService) processSingleNote(taskCtx context.Context, apiKey string
 		return
 	}
 
+	// LLM 结构化
+	stepStart = time.Now()
+	if s.structurer != nil {
+		result, err := s.structurer.Structure(taskCtx, existing.UserID, content, StructureMeta{
+			Title:      existing.Name,
+			SourceType: "youdao",
+		})
+		if err != nil {
+			logger.Error("LLM 结构化失败，使用原始内容",
+				zap.Uint("source_id", sourceID),
+				zap.String("file_id", fileID),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(err),
+			)
+		} else if result.ActuallyCalled && result.Content != content {
+			logger.Info("LLM 结构化成功，内容已优化",
+				zap.Uint("source_id", sourceID),
+				zap.Int("original_len", len(content)),
+				zap.Int("structured_len", len(result.Content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+			content = result.Content
+		} else if result.ActuallyCalled {
+			logger.Info("LLM 判断内容已有结构，无需结构化",
+				zap.Uint("source_id", sourceID),
+				zap.Int("content_len", len(content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+		} else {
+			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
+				zap.Uint("source_id", sourceID),
+				zap.Int("content_len", len(content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+		}
+	} else {
+		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.Uint("source_id", sourceID))
+	}
+
 	// 更新内容和状态
+	stepStart = time.Now()
 	existing.MarkdownContent = content
 	existing.Status = "ready"
 	if err := s.sourceRepo.Update(existing); err != nil {
+		logger.Error("更新 Source 内容失败",
+			zap.Uint("source_id", sourceID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+			zap.Error(err),
+		)
 		if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", fmt.Sprintf("保存失败: %v", err)); updateErr != nil {
 			logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
 		}
 		return
 	}
 
+	logger.Info("Source 记录更新成功",
+		zap.Uint("source_id", sourceID),
+		zap.String("file_id", fileID),
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
 	// 同步触发 RAG 入库
+	stepStart = time.Now()
 	if s.ingestionSvc != nil {
 		if err := s.ingestionSvc.IngestSingle(context.Background(), sourceID); err != nil {
-			logger.Error("有道笔记批量导入 RAG 入库失败", zap.Uint("source_id", sourceID), zap.Error(err))
+			logger.Error("RAG 入库失败",
+				zap.Uint("source_id", sourceID),
+				zap.String("file_id", fileID),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(err),
+			)
 			if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", fmt.Sprintf("RAG 入库失败: %v", err)); updateErr != nil {
 				logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
 			}
 			return
 		}
+		logger.Info("RAG 入库成功",
+			zap.Uint("source_id", sourceID),
+			zap.String("file_id", fileID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+		)
 	}
+
+	logger.Info("有道笔记导入完成",
+		zap.Uint("source_id", sourceID),
+		zap.String("file_id", fileID),
+		zap.Duration("total_elapsed", time.Since(totalStart)),
+	)
 }

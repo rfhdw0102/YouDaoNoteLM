@@ -177,6 +177,11 @@ func (s *userService) UploadAvatar(id uint, file *multipart.FileHeader) (string,
 		return "", fmt.Errorf("读取上传文件失败: %w", err)
 	}
 	if err := s.storage.UploadBytes(objectName, fileBytes, file.Header.Get("Content-Type")); err != nil {
+		logger.Error("头像上传到存储服务失败",
+			zap.Uint("user_id", id),
+			zap.String("file", file.Filename),
+			zap.Error(err),
+		)
 		return "", fmt.Errorf("上传头像到 MinIO 失败: %w", err)
 	}
 
@@ -266,6 +271,7 @@ func (s *userService) GetUserResponse(user *entity.User) *dto.UserResponse {
 		Email:     user.Email,
 		Nickname:  user.Nickname,
 		Avatar:    avatarURL,
+		Role:      user.Role,
 		Status:    user.Status,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,

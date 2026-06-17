@@ -77,6 +77,10 @@ var (
 	ErrInvalidYoudaoAPIKey         = NewDefault(CodeInvalidYoudaoAPIKey)
 	ErrDuplicateImport             = NewDefault(CodeDuplicateImport)
 	ErrPreviewExpired              = NewDefault(CodePreviewExpired)
+	ErrSearchRequestTimeout        = NewDefault(CodeSearchRequestTimeout)
+	ErrSearchProviderUnavailable   = NewDefault(CodeSearchProviderUnavailable)
+	ErrSearchProviderEmptyResult   = NewDefault(CodeSearchProviderEmptyResult)
+	ErrSearchNormalizedEmptyResult = NewDefault(CodeSearchNormalizedEmptyResult)
 
 	// 搜索 Agent 相关错误
 	ErrLLMNotConfigured   = NewDefault(CodeLLMNotConfigured)

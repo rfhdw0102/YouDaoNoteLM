@@ -88,11 +88,6 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("external.minio.bucket 不能为空")
 	}
 
-	// External - Youdao
-	if c.External.Youdao.CLIPath == "" {
-		return fmt.Errorf("external.youdao.cli_path 不能为空")
-	}
-
 	return nil
 }
 
@@ -122,8 +117,22 @@ func (c *MilvusConfig) GetAddress() string {
 // ExternalConfig 外部服务配置
 type ExternalConfig struct {
 	MarkItDown MarkItDownConfig `mapstructure:"markitdown"`
+	ASR        ASRConfig        `mapstructure:"asr"`
 	MinIO      MinIOConfig      `mapstructure:"minio"`
 	Youdao     YoudaoConfig     `mapstructure:"youdao"`
+	Bocha      BochaConfig      `mapstructure:"bocha"`
+}
+
+// BochaConfig 博查联网搜索配置
+type BochaConfig struct {
+	BaseURL         string `mapstructure:"base_url"`
+	Endpoint        string `mapstructure:"endpoint"`
+	APIKey          string `mapstructure:"api_key"`
+	TimeoutSeconds  int    `mapstructure:"timeout_seconds"`
+	DefaultCount    int    `mapstructure:"default_count"`
+	Summary         bool   `mapstructure:"summary"`
+	CacheTTLSeconds int    `mapstructure:"cache_ttl_seconds"`
+	MaxCount        int    `mapstructure:"max_count"`
 }
 
 // YoudaoConfig 有道云笔记 CLI 配置
@@ -136,6 +145,43 @@ type YoudaoConfig struct {
 // MarkItDownConfig 文档转换服务配置
 type MarkItDownConfig struct {
 	URL string `mapstructure:"url"`
+}
+
+// ASRConfig ASR 语音转文本配置
+type ASRConfig struct {
+	Provider string                 `mapstructure:"provider"`
+	Params   map[string]interface{} `mapstructure:"params"`
+}
+
+// GetString 获取参数中的字符串值
+func (c *ASRConfig) GetString(key string) string {
+	if c == nil {
+		return ""
+	}
+	if v, ok := c.Params[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// GetInt 获取参数中的整数值
+func (c *ASRConfig) GetInt(key string) int {
+	if c == nil {
+		return 0
+	}
+	if v, ok := c.Params[key]; ok {
+		switch n := v.(type) {
+		case int:
+			return n
+		case int64:
+			return int(n)
+		case float64:
+			return int(n)
+		}
+	}
+	return 0
 }
 
 // MinIOConfig MinIO 对象存储配置

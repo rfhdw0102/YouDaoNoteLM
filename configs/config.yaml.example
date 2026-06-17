@@ -1,6 +1,3 @@
-# YouDaoNoteLM 配置文件
-
-# 服务器配置
 app:
   name: "youdao-api"
   version: "1.0.0"
@@ -13,8 +10,8 @@ database:
     host: "localhost"
     port: 3306
     username: "root"
-    password: "20041211wzwaicjW."
-    database: "youdao"
+    password: "your_password"
+    database: "your_database"
     max_idle_conns: 10
     max_open_conns: 100
   redis:
@@ -31,6 +28,33 @@ jwt:
   refresh_token_exp: "24h"    # Refresh Token 过期时间：1 天
   issuer: "youdaonotelm"      # Token 签发者
 
+external:
+  markitdown:
+    url: "http://localhost:8085"
+  asr:
+    provider: "aliyun_nls"
+    params:
+      access_key_id: "your_key_id"
+      access_key_secret: "your_key_secret"
+      app_key: "your_app_key"
+  minio:
+    endpoint: "localhost:9000"
+    access_key: "minioadmin"
+    secret_key: "minioadmin"
+    bucket: "youdaonotelm"
+  milvus:
+    address: "localhost:19530"
+    username: ""
+    password: ""
+  bocha:
+    base_url: "https://api.bochaai.com"
+    endpoint: "/v1/web-search"
+    api_key: ""
+    timeout_seconds: 15
+    default_count: 5
+    summary: true
+    cache_ttl_seconds: 300
+    max_count: 10
 
 # 日志配置
 log:
@@ -42,13 +66,33 @@ log:
   compress: true   # 是否压缩
 
 #邮箱配置
+cors:
+  enabled: true
+  allow_origins:
+    - "*"
+  allow_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "PATCH"
+    - "DELETE"
+    - "OPTIONS"
+  allow_headers:
+    - "Authorization"
+    - "Content-Type"
+    - "Origin"
+    - "Accept"
+  expose_headers:
+    - "Content-Length"
+  allow_credentials: true
+  max_age: 86400
+
 email:
   host: "smtp.qq.com"
   port: 587
-  username: "2129905621@qq.com"
-  password: "koptculidhqpdcjb"
-  from: "2129905621@qq.com"  # 发件人地址
-
+  username: ""
+  password: ""
+  from: ""
 
 
 # Milvus 向量数据库配置
@@ -70,3 +114,12 @@ external:
     converter_script_path: "scripts/youdao/convert_to_markdown.py"  # 转换脚本路径（本地开发用）
     # converter_script_path: "/app/scripts/youdao/convert_to_markdown.py"  # Docker 容器内路径
     cookies_path: ""  # youdaonote cookies 文件路径（可选，用于 .note 格式转换）
+  bocha:
+    base_url: "https://api.bochaai.com"
+    endpoint: "/v1/web-search"
+    api_key: ""
+    timeout_seconds: 15
+    default_count: 5
+    summary: true
+    cache_ttl_seconds: 300
+    max_count: 10

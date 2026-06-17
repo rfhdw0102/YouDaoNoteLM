@@ -62,11 +62,11 @@ const (
 	CodeSearchProviderEmptyResult   = 40015
 	CodeSearchNormalizedEmptyResult = 40016
 
-	// 搜索 Agent 错误码 4xxxx（续）
-	CodeLLMNotConfigured   = 40010
-	CodeLLMCallFailed      = 40011
-	CodeLLMResponseInvalid = 40012
-	CodeSearchAgentTimeout = 40013
+	// LLM / Agent 错误码 4002x
+	CodeLLMNotConfigured   = 40020
+	CodeLLMCallFailed      = 40021
+	CodeLLMResponseInvalid = 40022
+	CodeSearchAgentTimeout = 40023
 
 	// 服务器错误 5xxxx
 	CodeInternalServiceError = 50001
@@ -108,23 +108,26 @@ var codeMessages = map[int]string{
 	CodeResourceAlreadyExists: "资源已存在",
 	CodeResourceLocked:        "资源已被锁定",
 
-	CodeUnsupportedFormat:     "不支持的文件格式",
-	CodeFileTooLarge:          "文件大小超限",
-	CodeFileParseFailed:       "文件解析失败",
-	CodeWebScrapeFailed:       "网页抓取失败",
-	CodeASTranscriptionFailed: "音频转写失败",
-	CodeSearchQuotaExhausted:  "搜索API配额耗尽",
-	CodeInvalidYoudaoAPIKey:   "有道API Key无效",
-	CodeDuplicateImport:       "重复导入",
-	CodePreviewExpired:        "预览已过期",
-	CodeLLMNotConfigured:      "请先在设置中配置 LLM 服务",
-	CodeLLMCallFailed:         "LLM 服务调用失败",
-	CodeLLMResponseInvalid:    "LLM 返回结果格式异常",
-	CodeSearchAgentTimeout:    "搜索 Agent 执行超时",
-	CodeInternalServiceError:  "内部服务错误",
-	CodeConfigTestFailed:      "配置连通性测试失败",
-	CodeConfigTestTimeout:     "配置连通性测试超时",
-	CodeConfigTestInvalid:     "配置参数无效",
+	CodeUnsupportedFormat:           "不支持的文件格式",
+	CodeFileTooLarge:                "文件大小超限",
+	CodeFileParseFailed:             "文件解析失败",
+	CodeWebScrapeFailed:             "网页抓取失败",
+	CodeASTranscriptionFailed:       "音频转写失败",
+	CodeSearchQuotaExhausted:        "搜索API配额耗尽",
+	CodeInvalidYoudaoAPIKey:         "有道API Key无效",
+	CodeDuplicateImport:             "重复导入",
+	CodePreviewExpired:              "预览已过期",
+	CodeLLMNotConfigured:            "请先在设置中配置 LLM 服务",
+	CodeLLMCallFailed:               "LLM 服务调用失败",
+	CodeLLMResponseInvalid:          "LLM 返回结果格式异常",
+	CodeSearchAgentTimeout:          "搜索 Agent 执行超时",
+	CodeInternalServiceError:        "内部服务错误",
+	CodeConfigTestFailed:            "配置连通性测试失败",
+	CodeConfigTestTimeout:           "配置连通性测试超时",
+	CodeConfigTestInvalid:           "配置参数无效",
+	CodeSearchInvalidResponse:       "搜索 Provider 返回结构异常",
+	CodeSearchProviderEmptyResult:   "搜索未返回结果",
+	CodeSearchNormalizedEmptyResult: "搜索结果清洗后为空",
 }
 
 // GetMessage 获取错误码消息

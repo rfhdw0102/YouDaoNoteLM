@@ -3,15 +3,17 @@ package search
 
 import (
 	"context"
-	"net/http"
 	"time"
 
+	agentTools "YoudaoNoteLm/internal/agent/tools"
+	"YoudaoNoteLm/internal/llm"
 	"YoudaoNoteLm/internal/service"
+	externalYoudao "YoudaoNoteLm/internal/service/external/youdao"
 	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/logger"
 
-	einoOpenai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -24,33 +26,32 @@ const maxAgentRounds = 2
 type SearchAgent struct {
 	configService service.ConfigService
 	importer      service.ImporterService
+	youdaoService service.YoudaoService // 用于 import_document tool
+	youdaoCLI     externalYoudao.CLI    // 用于 import_document tool
 }
 
 // NewSearchAgent 创建搜索 Agent
 func NewSearchAgent(
 	configService service.ConfigService,
 	importer service.ImporterService,
+	youdaoService service.YoudaoService,
+	youdaoCLI externalYoudao.CLI,
 ) *SearchAgent {
 	return &SearchAgent{
 		configService: configService,
 		importer:      importer,
+		youdaoService: youdaoService,
+		youdaoCLI:     youdaoCLI,
 	}
 }
 
-// createEinoChatModel 根据用户配置创建 Eino OpenAI ChatModel
-func (a *SearchAgent) createEinoChatModel(userID uint) (*einoOpenai.ChatModel, error) {
-	cfg, err := a.configService.GetChatModelConfig(userID)
+// createChatModel 根据用户配置创建 ToolCallingChatModel（支持多 Provider）
+func (a *SearchAgent) createChatModel(ctx context.Context, userID uint) (model.ToolCallingChatModel, error) {
+	cfg, err := a.configService.GetUserLLMConfig(userID)
 	if err != nil {
 		return nil, err
 	}
-
-	return einoOpenai.NewChatModel(context.Background(), &einoOpenai.ChatModelConfig{
-		Model:      cfg.Model,
-		BaseURL:    cfg.BaseURL,
-		APIKey:     cfg.APIKey,
-		Timeout:    60 * time.Second,
-		HTTPClient: &http.Client{Timeout: 90 * time.Second},
-	})
+	return llm.NewToolCallingChatModel(ctx, cfg)
 }
 
 // createTools 创建搜索 Agent 的工具列表（仅 web_search，用户交互模式）
@@ -66,7 +67,7 @@ func (a *SearchAgent) createTools() ([]tool.BaseTool, error) {
 	return tools, nil
 }
 
-// createToolsWithImport 创建搜索 Agent 的工具列表（web_search + import_urls，自动导入模式）
+// createToolsWithImport 创建搜索 Agent 的工具列表（web_search + import_document，自动导入模式）
 func (a *SearchAgent) createToolsWithImport() ([]tool.BaseTool, error) {
 	tools := make([]tool.BaseTool, 0, 2)
 
@@ -76,18 +77,19 @@ func (a *SearchAgent) createToolsWithImport() ([]tool.BaseTool, error) {
 	}
 	tools = append(tools, webSearchTool)
 
-	importTool, err := NewImportURLsTool(a.importer)
+	// 统一导入工具（替代旧的 import_urls）
+	importDocTool, err := agentTools.NewImportDocumentTool(a.youdaoService, a.importer)
 	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "创建 import_urls 工具失败", err)
+		return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "创建 import_document 工具失败", err)
 	}
-	tools = append(tools, importTool)
+	tools = append(tools, importDocTool)
 
 	return tools, nil
 }
 
 // createAgent 创建 Eino Agent（用户交互模式：只搜索不自动导入）
 func (a *SearchAgent) createAgent(ctx context.Context, userID uint) (*adk.ChatModelAgent, error) {
-	chatModel, err := a.createEinoChatModel(userID)
+	chatModel, err := a.createChatModel(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +115,7 @@ func (a *SearchAgent) createAgent(ctx context.Context, userID uint) (*adk.ChatMo
 
 // createAgentWithImport 创建 Eino Agent（自动导入模式：搜索并自动导入）
 func (a *SearchAgent) createAgentWithImport(ctx context.Context, userID uint) (*adk.ChatModelAgent, error) {
-	chatModel, err := a.createEinoChatModel(userID)
+	chatModel, err := a.createChatModel(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -141,6 +143,8 @@ func (a *SearchAgent) createAgentWithImport(ctx context.Context, userID uint) (*
 func (a *SearchAgent) Execute(ctx context.Context, userID, notebookID uint, task string) (*service.SearchAgentResult, error) {
 	ctx = WithUserID(ctx, userID)
 	ctx = WithNotebookID(ctx, notebookID)
+	ctx = agentTools.WithUserID(ctx, userID)
+	ctx = agentTools.WithNotebookID(ctx, notebookID)
 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
@@ -235,6 +239,8 @@ func (a *SearchAgent) ExecuteStream(ctx context.Context, userID, notebookID uint
 
 		ctx = WithUserID(ctx, userID)
 		ctx = WithNotebookID(ctx, notebookID)
+		ctx = agentTools.WithUserID(ctx, userID)
+		ctx = agentTools.WithNotebookID(ctx, notebookID)
 
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 		defer cancel()
@@ -342,6 +348,8 @@ func (a *SearchAgent) ExecuteStream(ctx context.Context, userID, notebookID uint
 func (a *SearchAgent) ExecuteWithImport(ctx context.Context, userID, notebookID uint, task string) (*service.SearchAgentResult, error) {
 	ctx = WithUserID(ctx, userID)
 	ctx = WithNotebookID(ctx, notebookID)
+	ctx = agentTools.WithUserID(ctx, userID)
+	ctx = agentTools.WithNotebookID(ctx, notebookID)
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute) // 自动导入模式给更长超时
 	defer cancel()

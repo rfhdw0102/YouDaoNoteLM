@@ -31,6 +31,7 @@ type SearchRequest struct {
 	SourceID       uint        `json:"source_id,omitempty"`
 	TraceID        string      `json:"trace_id,omitempty"`
 	AllowDegrade   bool        `json:"allow_degrade,omitempty"`
+	SkipUserConfig bool        `json:"-"`
 }
 
 // SearchQuota 统一搜索额度信息。

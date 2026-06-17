@@ -46,7 +46,8 @@ type importerService struct {
 	importCache  *cache.ImportTaskCache
 	previewCache *cache.AudioPreviewCache
 	ingestionSvc rag.IngestionService
-	cancelFuncs  sync.Map // taskID -> context.CancelFunc，用于中止运行中的任务
+	structurer   MarkdownStructurer // LLM 结构化服务
+	cancelFuncs  sync.Map           // taskID -> context.CancelFunc，用于中止运行中的任务
 }
 
 // NewImporterService 创建导入服务
@@ -58,6 +59,7 @@ func NewImporterService(
 	importCache *cache.ImportTaskCache,
 	previewCache *cache.AudioPreviewCache,
 	ingestionSvc rag.IngestionService,
+	structurer MarkdownStructurer,
 ) ImporterService {
 	return &importerService{
 		markitdown:   markitdown,
@@ -67,10 +69,11 @@ func NewImporterService(
 		importCache:  importCache,
 		previewCache: previewCache,
 		ingestionSvc: ingestionSvc,
+		structurer:   structurer,
 	}
 }
 
-// ImportFile 文件上传导入
+// ImportFile 文件上传导入（异步：立即创建 source，后台处理解析和入库）
 func (s *importerService) ImportFile(userID, notebookID uint, file *multipart.FileHeader) (*entity.Source, error) {
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 	if !allowedFileTypes[ext] {
@@ -80,64 +83,179 @@ func (s *importerService) ImportFile(userID, notebookID uint, file *multipart.Fi
 		return nil, bizerrors.ErrFileTooLarge
 	}
 
-	// 读取文件内容（用于 MarkItDown 转换）
-	src, err := file.Open()
-	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "打开上传文件失败", err)
-	}
-	defer func(src multipart.File) {
-		err := src.Close()
-		if err != nil {
-			logger.Errorf("关闭文件失败:%s", err)
-		}
-	}(src)
-	fileBytes, err := io.ReadAll(src)
-	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "读取上传文件失败", err)
-	}
+	logger.Info("开始文件导入",
+		zap.String("file", file.Filename),
+		zap.Int64("size", file.Size),
+		zap.Uint("user_id", userID),
+	)
 
-	// 上传到 MinIO 存储
+	// 上传到 MinIO 存储（必须同步，拿到 filePath）
 	filePath, err := s.storage.Upload(file)
 	if err != nil {
+		logger.Error("文件上传到存储服务失败",
+			zap.String("file", file.Filename),
+			zap.Int64("size", file.Size),
+			zap.Error(err),
+		)
 		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "文件上传失败", err)
 	}
 
-	// 通过 io.Reader 传给 MarkItDown 转换
-	markdown, err := s.markitdown.ConvertReader(file.Filename, bytes.NewReader(fileBytes))
-	if err != nil {
-		logger.Warn("MarkItDown转换失败，使用原始文件内容", zap.String("file", file.Filename), zap.Error(err))
-		// 降级：对于文本文件，直接返回内容
-		if ext == ".txt" || ext == ".md" {
-			markdown = string(fileBytes)
-		} else {
-			return nil, bizerrors.NewWithErr(bizerrors.CodeFileParseFailed, "文件解析失败", err)
-		}
-	}
-
+	// 立即创建 source（status=processing），前端可以马上看到
 	source := &entity.Source{
-		UserID:          userID,
-		NotebookID:      notebookID,
-		Name:            file.Filename,
-		Type:            "file",
-		FilePath:        filePath,
-		FileSize:        file.Size,
-		MimeType:        file.Header.Get("Content-Type"),
-		MarkdownContent: markdown,
-		Status:          "ready",
+		UserID:     userID,
+		NotebookID: notebookID,
+		Name:       file.Filename,
+		Type:       "file",
+		FilePath:   filePath,
+		FileSize:   file.Size,
+		MimeType:   file.Header.Get("Content-Type"),
+		Status:     "processing",
 	}
 
 	if err := s.sourceRepo.Create(source); err != nil {
+		logger.Error("创建 Source 记录失败",
+			zap.String("file", file.Filename),
+			zap.Error(err),
+		)
 		return nil, err
 	}
 
-	// 同步触发 RAG 入库
-	if s.ingestionSvc != nil {
-		if err := s.ingestionSvc.IngestSingle(context.Background(), source.ID); err != nil {
-			return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "RAG 入库失败", err)
-		}
+	logger.Info("Source 记录创建成功，后台开始处理",
+		zap.String("file", file.Filename),
+		zap.Uint("source_id", source.ID),
+	)
+
+	// 读取文件内容（后台 goroutine 需要，必须在 goroutine 外读取，避免 file 指针失效）
+	src, err := file.Open()
+	if err != nil {
+		s.sourceRepo.UpdateStatus(source.ID, "failed", "打开上传文件失败")
+		return source, nil
+	}
+	fileBytes, err := io.ReadAll(src)
+	src.Close()
+	if err != nil {
+		s.sourceRepo.UpdateStatus(source.ID, "failed", "读取上传文件失败")
+		return source, nil
 	}
 
+	// 后台异步处理：MarkItDown → LLM 结构化 → 更新内容 → RAG 入库
+	go s.processFileImport(source.ID, file.Filename, ext, filePath, file.Header.Get("Content-Type"), file.Size, userID, fileBytes)
+
 	return source, nil
+}
+
+// processFileImport 后台处理文件导入（解析、结构化、入库）
+func (s *importerService) processFileImport(sourceID uint, fileName, ext, filePath, mimeType string, fileSize int64, userID uint, fileBytes []byte) {
+	totalStart := time.Now()
+	logger.Info("后台开始处理文件导入",
+		zap.String("file", fileName),
+		zap.Uint("source_id", sourceID),
+		zap.Int64("file_size", fileSize),
+	)
+
+	// 1. MarkItDown 转换
+	stepStart := time.Now()
+	markdown, err := s.markitdown.ConvertReader(fileName, bytes.NewReader(fileBytes))
+	if err != nil {
+		logger.Error("MarkItDown 转换失败",
+			zap.String("file", fileName),
+			zap.Duration("elapsed", time.Since(stepStart)),
+			zap.Error(err),
+		)
+		// 降级：对于文本文件，直接使用原始内容
+		if ext == ".txt" || ext == ".md" {
+			markdown = string(fileBytes)
+			logger.Info("文本文件降级处理，使用原始内容",
+				zap.String("file", fileName),
+				zap.Int("content_len", len(markdown)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+		} else {
+			s.sourceRepo.UpdateStatus(sourceID, "failed", "文件解析失败")
+			return
+		}
+	} else {
+		logger.Info("MarkItDown 转换成功",
+			zap.String("file", fileName),
+			zap.Int("content_len", len(markdown)),
+			zap.Duration("elapsed", time.Since(stepStart)),
+		)
+	}
+
+	// 2. LLM 结构化
+	stepStart = time.Now()
+	if s.structurer != nil {
+		result, err := s.structurer.Structure(context.Background(), userID, markdown, StructureMeta{
+			Title:      fileName,
+			SourceType: "file",
+		})
+		if err != nil {
+			logger.Error("LLM 结构化失败，使用原始内容",
+				zap.String("file", fileName),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(err),
+			)
+		} else if result.ActuallyCalled {
+			markdown = result.Content
+			logger.Info("LLM 结构化完成",
+				zap.String("file", fileName),
+				zap.Int("content_len", len(markdown)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+		} else {
+			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
+				zap.String("file", fileName),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+		}
+	} else {
+		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.String("file", fileName))
+	}
+
+	// 3. 更新 source 内容和状态
+	stepStart = time.Now()
+	if err := s.sourceRepo.UpdateContent(sourceID, markdown, "ready"); err != nil {
+		logger.Error("更新 Source 内容失败",
+			zap.String("file", fileName),
+			zap.Uint("source_id", sourceID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+			zap.Error(err),
+		)
+		s.sourceRepo.UpdateStatus(sourceID, "failed", fmt.Sprintf("保存失败: %v", err))
+		return
+	}
+
+	logger.Info("Source 内容更新成功",
+		zap.String("file", fileName),
+		zap.Uint("source_id", sourceID),
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
+	// 4. RAG 入库
+	stepStart = time.Now()
+	if s.ingestionSvc != nil {
+		if err := s.ingestionSvc.IngestSingle(context.Background(), sourceID); err != nil {
+			logger.Error("RAG 入库失败",
+				zap.String("file", fileName),
+				zap.Uint("source_id", sourceID),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(err),
+			)
+			// RAG 入库失败不影响 source 可见性，只记录日志
+			return
+		}
+		logger.Info("RAG 入库成功",
+			zap.String("file", fileName),
+			zap.Uint("source_id", sourceID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+		)
+	}
+
+	logger.Info("文件导入完成",
+		zap.String("file", fileName),
+		zap.Uint("source_id", sourceID),
+		zap.Duration("total_elapsed", time.Since(totalStart)),
+	)
 }
 
 // PreviewAudio 异步音频转写：上传文件后立即返回 previewID，后台执行 ASR 转写
@@ -153,6 +271,11 @@ func (s *importerService) PreviewAudio(userID, notebookID uint, file *multipart.
 	// 上传原始文件到 MinIO
 	filePath, err := s.storage.Upload(file)
 	if err != nil {
+		logger.Error("音频上传到存储服务失败",
+			zap.String("file", file.Filename),
+			zap.Int64("size", file.Size),
+			zap.Error(err),
+		)
 		return "", "", bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "音频上传失败", err)
 	}
 
@@ -181,6 +304,7 @@ func (s *importerService) PreviewAudio(userID, notebookID uint, file *multipart.
 
 // doAudioTranscribe 后台执行音频转写，完成后更新缓存
 func (s *importerService) doAudioTranscribe(previewID string, userID uint, file *multipart.FileHeader, filePath, ext string) {
+	totalStart := time.Now()
 	ctx := context.Background()
 
 	// 标记为处理中
@@ -190,38 +314,71 @@ func (s *importerService) doAudioTranscribe(previewID string, userID uint, file 
 	}
 
 	// 转换音频为 ASR 兼容格式
+	stepStart := time.Now()
 	asrFilePath := filePath
 	convertedData, convErr := s.convertAudioForASR(file, ext)
 	if convErr != nil {
-		logger.Warn("音频格式转换失败，将使用原始文件", zap.String("file", filePath), zap.Error(convErr))
+		logger.Warn("音频格式转换失败，将使用原始文件",
+			zap.String("file", filePath),
+			zap.Duration("elapsed", time.Since(stepStart)),
+			zap.Error(convErr),
+		)
 	} else if convertedData != nil {
 		asrPath := strings.TrimSuffix(filePath, ext) + "_16k.wav"
 		if uploadErr := s.storage.UploadBytes(asrPath, convertedData, "audio/wav"); uploadErr != nil {
-			logger.Warn("上传转换后音频失败，将使用原始文件", zap.String("file", filePath), zap.Error(uploadErr))
+			logger.Warn("上传转换后音频失败，将使用原始文件",
+				zap.String("file", filePath),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(uploadErr),
+			)
 		} else {
 			asrFilePath = asrPath
 			logger.Info("音频格式转换成功",
 				zap.String("original", filePath),
 				zap.String("converted", asrPath),
+				zap.Duration("elapsed", time.Since(stepStart)),
 			)
 		}
 	}
 
 	// 获取 ASR 服务
+	stepStart = time.Now()
 	asrSvc, err := s.getASR(userID)
 	if err != nil {
-		logger.Error("获取ASR服务失败", zap.String("preview_id", previewID), zap.Error(err))
+		logger.Error("获取ASR服务失败",
+			zap.String("preview_id", previewID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+			zap.Error(err),
+		)
 		s.markPreviewFailed(ctx, previewID, "未配置 ASR 服务")
 		return
 	}
+	logger.Info("获取 ASR 服务完成",
+		zap.String("preview_id", previewID),
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
 
 	// 执行转写
+	stepStart = time.Now()
+	logger.Info("开始 ASR 转写",
+		zap.String("preview_id", previewID),
+		zap.String("asr_file", asrFilePath),
+	)
 	text, err := asrSvc.Transcribe(asrFilePath)
 	if err != nil {
-		logger.Error("ASR转写失败", zap.String("preview_id", previewID), zap.Error(err))
+		logger.Error("ASR转写失败",
+			zap.String("preview_id", previewID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+			zap.Error(err),
+		)
 		s.markPreviewFailed(ctx, previewID, fmt.Sprintf("音频转写失败: %v", err))
 		return
 	}
+	logger.Info("ASR 转写完成",
+		zap.String("preview_id", previewID),
+		zap.Int("text_len", len(text)),
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
 
 	// 转写成功，更新缓存
 	preview, err := s.previewCache.Get(ctx, previewID)
@@ -236,7 +393,11 @@ func (s *importerService) doAudioTranscribe(previewID string, userID uint, file 
 		return
 	}
 
-	logger.Info("音频转写完成", zap.String("preview_id", previewID), zap.Int("text_len", len(text)))
+	logger.Info("音频转写流程完成",
+		zap.String("preview_id", previewID),
+		zap.Int("text_len", len(text)),
+		zap.Duration("total_elapsed", time.Since(totalStart)),
+	)
 }
 
 // markPreviewFailed 标记预览转写失败
@@ -270,6 +431,8 @@ func (s *importerService) GetAudioPreviewStatus(userID uint, previewID string) (
 
 // ConfirmAudio 确认音频导入
 func (s *importerService) ConfirmAudio(userID uint, previewID string, editedContent *string) (*entity.Source, error) {
+	totalStart := time.Now()
+
 	ctx := context.Background()
 	preview, err := s.previewCache.Get(ctx, previewID)
 	if err != nil {
@@ -291,11 +454,66 @@ func (s *importerService) ConfirmAudio(userID uint, previewID string, editedCont
 		return nil, bizerrors.New(bizerrors.CodeBadRequest, "音频转写尚未完成，请稍后再试")
 	}
 
+	logger.Info("开始确认音频导入",
+		zap.String("preview_id", previewID),
+		zap.String("file_name", preview.FileName),
+		zap.Uint("user_id", userID),
+	)
+
 	content := preview.TranscribedText
 	if editedContent != nil && *editedContent != "" {
 		content = *editedContent
+		logger.Info("使用用户编辑后的内容",
+			zap.String("preview_id", previewID),
+			zap.Int("content_len", len(content)),
+		)
+	} else {
+		logger.Info("使用 ASR 转写结果",
+			zap.String("preview_id", previewID),
+			zap.Int("content_len", len(content)),
+		)
 	}
 
+	// LLM 结构化
+	stepStart := time.Now()
+	if s.structurer != nil {
+		result, err := s.structurer.Structure(ctx, userID, content, StructureMeta{
+			Title:      preview.FileName,
+			SourceType: "audio",
+		})
+		if err != nil {
+			logger.Error("LLM 结构化失败，使用原始内容",
+				zap.String("preview_id", previewID),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(err),
+			)
+		} else if result.ActuallyCalled && result.Content != content {
+			logger.Info("LLM 结构化成功，内容已优化",
+				zap.String("preview_id", previewID),
+				zap.Int("original_len", len(content)),
+				zap.Int("structured_len", len(result.Content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+			content = result.Content
+		} else if result.ActuallyCalled {
+			logger.Info("LLM 判断内容已有结构，无需结构化",
+				zap.String("preview_id", previewID),
+				zap.Int("content_len", len(content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+		} else {
+			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
+				zap.String("preview_id", previewID),
+				zap.Int("content_len", len(content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+		}
+	} else {
+		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.String("preview_id", previewID))
+	}
+
+	// 创建 Source 记录
+	stepStart = time.Now()
 	source := &entity.Source{
 		UserID:          userID,
 		NotebookID:      preview.NotebookID,
@@ -308,19 +526,49 @@ func (s *importerService) ConfirmAudio(userID uint, previewID string, editedCont
 	}
 
 	if err := s.sourceRepo.Create(source); err != nil {
+		logger.Error("创建 Source 记录失败",
+			zap.String("preview_id", previewID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+			zap.Error(err),
+		)
 		return nil, err
 	}
 
+	logger.Info("Source 记录创建成功",
+		zap.String("preview_id", previewID),
+		zap.Uint("source_id", source.ID),
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
 	// 同步触发 RAG 入库
+	stepStart = time.Now()
 	if s.ingestionSvc != nil {
 		if err := s.ingestionSvc.IngestSingle(context.Background(), source.ID); err != nil {
+			logger.Error("RAG 入库失败",
+				zap.String("preview_id", previewID),
+				zap.Uint("source_id", source.ID),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(err),
+			)
 			return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "RAG 入库失败", err)
 		}
+		logger.Info("RAG 入库成功",
+			zap.String("preview_id", previewID),
+			zap.Uint("source_id", source.ID),
+			zap.Duration("elapsed", time.Since(stepStart)),
+		)
 	}
 
 	if err := s.previewCache.UpdateStatus(ctx, previewID, "confirmed"); err != nil {
 		logger.Warn("更新预览状态失败", zap.String("preview_id", previewID), zap.Error(err))
 	}
+
+	logger.Info("音频导入确认完成",
+		zap.String("preview_id", previewID),
+		zap.String("file_name", preview.FileName),
+		zap.Uint("source_id", source.ID),
+		zap.Duration("total_elapsed", time.Since(totalStart)),
+	)
 
 	return source, nil
 }
@@ -468,6 +716,8 @@ func (s *importerService) processSources(taskCtx context.Context, taskID string,
 
 // processSingleSource 处理单个 Source（支持取消）
 func (s *importerService) processSingleSource(taskCtx context.Context, sourceID uint) {
+	totalStart := time.Now()
+
 	// 处理前检查取消
 	if taskCtx.Err() != nil {
 		return
@@ -480,12 +730,18 @@ func (s *importerService) processSingleSource(taskCtx context.Context, sourceID 
 		return
 	}
 
+	logger.Info("开始处理 URL 导入",
+		zap.Uint("source_id", sourceID),
+		zap.String("url", source.OriginalURL),
+	)
+
 	// 更新状态为 processing
 	if err := s.sourceRepo.UpdateStatus(sourceID, "processing", ""); err != nil {
 		logger.Warn("更新Source状态为processing失败", zap.Uint("source_id", sourceID), zap.Error(err))
 	}
 
 	// 转换 URL 内容
+	stepStart := time.Now()
 	markdown, err := s.markitdown.ConvertFromURLWithContext(taskCtx, source.OriginalURL)
 	if err != nil {
 		// 如果是因为取消导致的错误
@@ -499,17 +755,24 @@ func (s *importerService) processSingleSource(taskCtx context.Context, sourceID 
 		var convertErr *externalMarkitdown.ConvertError
 		if errors.As(err, &convertErr) {
 			// 记录详细的技术错误信息到日志
-			logger.Warn("URL转换失败",
+			logger.Error("URL 转换失败",
+				zap.Uint("source_id", sourceID),
 				zap.String("url", source.OriginalURL),
 				zap.String("error_code", convertErr.Code),
 				zap.String("detail", convertErr.DetailMsg),
 				zap.Int("http_status", convertErr.HTTPStatus),
+				zap.Duration("elapsed", time.Since(stepStart)),
 			)
 			// 使用用户友好的错误消息
 			userMsg = convertErr.UserMsg
 		} else {
 			// 未知错误类型
-			logger.Warn("URL转换失败", zap.String("url", source.OriginalURL), zap.Error(err))
+			logger.Error("URL 转换失败",
+				zap.Uint("source_id", sourceID),
+				zap.String("url", source.OriginalURL),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(err),
+			)
 			userMsg = "网页内容获取失败，请稍后重试"
 		}
 
@@ -519,6 +782,13 @@ func (s *importerService) processSingleSource(taskCtx context.Context, sourceID 
 		return
 	}
 
+	logger.Info("URL 转换成功",
+		zap.Uint("source_id", sourceID),
+		zap.String("url", source.OriginalURL),
+		zap.Int("content_len", len(markdown)),
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
 	// 转换完成后再检查一次 source 是否还存在（可能在转换期间被用户删除）
 	existing, _ := s.sourceRepo.FindByID(sourceID)
 	if existing == nil {
@@ -526,29 +796,90 @@ func (s *importerService) processSingleSource(taskCtx context.Context, sourceID 
 		return
 	}
 
+	// LLM 结构化
+	stepStart = time.Now()
+	if s.structurer != nil {
+		result, err := s.structurer.Structure(taskCtx, source.UserID, markdown, StructureMeta{
+			Title:      source.Name,
+			SourceType: "url",
+		})
+		if err != nil {
+			logger.Error("LLM 结构化失败，使用原始内容",
+				zap.Uint("source_id", sourceID),
+				zap.String("url", source.OriginalURL),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(err),
+			)
+		} else if result.ActuallyCalled && result.Content != markdown {
+			logger.Info("LLM 结构化成功，内容已优化",
+				zap.Uint("source_id", sourceID),
+				zap.Int("original_len", len(markdown)),
+				zap.Int("structured_len", len(result.Content)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+			markdown = result.Content
+		} else if result.ActuallyCalled {
+			logger.Info("LLM 判断内容已有结构，无需结构化",
+				zap.Uint("source_id", sourceID),
+				zap.Int("content_len", len(markdown)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+		} else {
+			logger.Warn("LLM 结构化被跳过（模型配置问题或 API Key 过期）",
+				zap.Uint("source_id", sourceID),
+				zap.Int("content_len", len(markdown)),
+				zap.Duration("elapsed", time.Since(stepStart)),
+			)
+		}
+	} else {
+		logger.Warn("MarkdownStructurer 未配置，跳过结构化", zap.Uint("source_id", sourceID))
+	}
+
 	// 更新 Source 内容和状态为 ready
+	stepStart = time.Now()
 	source.MarkdownContent = markdown
 	source.Status = "ready"
 	if err := s.sourceRepo.Update(source); err != nil {
-		logger.Error("更新Source内容失败", zap.Uint("source_id", sourceID), zap.Error(err))
+		logger.Error("更新Source内容失败", zap.Uint("source_id", sourceID), zap.Duration("elapsed", time.Since(stepStart)), zap.Error(err))
 		if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", fmt.Sprintf("保存失败: %v", err)); updateErr != nil {
 			logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
 		}
 		return
 	}
 
+	logger.Info("Source 记录更新成功",
+		zap.Uint("source_id", sourceID),
+		zap.String("url", source.OriginalURL),
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
 	// 同步触发 RAG 入库
+	stepStart = time.Now()
 	if s.ingestionSvc != nil {
 		if err := s.ingestionSvc.IngestSingle(taskCtx, sourceID); err != nil {
-			logger.Error("RAG 入库失败", zap.Uint("source_id", sourceID), zap.Error(err))
+			logger.Error("RAG 入库失败",
+				zap.Uint("source_id", sourceID),
+				zap.String("url", source.OriginalURL),
+				zap.Duration("elapsed", time.Since(stepStart)),
+				zap.Error(err),
+			)
 			if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", fmt.Sprintf("RAG 入库失败: %v", err)); updateErr != nil {
 				logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
 			}
 			return
 		}
+		logger.Info("RAG 入库成功",
+			zap.Uint("source_id", sourceID),
+			zap.String("url", source.OriginalURL),
+			zap.Duration("elapsed", time.Since(stepStart)),
+		)
 	}
 
-	logger.Info("Source导入成功", zap.Uint("source_id", sourceID), zap.String("url", source.OriginalURL))
+	logger.Info("URL 导入完成",
+		zap.Uint("source_id", sourceID),
+		zap.String("url", source.OriginalURL),
+		zap.Duration("total_elapsed", time.Since(totalStart)),
+	)
 }
 
 // GetImportTask 获取导入任务状态

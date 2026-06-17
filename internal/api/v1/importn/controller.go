@@ -130,7 +130,7 @@ func (ctrl *Controller) ConfirmAudio(c *gin.Context) {
 
 	var req request.AudioConfirmRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 

@@ -433,6 +433,7 @@ func (h *ConfigHealthChecker) resolveAPIURL(provider, apiURL string) string {
 		"openai":     "https://api.openai.com/v1",
 		"anthropic":  "https://api.anthropic.com",
 		"deepseek":   "https://api.deepseek.com/v1",
+		"doubao":     "https://ark.cn-beijing.volces.com/api/v3",
 		"zhipu":      "https://open.bigmodel.cn/api/paas/v4",
 		"qwen":       "https://dashscope.aliyuncs.com/compatible-mode/v1",
 		"baichuan":   "https://api.baichuan-ai.com/v1",

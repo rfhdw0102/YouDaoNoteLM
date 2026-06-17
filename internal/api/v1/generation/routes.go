@@ -13,5 +13,6 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist servic
 	group.Use(middleware.Auth(tokenBlacklist))
 	{
 		group.POST("", ctrl.Generate)
+		group.POST("/export", ctrl.Export)
 	}
 }

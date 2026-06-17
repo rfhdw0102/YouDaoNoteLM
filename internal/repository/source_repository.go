@@ -83,6 +83,20 @@ func (r *sourceRepository) UpdateStatus(id uint, status string, errMsg string) e
 	return r.db.Model(&entity.Source{}).Where("id = ?", id).Updates(updates).Error
 }
 
+// UpdateContent 更新源内容和状态（不覆盖其他字段如 notebook_id）
+func (r *sourceRepository) UpdateContent(id uint, markdown string, status string) error {
+	updates := map[string]interface{}{
+		"markdown_content": markdown,
+		"status":           status,
+	}
+	return r.db.Model(&entity.Source{}).Where("id = ?", id).Updates(updates).Error
+}
+
 func (r *sourceRepository) SetVectorized(id uint) error {
 	return r.db.Model(&entity.Source{}).Where("id = ?", id).Update("vectorized", true).Error
+}
+
+func (r *sourceRepository) DeleteFailedByNotebook(userID, notebookID uint) (int64, error) {
+	result := r.db.Where("user_id = ? AND notebook_id = ? AND status = ?", userID, notebookID, "failed").Delete(&entity.Source{})
+	return result.RowsAffected, result.Error
 }

@@ -40,9 +40,9 @@ func newConvertError(code, userMsg, detailMsg string, httpStatus int) *ConvertEr
 }
 
 const (
-	defaultTimeout     = 60 * time.Second // 默认超时
-	fileConvertTimeout = 60 * time.Second // 文件转换超时
-	urlConvertTimeout  = 45 * time.Second // URL 转换超时（网页抓取需要更多时间）
+	defaultTimeout     = 180 * time.Second // 默认超时
+	fileConvertTimeout = 180 * time.Second // 文件转换超时（大文件 + LLM 结构化需要更多时间）
+	urlConvertTimeout  = 120 * time.Second // URL 转换超时（网页抓取需要更多时间）
 )
 
 type client struct {
@@ -87,6 +87,8 @@ func (c *client) ConvertReader(filename string, reader io.Reader) (string, error
 
 // ConvertReaderWithContext 通过 io.Reader 上传文件转 Markdown（带 context）
 func (c *client) ConvertReaderWithContext(ctx context.Context, filename string, reader io.Reader) (string, error) {
+	start := time.Now()
+
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	part, err := writer.CreateFormFile("file", filename)
@@ -106,11 +108,23 @@ func (c *client) ConvertReaderWithContext(ctx context.Context, filename string, 
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
+	logger.Info("开始请求 MarkItDown 转换", zap.String("file", filename))
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
+			logger.Error("MarkItDown 请求超时",
+				zap.String("file", filename),
+				zap.Duration("elapsed", time.Since(start)),
+				zap.Duration("timeout", fileConvertTimeout),
+			)
 			return "", fmt.Errorf("请求MarkItDown超时（%v）", fileConvertTimeout)
 		}
+		logger.Error("MarkItDown 请求失败",
+			zap.String("file", filename),
+			zap.Duration("elapsed", time.Since(start)),
+			zap.Error(err),
+		)
 		return "", fmt.Errorf("请求MarkItDown失败: %w", err)
 	}
 	defer func(Body io.ReadCloser) {
@@ -121,6 +135,10 @@ func (c *client) ConvertReaderWithContext(ctx context.Context, filename string, 
 	}(resp.Body)
 
 	if resp.StatusCode == http.StatusRequestTimeout {
+		logger.Error("MarkItDown 服务端转换超时",
+			zap.String("file", filename),
+			zap.Duration("elapsed", time.Since(start)),
+		)
 		return "", fmt.Errorf("MarkItDown 服务端转换超时")
 	}
 
@@ -129,6 +147,12 @@ func (c *client) ConvertReaderWithContext(ctx context.Context, filename string, 
 		if readErr != nil {
 			return "", fmt.Errorf("MarkItDown返回错误 %d（读取响应体失败: %v）", resp.StatusCode, readErr)
 		}
+		logger.Error("MarkItDown 返回错误",
+			zap.String("file", filename),
+			zap.Int("status", resp.StatusCode),
+			zap.Duration("elapsed", time.Since(start)),
+			zap.String("response", string(respBody)),
+		)
 		return "", fmt.Errorf("MarkItDown返回错误 %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -144,10 +168,19 @@ func (c *client) ConvertReaderWithContext(ctx context.Context, filename string, 
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		// 降级：返回原始响应
+		logger.Info("MarkItDown 转换完成（降级解析）",
+			zap.String("file", filename),
+			zap.Duration("elapsed", time.Since(start)),
+		)
 		return string(respBody), nil
 	}
 
-	logger.Info("MarkItDown转换成功", zap.String("file", filename), zap.Bool("cached", result.Cached))
+	logger.Info("MarkItDown 转换成功",
+		zap.String("file", filename),
+		zap.Bool("cached", result.Cached),
+		zap.Int("content_len", len(result.Markdown)),
+		zap.Duration("elapsed", time.Since(start)),
+	)
 	return result.Markdown, nil
 }
 
@@ -161,6 +194,8 @@ func (c *client) ConvertFromURL(url string) (string, error) {
 
 // ConvertFromURLWithContext 网页 URL 转 Markdown（带 context）
 func (c *client) ConvertFromURLWithContext(ctx context.Context, url string) (string, error) {
+	start := time.Now()
+
 	// 在传入的 ctx 基础上叠加超时控制，确保单个请求不会无限等待
 	ctx, cancel := context.WithTimeout(ctx, urlConvertTimeout)
 	defer cancel()
@@ -181,9 +216,16 @@ func (c *client) ConvertFromURLWithContext(ctx context.Context, url string) (str
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
+	logger.Info("开始请求 MarkItDown URL 转换", zap.String("url", url))
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
+			logger.Error("MarkItDown URL 转换超时",
+				zap.String("url", url),
+				zap.Duration("elapsed", time.Since(start)),
+				zap.Duration("timeout", urlConvertTimeout),
+			)
 			return "", newConvertError(
 				"timeout",
 				"网页内容获取超时，请稍后重试或检查网址是否可访问",
@@ -191,6 +233,11 @@ func (c *client) ConvertFromURLWithContext(ctx context.Context, url string) (str
 				0,
 			)
 		}
+		logger.Error("MarkItDown URL 转换请求失败",
+			zap.String("url", url),
+			zap.Duration("elapsed", time.Since(start)),
+			zap.Error(err),
+		)
 		return "", newConvertError(
 			"network",
 			"网络连接失败，请检查网络后重试",
@@ -206,6 +253,10 @@ func (c *client) ConvertFromURLWithContext(ctx context.Context, url string) (str
 	}(resp.Body)
 
 	if resp.StatusCode == http.StatusRequestTimeout {
+		logger.Error("MarkItDown 服务端 URL 转换超时",
+			zap.String("url", url),
+			zap.Duration("elapsed", time.Since(start)),
+		)
 		return "", newConvertError(
 			"timeout",
 			"网页内容获取超时，请稍后重试",
@@ -239,6 +290,12 @@ func (c *client) ConvertFromURLWithContext(ctx context.Context, url string) (str
 			userMsg = "网页内容获取失败，请稍后重试"
 		}
 
+		logger.Error("MarkItDown URL 转换返回错误",
+			zap.String("url", url),
+			zap.Int("status", resp.StatusCode),
+			zap.Duration("elapsed", time.Since(start)),
+			zap.String("code", code),
+		)
 		return "", newConvertError(code, userMsg, detailMsg, resp.StatusCode)
 	}
 
@@ -254,14 +311,27 @@ func (c *client) ConvertFromURLWithContext(ctx context.Context, url string) (str
 		Cached   bool   `json:"cached"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
+		logger.Info("MarkItDown URL 转换完成（降级解析）",
+			zap.String("url", url),
+			zap.Duration("elapsed", time.Since(start)),
+		)
 		return string(respBody), nil
 	}
 
 	if result.Markdown == "" && result.Message != "" {
-		logger.Warn("MarkItDown URL转换无内容", zap.String("url", url), zap.String("message", result.Message))
+		logger.Warn("MarkItDown URL转换无内容",
+			zap.String("url", url),
+			zap.String("message", result.Message),
+			zap.Duration("elapsed", time.Since(start)),
+		)
 		return "", fmt.Errorf("%s", result.Message)
 	}
 
-	logger.Info("MarkItDown URL转换成功", zap.String("url", url), zap.Bool("cached", result.Cached))
+	logger.Info("MarkItDown URL 转换成功",
+		zap.String("url", url),
+		zap.Bool("cached", result.Cached),
+		zap.Int("content_len", len(result.Markdown)),
+		zap.Duration("elapsed", time.Since(start)),
+	)
 	return result.Markdown, nil
 }

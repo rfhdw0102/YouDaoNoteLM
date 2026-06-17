@@ -1,47 +1,48 @@
 package middleware
 
 import (
-	"YoudaoNoteLm/pkg/config"
+	"strconv"
 	"strings"
+
+	"YoudaoNoteLm/pkg/config"
 
 	"github.com/gin-gonic/gin"
 )
 
-// CORS 跨域中间件
+// CORS handles cross-origin requests according to config.
 func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		cfg := config.Get().CORS
-
-		// 如果未启用 CORS，直接放行
 		if !cfg.Enabled {
 			c.Next()
 			return
 		}
 
-		// 获取 Origin
 		origin := c.Request.Header.Get("Origin")
-
-		// 检查 Origin 是否在允许列表中
 		allowOrigin := ""
 		for _, allowed := range cfg.AllowOrigins {
+			allowed = strings.TrimSpace(allowed)
 			if allowed == "*" || allowed == origin {
-				allowOrigin = allowed
+				allowOrigin = allowedOriginValue(allowed, origin, cfg.AllowCredentials)
 				break
 			}
 		}
 
-		// 设置 CORS 头
 		if allowOrigin != "" {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", allowOrigin)
+			c.Writer.Header().Add("Vary", "Origin")
 		}
 
 		c.Writer.Header().Set("Access-Control-Allow-Methods", strings.Join(cfg.AllowMethods, ", "))
 		c.Writer.Header().Set("Access-Control-Allow-Headers", strings.Join(cfg.AllowHeaders, ", "))
-		c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Max-Age", "86400")
+		c.Writer.Header().Set("Access-Control-Expose-Headers", strings.Join(cfg.ExposeHeaders, ", "))
+		if cfg.AllowCredentials {
+			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
+		if cfg.MaxAge > 0 {
+			c.Writer.Header().Set("Access-Control-Max-Age", strconv.Itoa(cfg.MaxAge))
+		}
 
-		// 处理 OPTIONS 预检请求
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
@@ -49,4 +50,14 @@ func CORS() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func allowedOriginValue(allowed string, origin string, allowCredentials bool) string {
+	if allowed != "*" {
+		return allowed
+	}
+	if allowCredentials && origin != "" {
+		return origin
+	}
+	return "*"
 }

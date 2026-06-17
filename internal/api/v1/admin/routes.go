@@ -1,9 +1,14 @@
 package admin
 
-import "github.com/gin-gonic/gin"
+import (
+	"YoudaoNoteLm/internal/middleware"
+	"YoudaoNoteLm/internal/service"
 
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
-	admin := r.Group("/admin")
+	"github.com/gin-gonic/gin"
+)
+
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, blacklist service.TokenBlacklistService) {
+	admin := r.Group("/admin", middleware.Auth(blacklist))
 	{
 		admin.GET("/users", ctrl.ListUsers)
 		admin.PUT("/users/:id/status", ctrl.UpdateUserStatus)

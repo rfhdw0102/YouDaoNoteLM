@@ -127,60 +127,6 @@ func NewCreateNoteTool(youdaoCLI externalYoudao.CLI, youdaoService service.Youda
 	)
 }
 
-// ========== import_note 工具 ==========
-
-type ImportNoteInput struct {
-	FileID     string `json:"file_id" jsonschema_description:"有道云笔记ID"`
-	NotebookID uint   `json:"notebook_id" jsonschema_description:"目标笔记本ID"`
-}
-
-type ImportNoteOutput struct {
-	SourceID uint   `json:"source_id"`
-	Name     string `json:"name"`
-}
-
-func NewImportNoteTool(youdaoService service.YoudaoService) (tool.InvokableTool, error) {
-	return utils.InferTool("import_note", "将有道云笔记导入到本系统。输入笔记ID和目标笔记本ID，导入后可被搜索Agent使用",
-		func(ctx context.Context, input *ImportNoteInput) (*ImportNoteOutput, error) {
-			userID := GetUserID(ctx)
-			source, err := youdaoService.ImportNote(userID, input.NotebookID, input.FileID)
-			if err != nil {
-				return nil, fmt.Errorf("导入笔记失败: %w", err)
-			}
-			logger.Info("import_note 执行成功", zap.Uint("source_id", source.ID), zap.String("name", source.Name))
-			return &ImportNoteOutput{SourceID: source.ID, Name: source.Name}, nil
-		},
-	)
-}
-
-// ========== import_notes_batch 工具 ==========
-
-type ImportNotesBatchInput struct {
-	FileIDs    []string `json:"file_ids" jsonschema_description:"有道云笔记ID列表"`
-	NotebookID uint     `json:"notebook_id" jsonschema_description:"目标笔记本ID"`
-}
-
-type ImportNotesBatchOutput struct {
-	TaskID    string `json:"task_id"`
-	SourceIDs []uint `json:"source_ids"`
-	Count     int    `json:"count"`
-}
-
-func NewImportNotesBatchTool(youdaoService service.YoudaoService) (tool.InvokableTool, error) {
-	return utils.InferTool("import_notes_batch", "批量导入有道云笔记到本系统。输入笔记ID列表和目标笔记本ID，返回导入任务ID",
-		func(ctx context.Context, input *ImportNotesBatchInput) (*ImportNotesBatchOutput, error) {
-			userID := GetUserID(ctx)
-			// Agent 场景下没有笔记标题信息，传 nil 让后端降级使用 fileID 作为名称
-			taskID, sourceIDs, err := youdaoService.ImportNotesBatch(userID, input.NotebookID, input.FileIDs, nil)
-			if err != nil {
-				return nil, fmt.Errorf("批量导入失败: %w", err)
-			}
-			logger.Info("import_notes_batch 执行成功", zap.String("task_id", taskID), zap.Int("count", len(sourceIDs)))
-			return &ImportNotesBatchOutput{TaskID: taskID, SourceIDs: sourceIDs, Count: len(sourceIDs)}, nil
-		},
-	)
-}
-
 // ========== 辅助函数 ==========
 
 // getAPIKeyFromService 从 YoudaoService 获取用户的 API Key

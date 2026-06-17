@@ -1,0 +1,1508 @@
+openapi: 3.0.3
+info:
+  title: YoudaoNoteLM API
+  description: |
+    有道云笔记 LM 后端服务 API 文档。
+
+    ## 认证方式
+    除认证模块（`/auth/*`）外，所有接口均需在 Header 中携带 JWT Access Token：
+    ```
+    Authorization: Bearer <access_token>
+    ```
+
+    ## 统一响应格式
+    ```json
+    {
+      "code": 0,
+      "message": "成功",
+      "data": {}
+    }
+    ```
+    - `code = 0` 表示成功
+    - `code != 0` 为业务错误码，详见错误码表
+  version: 1.0.0
+  contact:
+    name: YoudaoNoteLM Team
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: 本地开发环境
+
+tags:
+  - name: Auth
+    description: 认证模块 — 注册、登录、验证码、Token 管理
+  - name: User
+    description: 用户模块 — 个人信息、头像、密码、注销
+  - name: Notebook
+    description: 笔记本模块 — CRUD 操作
+  - name: Source
+    description: 资料来源模块 — 文档管理、内容获取
+  - name: Import
+    description: 导入模块 — 文件导入、音频转写
+  - name: Search
+    description: 搜索 Agent 模块 — 智能搜索、URL 导入
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT Access Token
+
+  schemas:
+    # ========== 通用 ==========
+    Response:
+      type: object
+      properties:
+        code:
+          type: integer
+          description: 业务错误码，0=成功
+          example: 0
+        message:
+          type: string
+          example: 成功
+        data:
+          description: 响应数据
+
+    PageResponse:
+      type: object
+      properties:
+        list:
+          type: array
+          items: {}
+        total:
+          type: integer
+          format: int64
+          example: 100
+        page:
+          type: integer
+          example: 1
+        size:
+          type: integer
+          example: 20
+        total_page:
+          type: integer
+          example: 5
+
+    # ========== Auth ==========
+    RegisterRequest:
+      type: object
+      required: [email, password, confirm_password, code]
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 20
+          example: Test123456
+        confirm_password:
+          type: string
+          format: password
+          example: Test123456
+        code:
+          type: string
+          minLength: 6
+          maxLength: 6
+          example: "123456"
+
+    LoginRequest:
+      type: object
+      required: [email, password, captcha_id, captcha_x]
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        password:
+          type: string
+          format: password
+          example: Test123456
+        captcha_id:
+          type: string
+          description: 滑块验证码 ID（从 GET /auth/captcha 获取）
+          example: uuid-string
+        captcha_x:
+          type: integer
+          description: 滑块 X 坐标
+          example: 150
+
+    SendCodeRequest:
+      type: object
+      required: [email, type]
+      properties:
+        email:
+          type: string
+          format: email
+        type:
+          type: string
+          enum: [register, reset, delete_account]
+          description: 验证码用途
+
+    ResetPasswordRequest:
+      type: object
+      required: [email, code, new_password, confirm_password]
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          minLength: 6
+          maxLength: 6
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 20
+        confirm_password:
+          type: string
+          format: password
+
+    RefreshTokenRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    LogoutRequest:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+
+    CaptchaData:
+      type: object
+      properties:
+        captcha_id:
+          type: string
+          example: uuid-string
+        background:
+          type: string
+          description: 背景图 Base64
+        slider:
+          type: string
+          description: 滑块图 Base64
+        slider_size:
+          type: integer
+          example: 50
+        bg_width:
+          type: integer
+          example: 300
+        slider_start_x:
+          type: integer
+          example: 10
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        user:
+          $ref: '#/components/schemas/UserResponse'
+
+    SendCodeResponse:
+      type: object
+      properties:
+        retry_after:
+          type: integer
+          description: 剩余冷却秒数
+          example: 60
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        username:
+          type: string
+          example: testuser
+        email:
+          type: string
+          example: user@example.com
+        nickname:
+          type: string
+          example: ""
+        avatar:
+          type: string
+          example: ""
+        status:
+          type: integer
+          description: "1=正常, 2=禁用"
+          example: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # ========== User ==========
+    UpdateUserRequest:
+      type: object
+      properties:
+        nickname:
+          type: string
+          maxLength: 50
+          example: 新昵称
+        avatar:
+          type: string
+          format: uri
+          maxLength: 255
+          example: https://example.com/avatar.jpg
+
+    UpdateUsernameRequest:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+          example: newusername
+
+    ChangePasswordRequest:
+      type: object
+      required: [old_password, new_password]
+      properties:
+        old_password:
+          type: string
+          format: password
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 20
+
+    DeleteAccountRequest:
+      type: object
+      required: [password, code]
+      properties:
+        password:
+          type: string
+          format: password
+        code:
+          type: string
+          minLength: 6
+          maxLength: 6
+
+    # ========== Notebook ==========
+    CreateNotebookRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          example: 我的笔记本
+
+    RenameNotebookRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          example: 新名称
+
+    NotebookResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: 我的笔记本
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # ========== Source ==========
+    SourceResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        notebook_id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: 测试文档.pdf
+        type:
+          type: string
+          enum: [file, url, audio, note, youdao]
+          example: file
+        original_url:
+          type: string
+          example: ""
+        file_path:
+          type: string
+          example: /uploads/sources/1_doc.pdf
+        file_size:
+          type: integer
+          format: int64
+          example: 1024
+        mime_type:
+          type: string
+          example: application/pdf
+        status:
+          type: string
+          enum: [pending, processing, ready, failed]
+          example: ready
+        error_message:
+          type: string
+        vectorized:
+          type: boolean
+          example: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    BatchDeleteRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          items:
+            type: integer
+          minItems: 1
+          example: [1, 2, 3]
+
+    # ========== Import ==========
+    AudioConfirmRequest:
+      type: object
+      required: [preview_id, notebook_id]
+      properties:
+        preview_id:
+          type: string
+          description: 预览接口返回的 preview_id
+          example: uuid-string
+        content:
+          type: string
+          nullable: true
+          description: 用户修改后的转写文本，为空则使用原始转写
+        notebook_id:
+          type: integer
+          example: 1
+
+    ImportTaskResponse:
+      type: object
+      properties:
+        task_id:
+          type: string
+        task_type:
+          type: string
+          example: file_import
+        total_count:
+          type: integer
+          example: 5
+        success_count:
+          type: integer
+          example: 3
+        fail_count:
+          type: integer
+          example: 1
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        error_detail:
+          type: string
+
+    # ========== Search ==========
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          maxLength: 500
+          example: 人工智能发展趋势
+
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResultItem'
+        summary:
+          type: string
+          example: 根据搜索结果，2026年人工智能...
+        search_rounds:
+          type: integer
+          example: 2
+
+    SearchResultItem:
+      type: object
+      properties:
+        title:
+          type: string
+          example: 2026年AI发展趋势
+        url:
+          type: string
+          format: uri
+          example: https://example.com/ai-trends
+        snippet:
+          type: string
+          example: 人工智能在2026年...
+        score:
+          type: number
+          format: double
+          description: Agent 评分（1-10）
+          example: 8.5
+        reason:
+          type: string
+          description: Agent 推荐理由
+          example: 内容相关度高，来源权威
+
+    URLImportRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          example: https://example.com/article
+
+    SearchImportRequest:
+      type: object
+      required: [urls]
+      properties:
+        urls:
+          type: array
+          items:
+            type: string
+            format: uri
+          minItems: 1
+          example:
+            - https://example.com/article1
+            - https://example.com/article2
+
+    TaskIDResponse:
+      type: object
+      properties:
+        task_id:
+          type: string
+          example: uuid-string
+
+    # ========== 错误码 ==========
+    ErrorCode:
+      type: object
+      description: |
+        | 错误码 | 说明 |
+        |--------|------|
+        | 0 | 成功 |
+        | 400 | 请求参数错误 |
+        | 401 | 未授权 |
+        | 403 | 禁止访问 |
+        | 404 | 资源不存在 |
+        | 1001 | 用户不存在 |
+        | 1002 | 用户已存在 |
+        | 1003 | 邮箱或密码错误 |
+        | 1004 | 用户已被禁用 |
+        | 1005 | 无效的令牌 |
+        | 1006 | 令牌已过期 |
+        | 1007 | 账户已被锁定 |
+        | 1101 | 验证码已过期 |
+        | 1102 | 验证码错误 |
+        | 1103 | 验证码输入错误次数过多 |
+        | 1104 | 验证码发送过于频繁 |
+        | 2001 | 参数错误 |
+        | 3001 | 资源不存在 |
+        | 3002 | 资源已存在 |
+        | 40001 | 不支持的文件格式 |
+        | 40002 | 文件大小超限 |
+        | 40003 | 文件解析失败 |
+        | 40004 | 网页抓取失败 |
+        | 40005 | 音频转写失败 |
+        | 40008 | 重复导入 |
+        | 40009 | 预览已过期 |
+        | 40010 | LLM 未配置 |
+        | 40011 | LLM 调用失败 |
+        | 40012 | LLM 返回结果格式异常 |
+        | 40013 | 搜索 Agent 执行超时 |
+        | 50001 | 内部服务错误 |
+
+paths:
+  # ==================== Auth ====================
+  /auth/captcha:
+    get:
+      tags: [Auth]
+      summary: 获取滑块验证码
+      description: 生成滑块验证码，返回背景图和滑块图的 Base64 数据
+      operationId: getCaptcha
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CaptchaData'
+
+  /auth/send-code:
+    post:
+      tags: [Auth]
+      summary: 发送验证码
+      description: 向指定邮箱发送验证码，60 秒内不可重复发送
+      operationId: sendCode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendCodeRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SendCodeResponse'
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: 用户注册
+      description: 通过邮箱 + 验证码注册新用户
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        "200":
+          description: 成功（code=0）或业务错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Response'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: 用户登录
+      description: 邮箱 + 密码 + 滑块验证码登录，返回双 Token
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/LoginResponse'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: 刷新 Token
+      description: 使用 Refresh Token 换取新的 Token 对
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/LoginResponse'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: 用户登出
+      description: 将 Token 加入黑名单（幂等操作）
+      operationId: logout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Response'
+
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: 重置密码
+      description: 通过邮箱验证码重置密码（忘记密码场景）
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Response'
+
+  # ==================== User ====================
+  /user/profile:
+    get:
+      tags: [User]
+      summary: 获取当前用户信息
+      operationId: getProfile
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserResponse'
+        "401":
+          description: 未认证
+    put:
+      tags: [User]
+      summary: 更新用户信息
+      description: 部分更新昵称和头像
+      operationId: updateProfile
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Response'
+
+  /user/username:
+    put:
+      tags: [User]
+      summary: 修改用户名
+      operationId: updateUsername
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUsernameRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Response'
+
+  /user/avatar:
+    post:
+      tags: [User]
+      summary: 上传头像
+      operationId: uploadAvatar
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+                  description: 头像文件（JPG/PNG）
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          avatar:
+                            type: string
+                            example: /uploads/avatars/1_avatar.jpg
+
+  /user/password:
+    post:
+      tags: [User]
+      summary: 修改密码
+      description: 修改密码后当前 Token 失效，需重新登录
+      operationId: changePassword
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: 密码修改成功，请重新登录
+
+  /user/account:
+    delete:
+      tags: [User]
+      summary: 注销账号
+      description: 需要密码 + 验证码确认，注销后 Token 失效
+      operationId: deleteAccount
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteAccountRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: 账号已注销
+
+  /user/list:
+    get:
+      tags: [User]
+      summary: 用户列表（分页）
+      operationId: listUsers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/PageResponse'
+                          - type: object
+                            properties:
+                              list:
+                                type: array
+                                items:
+                                  $ref: '#/components/schemas/UserResponse'
+
+  # ==================== Notebook ====================
+  /notebooks:
+    post:
+      tags: [Notebook]
+      summary: 创建笔记本
+      operationId: createNotebook
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNotebookRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/NotebookResponse'
+    get:
+      tags: [Notebook]
+      summary: 笔记本列表
+      operationId: listNotebooks
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/NotebookResponse'
+
+  /notebooks/{nbId}:
+    put:
+      tags: [Notebook]
+      summary: 重命名笔记本
+      operationId: renameNotebook
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameNotebookRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Response'
+    delete:
+      tags: [Notebook]
+      summary: 删除笔记本
+      operationId: deleteNotebook
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Response'
+
+  # ==================== Source ====================
+  /notebooks/{nbId}/sources:
+    get:
+      tags: [Source]
+      summary: 来源列表
+      operationId: listSources
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: size
+          in: query
+          schema:
+            type: integer
+            default: 10
+        - name: keyword
+          in: query
+          description: 搜索关键词（按名称过滤）
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/PageResponse'
+                          - type: object
+                            properties:
+                              list:
+                                type: array
+                                items:
+                                  $ref: '#/components/schemas/SourceResponse'
+
+  /notebooks/{nbId}/sources/{id}:
+    get:
+      tags: [Source]
+      summary: 来源详情
+      operationId: getSource
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SourceResponse'
+    put:
+      tags: [Source]
+      summary: 重命名来源
+      operationId: renameSource
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  example: 新名称
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Response'
+    delete:
+      tags: [Source]
+      summary: 删除来源
+      operationId: deleteSource
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        type: "null"
+                      message:
+                        example: 删除成功
+
+  /notebooks/{nbId}/sources/batch-delete:
+    post:
+      tags: [Source]
+      summary: 批量删除来源
+      operationId: batchDeleteSources
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchDeleteRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      message:
+                        example: 批量删除成功
+
+  /notebooks/{nbId}/sources/{id}/content:
+    get:
+      tags: [Source]
+      summary: 获取 Markdown 内容
+      operationId: getSourceContent
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          content:
+                            type: string
+                            example: "# 文档标题\n\n这是文档内容..."
+
+  /notebooks/{nbId}/sources/{id}/original:
+    get:
+      tags: [Source]
+      summary: 获取原格式内容
+      operationId: getSourceOriginal
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          content:
+                            type: string
+                          type:
+                            type: string
+                            example: text/plain
+
+  # ==================== Import ====================
+  /notebooks/{nbId}/import/file:
+    post:
+      tags: [Import]
+      summary: 文件上传导入
+      description: 上传文件（PDF/DOCX/TXT 等）并导入到指定笔记本
+      operationId: importFile
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: "支持格式: PDF, DOCX, TXT, MD, HTML"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SourceResponse'
+
+  /notebooks/{nbId}/import/audio/preview:
+    post:
+      tags: [Import]
+      summary: 音频上传转写预览
+      description: 上传音频文件，返回 ASR 转写预览结果
+      operationId: previewAudio
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: "支持格式: MP3, WAV, M4A, AAC"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          preview_id:
+                            type: string
+                            description: 预览 ID，用于后续确认接口
+                          content:
+                            type: string
+                            description: 转写文本
+                          file_name:
+                            type: string
+
+  /import/audio/confirm:
+    post:
+      tags: [Import]
+      summary: 确认音频导入
+      description: 确认音频转写结果并导入到笔记本。可修改转写文本后再确认。
+      operationId: confirmAudio
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AudioConfirmRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SourceResponse'
+
+  /import/tasks/{taskId}:
+    get:
+      tags: [Import]
+      summary: 查询导入任务进度
+      operationId: getImportTask
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 任务 ID（由 URL 导入或批量导入接口返回）
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ImportTaskResponse'
+
+  # ==================== Search ====================
+  /notebooks/{nbId}/search:
+    post:
+      tags: [Search]
+      summary: 智能搜索
+      description: |
+        Agent 自主执行多轮搜索 + 分析，返回评分后的搜索结果和摘要。
+        需要先在用户配置中配置 LLM 服务。
+      operationId: search
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SearchResponse'
+
+  /notebooks/{nbId}/search/url:
+    post:
+      tags: [Search]
+      summary: URL 直接导入
+      description: 抓取指定 URL 的内容并导入到笔记本
+      operationId: importFromURL
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/URLImportRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TaskIDResponse'
+
+  /notebooks/{nbId}/search/import:
+    post:
+      tags: [Search]
+      summary: 批量导入搜索结果
+      description: 批量抓取多个 URL 并导入，返回任务 ID 用于查询进度
+      operationId: importSearchResults
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: nbId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchImportRequest'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TaskIDResponse'
+
+  # ==================== Health ====================
+  /health:
+    get:
+      summary: 健康检查
+      operationId: healthCheck
+      responses:
+        "200":
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  message:
+                    type: string
+                    example: YouDaoNoteLM API is running

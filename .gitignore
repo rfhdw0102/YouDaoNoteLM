@@ -142,13 +142,18 @@ __pycache__/
 
 # Test screenshots
 frontend/test-screenshots/
-/RAG-ChatAgent-Architecture.md
-/frontend/
-/logs/
-/docker-compose.yml
-/docker-entrypoint.sh
-/Dockerfile
-/main.go
-/nginx.conf
-/configs/config.docker.yaml.example
-/configs/youdao_cookies.json
+
+# Docker
+docker-compose.yml
+docker-entrypoint.sh
+.dockerignore
+Dockerfile
+nginx.conf
+configs/config.docker.yaml.example
+
+# GitHub
+.github/
+Dockerfile
+nginx.conf
+
+.github

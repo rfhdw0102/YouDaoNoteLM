@@ -77,5 +77,5 @@ func (r *userConfigRepository) Update(config *entity.UserConfig) error {
 }
 
 func (r *userConfigRepository) Delete(id uint) error {
-	return r.db.Delete(&entity.UserConfig{}, id).Error
+	return r.db.Unscoped().Delete(&entity.UserConfig{}, id).Error
 }

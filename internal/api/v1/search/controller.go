@@ -39,7 +39,7 @@ func (ctrl *Controller) Search(c *gin.Context) {
 
 	var req request.SearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -63,7 +63,7 @@ func (ctrl *Controller) SearchStream(c *gin.Context) {
 
 	var req request.SearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -102,7 +102,7 @@ func (ctrl *Controller) ImportFromURL(c *gin.Context) {
 
 	var req request.URLImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -126,7 +126,7 @@ func (ctrl *Controller) ImportSearchResults(c *gin.Context) {
 
 	var req request.SearchImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 

@@ -5,6 +5,7 @@ import (
 	"YoudaoNoteLm/internal/service"
 	"YoudaoNoteLm/pkg/response"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -46,7 +47,7 @@ func (ctrl *Controller) UpdateUserStatus(c *gin.Context) {
 
 	var req request.UserStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -74,7 +75,14 @@ func (ctrl *Controller) UpdateConfig(c *gin.Context) {
 
 	var req request.ConfigUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
+		return
+	}
+
+	// 校验 config_value 不为空
+	value := strings.TrimSpace(string(req.ConfigValue))
+	if value == "" || value == "null" {
+		response.BadRequest(c, "配置值不能为空")
 		return
 	}
 
@@ -90,7 +98,21 @@ func (ctrl *Controller) AddConfig(c *gin.Context) {
 
 	var req request.ConfigAddRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
+		return
+	}
+
+	// 去除空白后校验
+	req.ConfigKey = strings.TrimSpace(req.ConfigKey)
+	if req.ConfigKey == "" {
+		response.BadRequest(c, "配置键不能为空")
+		return
+	}
+
+	// 校验 config_value 不为空 JSON 对象
+	value := strings.TrimSpace(string(req.ConfigValue))
+	if value == "" || value == "{}" || value == "null" {
+		response.BadRequest(c, "配置值不能为空")
 		return
 	}
 

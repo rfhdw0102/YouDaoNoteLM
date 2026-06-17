@@ -2,16 +2,17 @@ package youdao
 
 import (
 	"context"
-	"net/http"
 	"time"
 
+	agentTools "YoudaoNoteLm/internal/agent/tools"
+	"YoudaoNoteLm/internal/llm"
 	"YoudaoNoteLm/internal/service"
 	externalYoudao "YoudaoNoteLm/internal/service/external/youdao"
 	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/logger"
 
-	einoOpenai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -20,9 +21,10 @@ import (
 
 // YoudaoAgent 有道云笔记 Agent（基于 Eino 框架）
 type YoudaoAgent struct {
-	configService service.ConfigService
-	youdaoService service.YoudaoService
-	youdaoCLI     externalYoudao.CLI
+	configService   service.ConfigService
+	youdaoService   service.YoudaoService
+	youdaoCLI       externalYoudao.CLI
+	importerService service.ImporterService // 用于 import_document tool
 }
 
 // NewYoudaoAgent 创建有道云笔记 Agent
@@ -30,33 +32,28 @@ func NewYoudaoAgent(
 	configService service.ConfigService,
 	youdaoService service.YoudaoService,
 	youdaoCLI externalYoudao.CLI,
+	importerService service.ImporterService,
 ) *YoudaoAgent {
 	return &YoudaoAgent{
-		configService: configService,
-		youdaoService: youdaoService,
-		youdaoCLI:     youdaoCLI,
+		configService:   configService,
+		youdaoService:   youdaoService,
+		youdaoCLI:       youdaoCLI,
+		importerService: importerService,
 	}
 }
 
-// createEinoChatModel 根据用户配置创建 Eino OpenAI ChatModel
-func (a *YoudaoAgent) createEinoChatModel(userID uint) (*einoOpenai.ChatModel, error) {
-	cfg, err := a.configService.GetChatModelConfig(userID)
+// createChatModel 根据用户配置创建 ToolCallingChatModel（支持多 Provider）
+func (a *YoudaoAgent) createChatModel(ctx context.Context, userID uint) (model.ToolCallingChatModel, error) {
+	cfg, err := a.configService.GetUserLLMConfig(userID)
 	if err != nil {
 		return nil, err
 	}
-
-	return einoOpenai.NewChatModel(context.Background(), &einoOpenai.ChatModelConfig{
-		Model:      cfg.Model,
-		BaseURL:    cfg.BaseURL,
-		APIKey:     cfg.APIKey,
-		Timeout:    60 * time.Second,
-		HTTPClient: &http.Client{Timeout: 90 * time.Second},
-	})
+	return llm.NewToolCallingChatModel(ctx, cfg)
 }
 
 // createTools 创建 Agent 的工具列表
 func (a *YoudaoAgent) createTools() ([]tool.BaseTool, error) {
-	tools := make([]tool.BaseTool, 0, 7)
+	tools := make([]tool.BaseTool, 0, 5)
 
 	listTool, err := NewListNotesTool(a.youdaoService)
 	if err != nil {
@@ -82,24 +79,19 @@ func (a *YoudaoAgent) createTools() ([]tool.BaseTool, error) {
 	}
 	tools = append(tools, createTool)
 
-	importTool, err := NewImportNoteTool(a.youdaoService)
+	// 统一导入工具（替代旧的 import_note + import_notes_batch）
+	importDocTool, err := agentTools.NewImportDocumentTool(a.youdaoService, a.importerService)
 	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "创建 import_note 工具失败", err)
+		return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "创建 import_document 工具失败", err)
 	}
-	tools = append(tools, importTool)
-
-	importBatchTool, err := NewImportNotesBatchTool(a.youdaoService)
-	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "创建 import_notes_batch 工具失败", err)
-	}
-	tools = append(tools, importBatchTool)
+	tools = append(tools, importDocTool)
 
 	return tools, nil
 }
 
 // createAgent 创建 Eino Agent
 func (a *YoudaoAgent) createAgent(ctx context.Context, userID uint) (*adk.ChatModelAgent, error) {
-	chatModel, err := a.createEinoChatModel(userID)
+	chatModel, err := a.createChatModel(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +118,7 @@ func (a *YoudaoAgent) createAgent(ctx context.Context, userID uint) (*adk.ChatMo
 // Execute 执行有道云笔记 Agent 任务
 func (a *YoudaoAgent) Execute(ctx context.Context, userID uint, task string) (string, error) {
 	ctx = WithUserID(ctx, userID)
+	ctx = agentTools.WithUserID(ctx, userID) // import_document 工具读取这个
 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()

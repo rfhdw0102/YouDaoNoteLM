@@ -13,6 +13,12 @@ type einoGenerationModel struct {
 	chat model.BaseChatModel
 }
 
+const (
+	defaultGenerationMaxTokens = 8192
+	defaultGenerationTopP      = 0.9
+	defaultGenerationTemp      = 0.7
+)
+
 // NewEinoGenerationModel adapts an Eino chat model to GenerationModel.
 func NewEinoGenerationModel(chat model.BaseChatModel) GenerationModel {
 	return &einoGenerationModel{chat: chat}
@@ -35,7 +41,11 @@ func (m *einoGenerationModel) Generate(ctx context.Context, prompt GenerationPro
 	msg, err := m.chat.Generate(ctx, []*schema.Message{
 		schema.SystemMessage(prompt.System),
 		schema.UserMessage(user.String()),
-	})
+	},
+		model.WithMaxTokens(defaultGenerationMaxTokens),
+		model.WithTopP(defaultGenerationTopP),
+		model.WithTemperature(defaultGenerationTemp),
+	)
 	if err != nil {
 		return "", fmt.Errorf("eino generation failed: %w", err)
 	}

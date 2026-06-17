@@ -41,6 +41,7 @@ type ConfigService interface {
 	GetEmbeddingService(userID uint) (embedding.EmbeddingService, error)
 	GetLLMClient(userID uint) (llm.LLMClient, error)
 	GetChatModelConfig(userID uint) (*ChatModelConfig, error)
+	GetUserLLMConfig(userID uint) (*entity.UserLLMConfig, error)
 
 	// 获取配置（用于 API）
 	GetUserConfig(userID uint, configType string) (*entity.UserConfig, error)
@@ -487,6 +488,64 @@ func (s *configService) GetChatModelConfig(userID uint) (*ChatModelConfig, error
 			if err == nil {
 				return cfg, nil
 			}
+		}
+	}
+
+	return nil, bizerrors.New(bizerrors.CodeLLMNotConfigured, "请先在设置中配置 LLM 服务")
+}
+
+// GetUserLLMConfig 获取用户的原始 LLM 配置（供 llm.NewToolCallingChatModel 使用）
+func (s *configService) GetUserLLMConfig(userID uint) (*entity.UserLLMConfig, error) {
+	ctx := context.Background()
+
+	// 1. 先查缓存
+	cacheKey := userConfigCacheKey(userID, "llm")
+	var userCfg entity.UserLLMConfig
+	if err := s.cache.Get(ctx, cacheKey, &userCfg); err == nil && userCfg.Enabled {
+		return &userCfg, nil
+	}
+
+	// 2. 查 DB
+	userCfgPtr, err := s.llmConfigRepo.FindDefaultByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if userCfgPtr != nil && userCfgPtr.Enabled {
+		if cacheErr := s.cache.Set(ctx, cacheKey, userCfgPtr, userConfigTTL); cacheErr != nil {
+			logger.Warn("缓存用户LLM配置失败", zap.String("key", cacheKey), zap.Error(cacheErr))
+		}
+		return userCfgPtr, nil
+	}
+
+	// 3. 降级到系统内置配置，转换为 UserLLMConfig
+	sysCacheKey := sysConfigCacheKey("llm")
+	builtins, err := s.getSysConfigs(ctx, sysCacheKey, "llm")
+	if err == nil {
+		for _, builtin := range builtins {
+			if !builtin.Enabled {
+				continue
+			}
+			var params map[string]interface{}
+			if jsonErr := json.Unmarshal([]byte(builtin.ConfigValue), &params); jsonErr != nil {
+				continue
+			}
+			getStr := func(key string) string {
+				if v, ok := params[key].(string); ok {
+					return v
+				}
+				return ""
+			}
+			provider := getStr("provider")
+			if provider == "" {
+				provider = builtin.ConfigKey
+			}
+			return &entity.UserLLMConfig{
+				Provider: provider,
+				APIKey:   getStr("api_key"),
+				APIURL:   getStr("api_url"),
+				Model:    getStr("model"),
+				Enabled:  true,
+			}, nil
 		}
 	}
 

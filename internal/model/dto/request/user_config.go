@@ -4,8 +4,8 @@ import "encoding/json"
 
 // UserConfigRequest 统一用户配置请求
 type UserConfigRequest struct {
-	Name        string          `json:"name" binding:"required"`
-	Provider    string          `json:"provider" binding:"required"`
+	Name        string          `json:"name" binding:"required,min=1"`
+	Provider    string          `json:"provider" binding:"required,min=1"`
 	APIKey      string          `json:"api_key"`
 	APIURL      string          `json:"api_url"`
 	Model       string          `json:"model"`

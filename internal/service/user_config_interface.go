@@ -7,8 +7,8 @@ type UserConfigService interface {
 	// LLM 配置（独立表 user_llm_config，支持多条）
 	ListLLMConfigs(userID uint) ([]*entity.UserLLMConfig, error)
 	CreateLLMConfig(userID uint, config *entity.UserLLMConfig) error
-	UpdateLLMConfig(id uint, config *entity.UserLLMConfig) error
-	DeleteLLMConfig(id uint) error
+	UpdateLLMConfig(userID uint, id uint, config *entity.UserLLMConfig) error
+	DeleteLLMConfig(userID uint, id uint) error
 
 	// 搜索配置
 	ListSearchConfigs(userID uint) ([]*entity.UserConfig, error)
