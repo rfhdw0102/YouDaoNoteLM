@@ -29,6 +29,19 @@ func (r *userLLMConfigRepository) FindByID(id uint) (*entity.UserLLMConfig, erro
 	return &config, nil
 }
 
+// FindByIDAndUserID 根据 ID 和用户 ID 查找配置（防越权）
+func (r *userLLMConfigRepository) FindByIDAndUserID(id, userID uint) (*entity.UserLLMConfig, error) {
+	var config entity.UserLLMConfig
+	err := r.db.Where("id = ? AND user_id = ?", id, userID).First(&config).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &config, nil
+}
+
 // FindByUserID 查找用户的所有 LLM 配置
 func (r *userLLMConfigRepository) FindByUserID(userID uint) ([]*entity.UserLLMConfig, error) {
 	var configs []*entity.UserLLMConfig
