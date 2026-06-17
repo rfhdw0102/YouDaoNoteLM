@@ -68,9 +68,10 @@ func (ctrl *Controller) Export(c *gin.Context) {
 	}
 
 	resp, err := ctrl.generationService.Export(c.Request.Context(), &service.GenerationExportRequest{
-		Type:    service.GenerationType(req.Type),
-		Content: req.Content,
-		Title:   req.Title,
+		Type:     service.GenerationType(req.Type),
+		Content:  req.Content,
+		Title:    req.Title,
+		Template: req.Template,
 	})
 	if err != nil {
 		response.BizError(c, err)

@@ -72,10 +72,14 @@ func (s *verifyCodeService) Generate(ctx context.Context, email string, codeType
 	}
 
 	// 重置重试次数
-	s.redis.Del(ctx, s.retryKey(email, codeType))
+	if err := s.redis.Del(ctx, s.retryKey(email, codeType)).Err(); err != nil {
+		logger.Warn("清除重试次数失败", zap.String("email", email), zap.Error(err))
+	}
 
 	// 设置冷却时间
-	s.redis.Set(ctx, s.cooldownKey(email, codeType), 1, verifyCodeCooldown)
+	if err := s.redis.Set(ctx, s.cooldownKey(email, codeType), 1, verifyCodeCooldown).Err(); err != nil {
+		logger.Warn("设置冷却时间失败", zap.String("email", email), zap.Error(err))
+	}
 
 	// 发送邮件
 	if err := s.emailSvc.SendVerifyCode(email, code); err != nil {
@@ -96,7 +100,9 @@ func (s *verifyCodeService) Verify(ctx context.Context, email string, codeType s
 	}
 	if retryCount >= verifyCodeMaxRetry {
 		// 清除验证码
-		s.redis.Del(ctx, s.codeKey(email, codeType))
+		if err := s.redis.Del(ctx, s.codeKey(email, codeType)).Err(); err != nil {
+			logger.Warn("清除验证码失败", zap.String("email", email), zap.Error(err))
+		}
 		return bizerrors.ErrVerifyCodeLocked
 	}
 
@@ -112,14 +118,22 @@ func (s *verifyCodeService) Verify(ctx context.Context, email string, codeType s
 	// 校验验证码
 	if storedCode != code {
 		// 增加重试次数
-		s.redis.Incr(ctx, s.retryKey(email, codeType))
-		s.redis.Expire(ctx, s.retryKey(email, codeType), verifyCodeTTL)
+		if err := s.redis.Incr(ctx, s.retryKey(email, codeType)).Err(); err != nil {
+			logger.Warn("增加重试次数失败", zap.String("email", email), zap.Error(err))
+		}
+		if err := s.redis.Expire(ctx, s.retryKey(email, codeType), verifyCodeTTL).Err(); err != nil {
+			logger.Warn("设置重试次数过期时间失败", zap.String("email", email), zap.Error(err))
+		}
 		return bizerrors.ErrVerifyCodeInvalid
 	}
 
 	// 验证成功，清除验证码和重试次数
-	s.redis.Del(ctx, s.codeKey(email, codeType))
-	s.redis.Del(ctx, s.retryKey(email, codeType))
+	if err := s.redis.Del(ctx, s.codeKey(email, codeType)).Err(); err != nil {
+		logger.Warn("清除验证码失败", zap.String("email", email), zap.Error(err))
+	}
+	if err := s.redis.Del(ctx, s.retryKey(email, codeType)).Err(); err != nil {
+		logger.Warn("清除重试次数失败", zap.String("email", email), zap.Error(err))
+	}
 
 	return nil
 }

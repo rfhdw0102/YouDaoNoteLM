@@ -29,10 +29,6 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
-*.example
-
-# Mistyped gitignore files
-.gitnore
 
 # Logs
 *.log
@@ -49,7 +45,7 @@ Thumbs.db
 
 
 # claude
-.claude
+.claude/
 .superpowers
 claude.md
 /configs/config.yaml
@@ -59,3 +55,105 @@ claude.md
 # docs
 docs/
 /docs/
+
+# Uploads
+/uploads/
+
+# Config
+/configs/config.yaml
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ========== Frontend (./frontend/) ==========
+
+# Dependencies
+frontend/node_modules/
+
+# Build output
+frontend/dist/
+frontend/dist-ssr/
+
+# Debug logs
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+frontend/lerna-debug.log*
+
+# Environment variables
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/*.local
+
+# Editor directories and files
+frontend/.vscode/*
+!frontend/.vscode/extensions.json
+frontend/.idea/
+frontend/*.suo
+frontend/*.ntvs*
+frontend/*.njsproj
+frontend/*.sln
+frontend/*.sw?
+
+# Cache
+frontend/.eslintcache
+frontend/*.tsbuildinfo
+
+# Testing
+frontend/coverage/
+/claude.md
+
+
+ffmpeg.zip
+
+
+CLAUDE.local.md
+
+# Audio files
+*.wav
+*.mp3
+*.flac
+*.m4a
+
+# Test commands and integration tests
+cmd/test_*/
+cmd/seed_*/
+tests/integration/
+
+# Debug and temporary test files
+response*.json
+test_output.txt
+test_result.txt
+test_*.ps1
+tasks.md
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Test screenshots
+frontend/test-screenshots/
+
+# Docker
+docker-compose.yml
+docker-entrypoint.sh
+.dockerignore
+Dockerfile
+nginx.conf
+configs/config.docker.yaml.example
+
+# GitHub
+.github/
+Dockerfile
+nginx.conf
+
+.github

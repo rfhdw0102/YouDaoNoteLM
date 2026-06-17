@@ -1,23 +1,47 @@
 package service
 
 import (
+	"context"
+	"time"
+
+	"go.uber.org/zap"
+
 	"YoudaoNoteLm/internal/model/dto/request"
 	"YoudaoNoteLm/internal/model/dto/response"
 	"YoudaoNoteLm/internal/model/entity"
+	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/repository"
-
+	"YoudaoNoteLm/pkg/cache"
 	bizerrors "YoudaoNoteLm/pkg/errors"
+	"YoudaoNoteLm/pkg/logger"
 )
 
 // notebookService 笔记本服务实现
 type notebookService struct {
-	notebookRepo repository.NotebookRepository
+	notebookRepo     repository.NotebookRepository
+	sourceRepo       repository.SourceRepository
+	conversationRepo repository.ConversationRepository
+	messageRepo      repository.MessageRepository
+	ingestionSvc     rag.IngestionService
+	chatCache        *cache.ChatCache
 }
 
 // NewNotebookService 创建笔记本服务
-func NewNotebookService(notebookRepo repository.NotebookRepository) NotebookService {
+func NewNotebookService(
+	notebookRepo repository.NotebookRepository,
+	sourceRepo repository.SourceRepository,
+	conversationRepo repository.ConversationRepository,
+	messageRepo repository.MessageRepository,
+	ingestionSvc rag.IngestionService,
+	chatCache *cache.ChatCache,
+) NotebookService {
 	return &notebookService{
-		notebookRepo: notebookRepo,
+		notebookRepo:     notebookRepo,
+		sourceRepo:       sourceRepo,
+		conversationRepo: conversationRepo,
+		messageRepo:      messageRepo,
+		ingestionSvc:     ingestionSvc,
+		chatCache:        chatCache,
 	}
 }
 
@@ -103,7 +127,91 @@ func (s *notebookService) Delete(userID, notebookID uint) error {
 		return bizerrors.ErrForbidden
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	// 删除该笔记本下所有 source 的向量和 parent_blocks
+	if s.ingestionSvc != nil && s.sourceRepo != nil {
+		s.deleteNotebookVectors(ctx, userID, notebookID)
+	}
+
+	// 清理关联会话的 Redis 缓存和消息
+	if s.conversationRepo != nil && s.chatCache != nil {
+		s.cleanupNotebookConversations(ctx, notebookID)
+	}
+
+	// 软删除该笔记本下所有 source（软删除不触发 CASCADE）
+	if err := s.sourceRepo.DeleteByNotebookID(notebookID); err != nil {
+		logger.Error("删除笔记本关联的 source 失败",
+			zap.Uint("notebook_id", notebookID),
+			zap.Error(err),
+		)
+	}
+
 	return s.notebookRepo.Delete(notebookID)
+}
+
+// deleteNotebookVectors 删除笔记本下所有 source 的向量数据和 parent_blocks
+func (s *notebookService) deleteNotebookVectors(ctx context.Context, userID, notebookID uint) {
+	// 查询该笔记本下所有 source
+	sources, _, err := s.sourceRepo.ListByNotebook(userID, notebookID, "", 0, 10000)
+	if err != nil {
+		logger.Error("查询笔记本关联的 source 失败",
+			zap.Uint("notebook_id", notebookID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	// 逐个删除向量数据和 parent_blocks
+	for _, source := range sources {
+		if err := s.ingestionSvc.DeleteSource(ctx, userID, source.ID); err != nil {
+			logger.Error("删除笔记本关联的源数据失败",
+				zap.Uint("notebook_id", notebookID),
+				zap.Uint("source_id", source.ID),
+				zap.Error(err),
+			)
+		}
+	}
+}
+
+// cleanupNotebookConversations 清理笔记本下所有会话的 Redis 缓存和消息
+func (s *notebookService) cleanupNotebookConversations(ctx context.Context, notebookID uint) {
+	convs, err := s.conversationRepo.FindByNotebookID(notebookID)
+	if err != nil {
+		logger.Error("查询笔记本关联的会话失败",
+			zap.Uint("notebook_id", notebookID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	for _, conv := range convs {
+		// 删除消息
+		if s.messageRepo != nil {
+			if err := s.messageRepo.DeleteByConversationID(conv.ID); err != nil {
+				logger.Warn("删除会话消息失败",
+					zap.Uint("conversation_id", conv.ID),
+					zap.Error(err),
+				)
+			}
+		}
+		// 清除 Redis 缓存（消息历史+摘要）
+		if err := s.chatCache.DeleteConversationCache(ctx, conv.ID); err != nil {
+			logger.Warn("清除会话缓存失败",
+				zap.Uint("conversation_id", conv.ID),
+				zap.Error(err),
+			)
+		}
+	}
+
+	// 删除会话本身
+	if err := s.conversationRepo.DeleteByNotebookID(notebookID); err != nil {
+		logger.Error("删除笔记本关联的会话失败",
+			zap.Uint("notebook_id", notebookID),
+			zap.Error(err),
+		)
+	}
 }
 
 // toResponse 转换为响应 DTO

@@ -47,6 +47,22 @@ func (r *messageRepository) FindRecentByConversationID(conversationID uint, limi
 	return msgs, err
 }
 
+// FindOlderThan 查找对话中较早的消息（跳过最近 skip 条）
+func (r *messageRepository) FindOlderThan(conversationID uint, skip int) ([]*entity.Message, error) {
+	var msgs []*entity.Message
+	// 先获取最新的 skip 条消息的 ID，然后排除它们
+	subQuery := r.db.Model(&entity.Message{}).
+		Where("conversation_id = ?", conversationID).
+		Order("created_at DESC").
+		Limit(skip).
+		Select("id")
+
+	err := r.db.Where("conversation_id = ? AND id NOT IN (?)", conversationID, subQuery).
+		Order("created_at ASC").
+		Find(&msgs).Error
+	return msgs, err
+}
+
 // CountByConversationID 统计对话消息数
 func (r *messageRepository) CountByConversationID(conversationID uint) (int64, error) {
 	var count int64

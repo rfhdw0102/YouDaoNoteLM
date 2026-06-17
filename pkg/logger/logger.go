@@ -14,6 +14,13 @@ var (
 	sugar = log.Sugar()
 )
 
+func init() {
+	// 提供默认 logger，防止 init() 阶段（logger.Init 之前）调用日志函数导致 nil panic
+	// 后续 Init() 调用会覆盖为正式配置的 logger
+	log = zap.NewNop()
+	sugar = log.Sugar()
+}
+
 // Init 初始化日志系统
 func Init(cfg *config.LogConfig) error {
 	// 日志编码器配置

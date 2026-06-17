@@ -185,6 +185,23 @@
       color: var(--danger);
     }
 
+    .helper {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 400;
+    }
+
+    .inline-tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
     .output-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -362,10 +379,27 @@
             <input id="exportTitle" placeholder="Optional filename title, for example lesson-note">
           </label>
 
+          <label id="pptTemplateField">
+            PPT Template
+            <select id="pptTemplate">
+              <option value="" selected>dynamic-html</option>
+              <option value="classic">classic</option>
+              <option value="clean">clean</option>
+              <option value="business">business</option>
+            </select>
+            <span class="helper" id="pptTemplateHint">Leave empty to let backend map generated HTML directly into editable PPT blocks.</span>
+          </label>
+
+          <div class="inline-tools">
+            <button id="loadHtmlPptSampleBtn" class="secondary" type="button">Load Real HTML PPT Sample</button>
+            <span class="helper">Injects the photosynthesis HTML test case directly into preview and export flow.</span>
+          </div>
+
           <div class="actions">
             <button id="sendBtn" type="button">Send Request</button>
             <button id="exportBtn" class="secondary" type="button" disabled>Export Result</button>
             <button id="copyBtn" class="secondary" type="button">Copy Request JSON</button>
+            <button id="copyExportBtn" class="secondary" type="button" disabled>Copy Export JSON</button>
             <button id="clearBtn" class="secondary" type="button">Clear Output</button>
           </div>
         </div>
@@ -411,6 +445,78 @@
       lastRequest: null,
       lastResponse: null
     };
+
+    const pptTemplateLabels = {
+      "": "dynamic-html: backend maps generated HTML into editable PPT blocks",
+      classic: "classic: warm editorial style with numbered learning cards",
+      clean: "clean: white-panel minimal style with quiet focus notes",
+      business: "business: muted teal executive style for formal reports"
+    };
+
+    const realHtmlPptSample = `<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>光合作用 · 学习课件</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #eef3e8; font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; display: flex; flex-direction: column; align-items: center; padding: 2rem 1rem; }
+    .slider { max-width: 1100px; width: 100%; display: flex; flex-direction: column; gap: 1.8rem; }
+    section { background: #ffffff; border-radius: 32px; box-shadow: 0 12px 30px rgba(60, 80, 40, 0.12); padding: 2.8rem 3.2rem; border: 1px solid rgba(140, 180, 100, 0.2); }
+    section:first-child { background: linear-gradient(145deg, #f6fbf0 0%, #e9f2db 100%); border-bottom: 4px solid #8bb86b; }
+    h1 { font-size: 2.6rem; font-weight: 700; color: #1e3a0e; margin-bottom: 0.6rem; line-height: 1.2; }
+    h2 { font-size: 1.5rem; font-weight: 600; color: #2d5a1a; margin-bottom: 1.4rem; border-left: 5px solid #7bb05c; padding-left: 1rem; }
+    section:first-child h1 { font-size: 3rem; margin-bottom: 0.3rem; }
+    section:first-child h2 { border-left: none; padding-left: 0; font-size: 1.3rem; color: #41692b; font-weight: 500; margin-bottom: 0.8rem; }
+    ul { list-style: none; padding-left: 0.5rem; }
+    li { padding: 0.5rem 0 0.5rem 2rem; font-size: 1.1rem; line-height: 1.6; color: #1f2f16; border-bottom: 1px solid #f0f5ea; }
+    li:last-child { border-bottom: none; }
+    .highlight { background: #faffed; border-left: 4px solid #7bb05c; padding: 0.8rem 1.4rem; border-radius: 12px; margin: 1.2rem 0; color: #1a3a0a; font-weight: 500; }
+    .row { display: flex; flex-wrap: wrap; gap: 1.2rem; margin-top: 1rem; }
+    .card { background: #f9fcf6; border-radius: 20px; padding: 1.4rem 1.8rem; flex: 1 1 200px; border: 1px solid #dce8d0; }
+    .dir-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-top: 0.8rem; }
+    .dir-item { background: #f4f9ee; padding: 0.8rem 1rem; border-radius: 16px; text-align: center; font-weight: 600; color: #1e4a0c; border: 1px solid #d4e4c4; }
+    .footnote { margin-top: 1.2rem; font-size: 0.9rem; color: #5a7350; background: #f2f8ec; padding: 0.6rem 1.4rem; border-radius: 40px; display: inline-block; }
+    .evidence { background: #f0f6ea; border-radius: 16px; padding: 1rem 1.6rem; margin-top: 1.4rem; font-size: 0.95rem; color: #2d4d1e; border: 1px dashed #b8d4a0; }
+  </style>
+</head>
+<body>
+<div class="slider">
+  <section>
+    <h1>光合作用</h1>
+    <h2>从光能到化学能的生命引擎</h2>
+    <ul>
+      <li>基于笔记整理的学习材料</li>
+      <li>核心内容：光反应 · 卡尔文循环 · 影响因素</li>
+      <li>适用对象：中学生物 / 大学通识 · 自学复习</li>
+    </ul>
+    <div class="footnote">绿色植物 · 藻类 · 光合细菌</div>
+  </section>
+  <section>
+    <h2>目录</h2>
+    <div class="dir-list">
+      <div class="dir-item">背景与目标</div>
+      <div class="dir-item">概念框架</div>
+      <div class="dir-item">机制与流程</div>
+      <div class="dir-item">案例与应用</div>
+      <div class="dir-item">易错辨析</div>
+      <div class="dir-item">总结复盘</div>
+    </div>
+    <div class="evidence">素材来源：本地笔记 · 光反应、卡尔文循环、影响因素；联网参考补充实验背景。</div>
+  </section>
+  <section>
+    <h2>概念框架 · 光合作用三大模块</h2>
+    <div class="row">
+      <div class="card"><h3>☀️ 光反应</h3><p>在类囊体膜上发生，依赖光照。</p></div>
+      <div class="card"><h3>卡尔文循环</h3><p>在叶绿体基质中进行，不直接需光。</p></div>
+      <div class="card"><h3>影响因素</h3><p>光照强度、CO₂浓度、温度协同调控光合速率。</p></div>
+    </div>
+    <div class="highlight">光合作用总反应式：6CO₂ + 12H₂O → C₆H₁₂O₆ + 6O₂ + 6H₂O（光能驱动）</div>
+  </section>
+</div>
+</body>
+</html>`;
 
     function parseNumber(value) {
       const n = Number(value);
@@ -555,6 +661,11 @@
       return state.lastResponse && state.lastResponse.data ? state.lastResponse.data : null;
     }
 
+    function getCurrentExportType() {
+      const data = getGenerationData();
+      return data && data.type ? String(data.type) : $("type").value;
+    }
+
     function hasExportableContent() {
       const data = getGenerationData();
       return Boolean(data && String(data.content || "").trim());
@@ -562,6 +673,20 @@
 
     function setExportReady(ready) {
       $("exportBtn").disabled = !ready;
+      $("copyExportBtn").disabled = !ready;
+      updatePPTTemplateUI();
+    }
+
+    function updatePPTTemplateUI() {
+      const isPPT = getCurrentExportType() === "ppt";
+      $("pptTemplateField").classList.toggle("hidden", !isPPT);
+      $("pptTemplate").disabled = !isPPT;
+      const selected = $("pptTemplate").value;
+      $("pptTemplateHint").textContent = isPPT
+        ? selected
+          ? `${pptTemplateLabels[selected] || selected}. Export payload includes template="${selected}".`
+          : "dynamic-html: backend maps generated HTML into editable PPT blocks. Export payload omits template to use dynamic HTML layout."
+        : "Only sent when exporting ppt. Leave empty to use dynamic HTML layout.";
     }
 
     function buildExportPayload() {
@@ -577,6 +702,9 @@
       };
       const title = $("exportTitle").value.trim();
       if (title) payload.title = title;
+      if (payload.type === "ppt" && $("pptTemplate").value) {
+        payload.template = $("pptTemplate").value;
+      }
       return payload;
     }
 
@@ -733,7 +861,8 @@
 
         const filename = parseContentDispositionFilename(disposition) || fallbackExportFilename(payload.type);
         downloadBlob(blob, filename);
-        setStatus(`Exported ${filename}`);
+        const templateLabel = payload.template ? ` with template ${payload.template}` : "";
+        setStatus(`Exported ${filename}${templateLabel}`);
       } catch (err) {
         setStatus(err.message || "Export failed", true);
       } finally {
@@ -751,6 +880,17 @@
       }
     }
 
+    async function copyExportRequest() {
+      try {
+        const payload = buildExportPayload();
+        await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+        const templateLabel = payload.template ? ` (${payload.template})` : "";
+        setStatus(`Export JSON copied${templateLabel}`);
+      } catch (err) {
+        setStatus(err.message || "Copy export failed", true);
+      }
+    }
+
     function clearOutput() {
       state.lastResponse = null;
       state.lastExportRequest = null;
@@ -763,10 +903,39 @@
       setStatus("Idle");
     }
 
+    function loadRealHtmlPptSample() {
+      state.lastResponse = {
+        code: 0,
+        data: {
+          type: "ppt",
+          content: realHtmlPptSample,
+          meta: {
+            agent: "local-html-sample",
+            fallback_used: false
+          },
+          references: [],
+          search_results: []
+        }
+      };
+      $("type").value = "ppt";
+      $("exportTitle").value = "photosynthesis-html-sample";
+      $("responseJson").textContent = JSON.stringify(state.lastResponse, null, 2);
+      updateMeta(200, state.lastResponse);
+      renderContent(state.lastResponse.data);
+      renderSources(state.lastResponse.data);
+      setExportReady(true);
+      setStatus("Loaded real HTML PPT sample");
+    }
+
     $("sendBtn").addEventListener("click", sendRequest);
     $("exportBtn").addEventListener("click", exportResult);
     $("copyBtn").addEventListener("click", copyRequest);
+    $("copyExportBtn").addEventListener("click", copyExportRequest);
     $("clearBtn").addEventListener("click", clearOutput);
+    $("loadHtmlPptSampleBtn").addEventListener("click", loadRealHtmlPptSample);
+    $("type").addEventListener("change", updatePPTTemplateUI);
+    $("pptTemplate").addEventListener("change", updatePPTTemplateUI);
+    updatePPTTemplateUI();
   </script>
 </body>
 </html>

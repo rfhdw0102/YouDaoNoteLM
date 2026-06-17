@@ -13,7 +13,8 @@ import (
 )
 
 // EmbedderProvider 根据 userID 获取对应的 Embedder
-type EmbedderProvider func(ctx context.Context, userID uint) (embedding.Embedder, error)
+// 返回: embedder, batchSize, vectorDim, error
+type EmbedderProvider func(ctx context.Context, userID uint) (embedding.Embedder, int, int, error)
 
 // IngestionService 入库服务接口
 type IngestionService interface {
@@ -23,6 +24,8 @@ type IngestionService interface {
 	IngestSingle(ctx context.Context, sourceID uint) error
 	// DeleteSource 删除源的向量数据
 	DeleteSource(ctx context.Context, userID uint, sourceID uint) error
+	// DropUserCollection 删除用户的整个 Milvus Collection（不可逆操作）
+	DropUserCollection(ctx context.Context, userID uint) error
 }
 
 type ingestionService struct {
@@ -103,13 +106,45 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 		return err
 	}
 
-	// 7. 获取用户的 Embedder 并向量化
+	// 7. 检查是否有可入库的文档
+	if len(enhancedDocs) == 0 {
+		s.updateFailedStatus(sourceID, "解析后无有效内容，跳过入库")
+		return fmt.Errorf("源 %d 解析后无有效内容", sourceID)
+	}
+
 	enhancedDocs = WrapDocuments(enhancedDocs, sourceID)
+
+	// 8. 先写入 MySQL ParentBlock，拿到真实的自增 ID
+	blocks := ToParentBlocks(parentDocs, sourceID)
+	if err := s.retry(func() error {
+		return s.parentRepo.BatchCreate(blocks)
+	}); err != nil {
+		s.updateFailedStatus(sourceID, "写入 MySQL 失败: "+err.Error())
+		return err
+	}
+	logger.Info("MySQL ParentBlock 写入成功",
+		zap.Uint("source_id", sourceID),
+		zap.Int("block_count", len(blocks)),
+	)
+
+	// 8.5 构建 parent_index → MySQL ID 的映射，更新子块 metadata
+	parentIndexToID := make(map[int]uint, len(blocks))
+	for _, b := range blocks {
+		parentIndexToID[b.ChunkIndex] = b.ID
+	}
+	for _, doc := range enhancedDocs {
+		if pidx, ok := doc.MetaData["parent_index"].(int); ok {
+			if realID, exists := parentIndexToID[pidx]; exists {
+				doc.MetaData["parent_block_id"] = realID
+			}
+		}
+	}
+
 	logger.Info("准备向量化",
 		zap.Uint("source_id", sourceID),
 		zap.Int("chunk_count", len(enhancedDocs)),
 	)
-	embedder, err := s.embedderProvider(ctx, source.UserID)
+	embedder, embedBatchSize, vectorDim, err := s.embedderProvider(ctx, source.UserID)
 	if err != nil {
 		errMsg := "获取 Embedder 失败: " + err.Error()
 		logger.Error(errMsg, zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID))
@@ -123,8 +158,6 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 		texts[i] = doc.Content
 	}
 
-	// 分批调用 Embedding API（豆包限制每次最多 256 条）
-	const embedBatchSize = 256
 	vectors := make([][]float32, len(texts))
 	logger.Info("调用 Embedding API", zap.Uint("source_id", sourceID), zap.Int("text_count", len(texts)))
 
@@ -172,25 +205,25 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 	}
 	logger.Info("Embedding 全部完成", zap.Uint("source_id", sourceID), zap.Int("vector_count", len(vectors)))
 
-	// 8.5 生成 sparse vector
+	// 9. 生成 sparse vector
 	sparseVectors := make([]map[int32]float32, len(enhancedDocs))
 	for i, doc := range enhancedDocs {
 		sparseVectors[i] = GenerateSparseVector(doc.Content)
 	}
 	logger.Info("Sparse vector 生成完成", zap.Uint("source_id", sourceID), zap.Int("count", len(sparseVectors)))
 
-	// 9. 确保用户的 Milvus Collection 存在
-	if err := s.milvusWriter.EnsureCollection(ctx, source.UserID); err != nil {
+	// 10. 确保用户的 Milvus Collection 存在
+	if err := s.milvusWriter.EnsureCollection(ctx, source.UserID, vectorDim); err != nil {
 		errMsg := "确保 Milvus Collection 失败: " + err.Error()
 		logger.Error(errMsg, zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID))
 		s.updateFailedStatus(sourceID, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	// 9. 写入 Milvus
+	// 11. 写入 Milvus
 	logger.Info("写入 Milvus", zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID), zap.Int("doc_count", len(enhancedDocs)))
 	if err := s.retry(func() error {
-		return s.milvusWriter.StoreWithSparse(ctx, source.UserID, enhancedDocs, vectors, sparseVectors)
+		return s.milvusWriter.StoreWithSparse(ctx, source.UserID, enhancedDocs, vectors, sparseVectors, vectorDim)
 	}); err != nil {
 		errMsg := "写入 Milvus 失败: " + err.Error()
 		logger.Error(errMsg, zap.Uint("source_id", sourceID))
@@ -198,15 +231,6 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 		return fmt.Errorf("%s", errMsg)
 	}
 	logger.Info("Milvus 写入成功", zap.Uint("source_id", sourceID))
-
-	// 10. 写入 MySQL ParentBlock
-	blocks := ToParentBlocks(parentDocs, sourceID)
-	if err := s.retry(func() error {
-		return s.parentRepo.BatchCreate(blocks)
-	}); err != nil {
-		s.updateFailedStatus(sourceID, "写入 MySQL 失败: "+err.Error())
-		return err
-	}
 
 	// 11. 更新状态为就绪
 	if err := s.sourceRepo.UpdateStatus(sourceID, "ready", ""); err != nil {
@@ -238,9 +262,9 @@ func (s *ingestionService) Ingest(ctx context.Context, sourceIDs []uint) error {
 	return lastErr
 }
 
-// DeleteSource 删除源的向量数据
+// DeleteSource 删除源的向量数据和父块数据
 func (s *ingestionService) DeleteSource(ctx context.Context, userID uint, sourceID uint) error {
-	logger.Info("删除源向量数据",
+	logger.Info("删除源数据",
 		zap.Uint("user_id", userID),
 		zap.Uint("source_id", sourceID),
 	)
@@ -252,9 +276,46 @@ func (s *ingestionService) DeleteSource(ctx context.Context, userID uint, source
 		)
 		return fmt.Errorf("删除向量数据失败: %w", err)
 	}
-	logger.Info("删除源向量数据成功",
+	// 删除 MySQL 中的 parent_blocks（source 软删除不会触发 CASCADE）
+	if err := s.parentRepo.DeleteBySourceID(sourceID); err != nil {
+		logger.Error("删除 parent_blocks 失败",
+			zap.Uint("source_id", sourceID),
+			zap.Error(err),
+		)
+		return fmt.Errorf("删除 parent_blocks 失败: %w", err)
+	}
+	logger.Info("删除源数据成功",
 		zap.Uint("user_id", userID),
 		zap.Uint("source_id", sourceID),
+	)
+	return nil
+}
+
+// DropUserCollection 删除用户的整个 Milvus Collection
+// 注意：此操作不可逆，会永久删除该用户的所有向量数据
+func (s *ingestionService) DropUserCollection(ctx context.Context, userID uint) error {
+	logger.Info("删除用户 Milvus Collection",
+		zap.Uint("user_id", userID),
+	)
+	if err := s.milvusWriter.DropUserCollection(ctx, userID); err != nil {
+		logger.Error("删除用户 Milvus Collection 失败",
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+		)
+		return fmt.Errorf("删除用户 Collection 失败: %w", err)
+	}
+
+	// 重置用户所有资料的向量化状态，使其可以重新导入
+	if err := s.sourceRepo.ResetVectorizedByUserID(userID); err != nil {
+		logger.Error("重置用户资料向量化状态失败",
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+		)
+		// 不返回错误，因为 collection 已经删除成功
+	}
+
+	logger.Info("删除用户 Milvus Collection 成功",
+		zap.Uint("user_id", userID),
 	)
 	return nil
 }

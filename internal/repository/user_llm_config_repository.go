@@ -1,9 +1,8 @@
 package repository
 
 import (
-	"errors"
-
 	"YoudaoNoteLm/internal/model/entity"
+	"errors"
 
 	"gorm.io/gorm"
 )
@@ -12,6 +11,7 @@ type userLLMConfigRepository struct {
 	db *gorm.DB
 }
 
+// NewUserLLMConfigRepository 创建用户 LLM 配置仓储
 func NewUserLLMConfigRepository(db *gorm.DB) UserLLMConfigRepository {
 	return &userLLMConfigRepository{db: db}
 }
@@ -63,7 +63,14 @@ func (r *userLLMConfigRepository) Create(config *entity.UserLLMConfig) error {
 
 // Update 更新配置
 func (r *userLLMConfigRepository) Update(config *entity.UserLLMConfig) error {
-	return r.db.Save(config).Error
+	return r.db.Model(config).Updates(map[string]interface{}{
+		"name":     config.Name,
+		"provider": config.Provider,
+		"api_key":  config.APIKey,
+		"api_url":  config.APIURL,
+		"model":    config.Model,
+		"enabled":  config.Enabled,
+	}).Error
 }
 
 // Delete 删除配置

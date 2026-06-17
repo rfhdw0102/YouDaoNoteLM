@@ -58,8 +58,8 @@ func BizError(c *gin.Context, err error) {
 		})
 		return
 	}
-	// 其他错误类型
-	Error(c, errors.CodeInternalError, errors.GetMessage(errors.CodeInternalError))
+	// 其他错误类型，返回错误信息给前端
+	Error(c, errors.CodeInternalError, err.Error())
 }
 
 // BadRequest 400 错误

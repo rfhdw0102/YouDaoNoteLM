@@ -14,7 +14,8 @@ type GenerationRequest struct {
 
 // GenerationExportRequest is the HTTP request body for generation export.
 type GenerationExportRequest struct {
-	Type    string `json:"type" binding:"required"`
-	Content string `json:"content" binding:"required"`
-	Title   string `json:"title"`
+	Type     string `json:"type" binding:"required"`
+	Content  string `json:"content" binding:"required"`
+	Title    string `json:"title"`
+	Template string `json:"template"`
 }

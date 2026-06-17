@@ -10,6 +10,15 @@ import (
 	"YoudaoNoteLm/internal/rag"
 )
 
+type generationReferenceSelection struct {
+	References           []GenerationReference
+	StrongLocalCount     int
+	WeakLocalCount       int
+	IrrelevantLocalCount int
+	NeedsWebSupplement   bool
+	WebSupplementReason  string
+}
+
 func buildInlineMarkdownReferences(ctx context.Context, markdown string, plan generationQueryPlan, limit int) ([]GenerationReference, error) {
 	parser := rag.NewMarkdownParser()
 	docs, err := parser.Parse(ctx, strings.NewReader(markdown))
@@ -28,6 +37,7 @@ func buildInlineMarkdownReferences(ctx context.Context, markdown string, plan ge
 		ref   GenerationReference
 		index int
 	}
+
 	scored := make([]scoredRef, 0, len(parentDocs))
 	for i, doc := range parentDocs {
 		content := strings.TrimSpace(doc.Content)
@@ -99,15 +109,15 @@ func relevantGenerationTerms(plan generationQueryPlan) []string {
 	terms := append([]string{}, plan.Keywords...)
 	terms = append(terms, splitKeywordCandidates(plan.LocalQuery)...)
 	terms = append(terms, splitKeywordCandidates(plan.WebQuery)...)
-	return uniqueNonEmpty(terms)
+	return filterGenerationTerms(terms)
 }
 
 func looksDefinitionLike(content string) bool {
+	content = strings.ToLower(content)
 	return strings.Contains(content, " is ") ||
 		strings.Contains(content, " are ") ||
-		strings.Contains(content, "定义") ||
-		strings.Contains(content, "是") ||
-		strings.Contains(content, "指")
+		strings.Contains(content, " means ") ||
+		strings.Contains(content, "definition")
 }
 
 func looksListRich(content string) bool {
@@ -164,6 +174,147 @@ func mergeGenerationReferences(inlineRefs, ragRefs []GenerationReference, limit 
 	return merged
 }
 
+func selectGenerationReferences(inlineRefs, ragRefs []GenerationReference, plan generationQueryPlan, limit int) generationReferenceSelection {
+	if limit <= 0 {
+		limit = len(inlineRefs) + len(ragRefs)
+	}
+
+	strongRefs := make([]GenerationReference, 0, len(ragRefs))
+	strongCoverage := map[string]struct{}{}
+	weakCount := 0
+	irrelevantCount := 0
+
+	for _, ref := range ragRefs {
+		classification, coverageTerms := classifyGenerationLocalReference(ref, plan)
+		switch classification {
+		case "strong":
+			strongRefs = append(strongRefs, ref)
+			for _, term := range coverageTerms {
+				strongCoverage[term] = struct{}{}
+			}
+		case "weak":
+			weakCount++
+		default:
+			irrelevantCount++
+		}
+	}
+
+	sort.SliceStable(strongRefs, func(i, j int) bool {
+		return strongRefs[i].Score > strongRefs[j].Score
+	})
+
+	reason := generationWebSupplementReason(len(strongRefs), len(strongCoverage))
+
+	return generationReferenceSelection{
+		References:           mergeGenerationReferences(inlineRefs, strongRefs, limit),
+		StrongLocalCount:     len(strongRefs),
+		WeakLocalCount:       weakCount,
+		IrrelevantLocalCount: irrelevantCount,
+		NeedsWebSupplement:   reason != "",
+		WebSupplementReason:  reason,
+	}
+}
+
+func classifyGenerationLocalReference(ref GenerationReference, plan generationQueryPlan) (string, []string) {
+	headingText := strings.ToLower(strings.TrimSpace(strings.Join([]string{ref.Heading, ref.ChapterPath}, "\n")))
+	contentText := strings.ToLower(strings.TrimSpace(ref.Content))
+
+	primaryTerms := filterGenerationTerms(append([]string{plan.Topic}, plan.Keywords...))
+	secondaryTerms := filterGenerationTerms(append(splitKeywordCandidates(plan.LocalQuery), splitKeywordCandidates(plan.WebQuery)...))
+
+	coverage := make([]string, 0, len(primaryTerms))
+	primaryScore := 0.0
+	secondaryScore := 0.0
+
+	for _, term := range primaryTerms {
+		switch {
+		case strings.Contains(headingText, term):
+			primaryScore += 3.0
+			coverage = append(coverage, term)
+		case strings.Contains(contentText, term):
+			primaryScore += 1.75
+			coverage = append(coverage, term)
+		}
+	}
+
+	for _, term := range secondaryTerms {
+		if containsString(coverage, term) {
+			continue
+		}
+		switch {
+		case strings.Contains(headingText, term):
+			secondaryScore += 1.5
+		case strings.Contains(contentText, term):
+			secondaryScore += 0.75
+		}
+	}
+
+	if len([]rune(contentText)) > 700 && primaryScore == 0 {
+		secondaryScore -= 1.0
+	}
+
+	totalScore := primaryScore + secondaryScore
+	coverage = uniqueNonEmpty(coverage)
+
+	switch {
+	case primaryScore >= 3.0:
+		return "strong", coverage
+	case primaryScore >= 1.75 && totalScore >= 4.0:
+		return "strong", coverage
+	case primaryScore >= 1.75:
+		return "weak", coverage
+	case totalScore >= 2.5:
+		return "weak", coverage
+	default:
+		return "irrelevant", nil
+	}
+}
+
+func filterGenerationTerms(values []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" || isGenericGenerationTerm(value) {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func isGenericGenerationTerm(value string) bool {
+	if isASCIIStopword(value) {
+		return true
+	}
+	if isASCIIAlphaToken(value) && len(value) < 4 {
+		return true
+	}
+	switch value {
+	case "ppt", "slides", "slide", "markdown", "mindmap", "quiz", "note", "notes",
+		"generate", "generated", "summary", "outline", "structure", "topic", "content",
+		"生成", "总结", "大纲", "结构", "主题", "内容", "脑图", "思维导图", "幻灯片", "笔记", "题目":
+		return true
+	default:
+		return len([]rune(value)) < 2
+	}
+}
+
+func generationWebSupplementReason(strongLocalCount, strongCoverageCount int) string {
+	switch {
+	case strongLocalCount == 0:
+		return "no_strong_local_references"
+	case strongCoverageCount < 2:
+		return "insufficient_local_topic_coverage"
+	default:
+		return ""
+	}
+}
+
 func normalizeReferenceContent(content string) string {
 	content = strings.ToLower(strings.Join(strings.Fields(content), " "))
 	var b strings.Builder
@@ -181,9 +332,9 @@ func isInlineReference(ref GenerationReference) bool {
 
 func generationReferenceLabel(ref GenerationReference) string {
 	if isInlineReference(ref) {
-		return "输入 Markdown"
+		return "Input Markdown"
 	}
-	return firstNonEmpty(ref.SourceName, fmt.Sprintf("来源-%d", ref.SourceID))
+	return firstNonEmpty(ref.SourceName, fmt.Sprintf("source-%d", ref.SourceID))
 }
 
 func pruneGenerationSearchResults(results []SearchResult, limit int) []SearchResult {
@@ -211,34 +362,36 @@ func pruneGenerationSearchResults(results []SearchResult, limit int) []SearchRes
 
 func buildGenerationContext(req *GenerationRequest, refs []GenerationReference, searchSummary string, searchResults []SearchResult) string {
 	var b strings.Builder
-	b.WriteString("用户要求：\n")
+	b.WriteString("User Request:\n")
 	b.WriteString(strings.TrimSpace(req.Prompt))
-	b.WriteString("\n\n原始 Markdown：\n")
+	b.WriteString("\n\nOriginal Markdown:\n")
 	b.WriteString(strings.TrimSpace(req.Markdown))
 
 	if len(refs) > 0 {
-		b.WriteString("\n\n本地 RAG 参考：\n")
+		b.WriteString("\n\nLocal References:\n")
 		for i, ref := range refs {
-			b.WriteString(fmt.Sprintf("[%d] %s %s\n%s\n", i+1, generationReferenceLabel(ref), ref.ChapterPath, ref.Content))
+			b.WriteString(fmt.Sprintf("[%d] %s %s\n%s\n", i+1, generationReferenceLabel(ref), ref.ChapterPath, summarizeLine(ref.Content, 120)))
 		}
 	}
 	if strings.TrimSpace(searchSummary) != "" {
-		b.WriteString("\n\n联网搜索摘要：\n")
+		b.WriteString("\n\nWeb Summary:\n")
 		b.WriteString(strings.TrimSpace(searchSummary))
 	}
 	if len(searchResults) > 0 {
-		b.WriteString("\n\n联网搜索结果：\n")
+		b.WriteString("\n\nWeb Results:\n")
 		for i, result := range searchResults {
-			b.WriteString(fmt.Sprintf("[%d] %s - %s\n%s\n", i+1, result.Title, result.URL, firstNonEmpty(result.Snippet, result.Content)))
+			b.WriteString(fmt.Sprintf("[%d] %s - %s\n%s\n", i+1, result.Title, result.URL, summarizeLine(firstNonEmpty(result.Snippet, result.Content), 120)))
 		}
 	}
-	b.WriteString("\n\n生成约束：\n")
+
+	b.WriteString("\n\nGeneration Constraints:\n")
+	b.WriteString("Use only references directly relevant to the current markdown and prompt topic. Ignore unrelated recalled material.\n")
 	if req != nil && req.UseWeb {
-		b.WriteString("以原始 Markdown 和本地 RAG 参考为主，联网搜索只作为补充背景。参考资料会由系统在响应元数据中单独展示，不要在正文输出参考资料、References、来源列表或引用附录。\n")
+		b.WriteString("Treat the original markdown and local references as primary evidence. Use web information only as supplementary background. Do not output references, source lists, or appendices in the final body.\n")
 	} else {
-		b.WriteString("当前未启用联网搜索，只基于原始 Markdown 和本地 RAG 参考生成。优先提炼主题、核心概念、过程步骤、应用场景和易错点，组织成完整的学习材料；当原始材料不足时，可以做解释性补充，但必须明确保持为学习性展开，不能伪造外部事实。参考资料会由系统在响应元数据中单独展示，不要在正文输出参考资料、References、来源列表或引用附录。\n")
+		b.WriteString("Web search is disabled. Generate only from the original markdown and directly relevant local references. When source material is sparse, expand with careful explanatory synthesis instead of inventing external facts. Do not output references, source lists, or appendices in the final body.\n")
 		if len(refs) == 0 {
-			b.WriteString("如果本地 RAG 参考为空，就直接围绕原始 Markdown 做结构化展开，避免空泛复述。\n")
+			b.WriteString("If there are no usable local references, structure the result directly from the original markdown.\n")
 		}
 	}
 	return b.String()
@@ -246,7 +399,7 @@ func buildGenerationContext(req *GenerationRequest, refs []GenerationReference, 
 
 func uniqueNonEmpty(values []string) []string {
 	seen := map[string]struct{}{}
-	var result []string
+	result := make([]string, 0, len(values))
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
@@ -259,4 +412,35 @@ func uniqueNonEmpty(values []string) []string {
 		result = append(result, value)
 	}
 	return result
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func isASCIIAlphaToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r > unicode.MaxASCII || !unicode.IsLetter(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIStopword(value string) bool {
+	switch value {
+	case "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is",
+		"it", "of", "on", "or", "that", "the", "their", "this", "to", "uses", "with":
+		return true
+	default:
+		return false
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type sysConfigRepository struct {
@@ -37,8 +38,35 @@ func (r *sysConfigRepository) Create(config *entity.SysConfig) error {
 	return r.db.Create(config).Error
 }
 
+// Upsert 创建或更新配置（存在则更新，不存在则创建）
+// 先永久删除已软删除的同名记录，避免唯一索引冲突导致更新了"已删除"的记录
+func (r *sysConfigRepository) Upsert(config *entity.SysConfig) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 永久删除已软删除的同名记录
+		if err := tx.Unscoped().Where(
+			"config_group = ? AND config_key = ? AND deleted_at IS NOT NULL",
+			config.ConfigGroup, config.ConfigKey,
+		).Delete(&entity.SysConfig{}).Error; err != nil {
+			return err
+		}
+		// 执行 upsert
+		return tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "config_group"}, {Name: "config_key"}},
+			DoUpdates: clause.AssignmentColumns([]string{"config_value", "enabled", "description", "updated_at"}),
+		}).Create(config).Error
+	})
+}
+
 func (r *sysConfigRepository) Update(config *entity.SysConfig) error {
-	return r.db.Save(config).Error
+	return r.db.Model(config).Updates(map[string]interface{}{
+		"config_value": config.ConfigValue,
+		"enabled":      config.Enabled,
+		"description":  config.Description,
+	}).Error
+}
+
+func (r *sysConfigRepository) Delete(id uint) error {
+	return r.db.Unscoped().Delete(&entity.SysConfig{}, id).Error
 }
 
 func (r *sysConfigRepository) GetConfigStatusSummary() ([]map[string]interface{}, error) {

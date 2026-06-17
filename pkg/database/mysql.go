@@ -27,8 +27,8 @@ func InitMySQL(cfg *config.MySQLConfig) (*gorm.DB, error) {
 
 	// GORM 配置
 	gormConfig := &gorm.Config{
-		// 启用外键约束
-		DisableForeignKeyConstraintWhenMigrating: false,
+		// 禁用外键约束（应用层手动管理级联删除，不依赖数据库外键）
+		DisableForeignKeyConstraintWhenMigrating: true,
 		// 跳过默认事务
 		SkipDefaultTransaction: true,
 	}

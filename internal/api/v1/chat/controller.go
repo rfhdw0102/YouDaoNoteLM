@@ -15,12 +15,14 @@ import (
 // Controller 对话控制器
 type Controller struct {
 	chatService service.ChatAgentService
+	convService service.ConversationService
 }
 
 // NewController 创建对话控制器
-func NewController(chatService service.ChatAgentService) *Controller {
+func NewController(chatService service.ChatAgentService, convService service.ConversationService) *Controller {
 	return &Controller{
 		chatService: chatService,
+		convService: convService,
 	}
 }
 
@@ -43,7 +45,7 @@ func (ctrl *Controller) Create(c *gin.Context) {
 		title = "新对话"
 	}
 
-	convID, err := ctrl.chatService.CreateConversation(c.Request.Context(), userID, req.NotebookID, title)
+	convID, err := ctrl.convService.CreateConversation(c.Request.Context(), userID, req.NotebookID, title)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -60,7 +62,7 @@ func (ctrl *Controller) List(c *gin.Context) {
 		return
 	}
 
-	convs, err := ctrl.chatService.ListConversations(c.Request.Context(), uint(notebookID))
+	convs, err := ctrl.convService.ListConversations(c.Request.Context(), uint(notebookID))
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -77,7 +79,7 @@ func (ctrl *Controller) Get(c *gin.Context) {
 		return
 	}
 
-	conv, err := ctrl.chatService.GetConversation(c.Request.Context(), uint(convID))
+	conv, err := ctrl.convService.GetConversation(c.Request.Context(), uint(convID))
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -100,7 +102,7 @@ func (ctrl *Controller) Update(c *gin.Context) {
 		return
 	}
 
-	if err := ctrl.chatService.UpdateConversation(c.Request.Context(), uint(convID), req.Title); err != nil {
+	if err := ctrl.convService.UpdateConversation(c.Request.Context(), uint(convID), req.Title); err != nil {
 		response.BizError(c, err)
 		return
 	}
@@ -116,7 +118,7 @@ func (ctrl *Controller) Delete(c *gin.Context) {
 		return
 	}
 
-	if err := ctrl.chatService.DeleteConversation(c.Request.Context(), uint(convID)); err != nil {
+	if err := ctrl.convService.DeleteConversation(c.Request.Context(), uint(convID)); err != nil {
 		response.BizError(c, err)
 		return
 	}
@@ -132,7 +134,7 @@ func (ctrl *Controller) GetMessages(c *gin.Context) {
 		return
 	}
 
-	msgs, err := ctrl.chatService.GetMessages(c.Request.Context(), uint(convID))
+	msgs, err := ctrl.convService.GetMessages(c.Request.Context(), uint(convID))
 	if err != nil {
 		response.BizError(c, err)
 		return

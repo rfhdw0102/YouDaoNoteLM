@@ -12,10 +12,11 @@ type AudioPreview struct {
 	UserID          uint   `json:"user_id"`          // 所属用户
 	NotebookID      uint   `json:"notebook_id"`      // 所属笔记本
 	FileName        string `json:"file_name"`        // 文件名
-	FilePath        string `json:"file_path"`        // 对象存储文件路径
+	FilePath        string `json:"file_path"`        // 对象存储路径
 	FileSize        int64  `json:"file_size"`        // 文件大小(字节)
-	TranscribedText string `json:"transcribed_text"` // ASR转写文本
+	TranscribedText string `json:"transcribed_text"` // ASR转写文本（转写完成后填充）
 	Status          string `json:"status"`           // 状态: pending/processing/ready/failed
+	ErrorMsg        string `json:"error_msg"`        // 失败原因
 	ExpiresAt       int64  `json:"expires_at"`       // 过期时间戳
 }
 

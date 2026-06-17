@@ -58,6 +58,11 @@ func Load(configPath string) (*Config, error) {
 		config.Email.From = config.Email.Username
 	}
 
+	// 校验所有必填配置项
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("配置校验失败: %w", err)
+	}
+
 	globalConfig = config
 	return config, nil
 }
@@ -68,6 +73,11 @@ func Get() *Config {
 		panic("配置未初始化，请先调用 Load() 加载配置")
 	}
 	return globalConfig
+}
+
+// SetForTest 测试专用：直接设置全局配置（跳过文件加载）
+func SetForTest(cfg *Config) {
+	globalConfig = cfg
 }
 
 // MustLoad 加载配置，失败时 panic

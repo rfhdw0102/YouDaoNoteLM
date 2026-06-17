@@ -200,8 +200,6 @@ func (s *searchService) resolveProviderConfig(userID uint, skipUserConfig bool) 
 		Timeout: time.Duration(max(1, s.bochaConfig.TimeoutSeconds)) * time.Second,
 	}
 
-	// skipUserConfig 为 true 时直接使用 YAML 全局配置，不查数据库。
-	// 用于生成 Agent 等场景，避免被 user_config 表中的记录阻断。
 	if skipUserConfig {
 		if providerCfg.APIKey == "" || providerCfg.BaseURL == "" {
 			return nil, external.SearchProviderConfig{}, nil, bizerrors.ErrSearchProviderNotConfigured

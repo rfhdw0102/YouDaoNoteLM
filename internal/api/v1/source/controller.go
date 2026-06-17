@@ -81,7 +81,7 @@ func (ctrl *Controller) Rename(c *gin.Context) {
 		Name string `json:"name" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -114,7 +114,7 @@ func (ctrl *Controller) Delete(c *gin.Context) {
 func (ctrl *Controller) BatchDelete(c *gin.Context) {
 	var req request.BatchDeleteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, response.ParseValidationErrors(err))
 		return
 	}
 
@@ -124,6 +124,25 @@ func (ctrl *Controller) BatchDelete(c *gin.Context) {
 	}
 
 	response.SuccessWithMessage(c, "批量删除成功", nil)
+}
+
+// DeleteFailed 删除所有失效来源
+func (ctrl *Controller) DeleteFailed(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	nbID64, err := strconv.ParseUint(c.Param("nbId"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "无效的笔记本ID")
+		return
+	}
+	nbID := uint(nbID64)
+
+	count, err := ctrl.sourceService.DeleteFailed(userID, nbID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, map[string]int64{"deleted_count": count})
 }
 
 // GetContent 获取Markdown内容
@@ -163,4 +182,54 @@ func (ctrl *Controller) GetOriginal(c *gin.Context) {
 		"content": content,
 		"type":    contentType,
 	})
+}
+
+// GetDownloadURL 获取文件下载链接
+func (ctrl *Controller) GetDownloadURL(c *gin.Context) {
+	id64, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "无效的ID")
+		return
+	}
+	id := uint(id64)
+
+	url, err := ctrl.sourceService.GetDownloadURL(id)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, map[string]string{"url": url})
+}
+
+// ReimportAll 重新导入用户所有未向量化的资料
+func (ctrl *Controller) ReimportAll(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	count, err := ctrl.sourceService.ReimportAll(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, map[string]int{"reimported_count": count})
+}
+
+// ReimportSelected 重新导入指定的未向量化资料
+func (ctrl *Controller) ReimportSelected(c *gin.Context) {
+	var req struct {
+		SourceIDs []uint `json:"source_ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "请选择要导入的资料")
+		return
+	}
+
+	count, err := ctrl.sourceService.ReimportSelected(req.SourceIDs)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, map[string]int{"reimported_count": count})
 }

@@ -4,7 +4,7 @@ package entity
 type ParentBlock struct {
 	BaseEntity
 	SourceID    uint   `gorm:"index;not null;comment:所属资料来源ID"`
-	Source      Source `gorm:"foreignKey:SourceID;constraint:OnDelete:CASCADE"`
+	Source      Source `gorm:"foreignKey:SourceID"`
 	Heading     string `gorm:"type:varchar(255);comment:父块标题/小标题"`
 	Level       int    `gorm:"not null;default:0;comment:标题层级(H1=1/H2=2/H3=3...)"`
 	ChapterPath string `gorm:"type:varchar(500);comment:完整章节路径"`

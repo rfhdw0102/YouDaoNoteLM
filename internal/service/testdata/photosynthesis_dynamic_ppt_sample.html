@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>光合作用 · 学习课件</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #eef3e8;
+            font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem 1rem;
+        }
+
+        .slider {
+            max-width: 1100px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 1.8rem;
+        }
+
+        section {
+            background: #ffffff;
+            border-radius: 32px;
+            box-shadow: 0 12px 30px rgba(60, 80, 40, 0.12);
+            padding: 2.8rem 3.2rem;
+            transition: transform 0.15s ease;
+            border: 1px solid rgba(140, 180, 100, 0.2);
+        }
+
+        section:first-child {
+            background: linear-gradient(145deg, #f6fbf0 0%, #e9f2db 100%);
+            border-bottom: 4px solid #8bb86b;
+        }
+
+        h1 {
+            font-size: 2.6rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: #1e3a0e;
+            margin-bottom: 0.6rem;
+            line-height: 1.2;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #2d5a1a;
+            margin-bottom: 1.4rem;
+            border-left: 5px solid #7bb05c;
+            padding-left: 1rem;
+        }
+
+        section:first-child h1 {
+            font-size: 3rem;
+            margin-bottom: 0.3rem;
+        }
+
+        section:first-child h2 {
+            border-left: none;
+            padding-left: 0;
+            font-size: 1.3rem;
+            color: #41692b;
+            font-weight: 500;
+            margin-bottom: 0.8rem;
+        }
+
+        ul {
+            list-style: none;
+            padding-left: 0.5rem;
+        }
+
+        li {
+            position: relative;
+            padding: 0.5rem 0 0.5rem 2rem;
+            font-size: 1.1rem;
+            line-height: 1.6;
+            color: #1f2f16;
+            border-bottom: 1px solid #f0f5ea;
+        }
+
+        li:last-child {
+            border-bottom: none;
+        }
+
+        li::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0.5rem;
+            font-size: 1.2rem;
+            opacity: 0.7;
+        }
+
+        .icon-sun li::before { content: "☀️"; }
+        .icon-cycle li::before { content: ""; }
+        .icon-leaf li::before { content: ""; }
+        .icon-lab li::before { content: ""; }
+        .icon-warning li::before { content: "⚠️"; }
+        .icon-check li::before { content: "✅"; }
+
+        .tag {
+            display: inline-block;
+            background: #e5f0db;
+            color: #1f4a0b;
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 0.2rem 1rem;
+            border-radius: 30px;
+            letter-spacing: 0.3px;
+            margin-right: 0.5rem;
+        }
+
+        .highlight {
+            background: #faffed;
+            border-left: 4px solid #7bb05c;
+            padding: 0.8rem 1.4rem;
+            border-radius: 12px;
+            margin: 1.2rem 0;
+            color: #1a3a0a;
+            font-weight: 500;
+        }
+
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.2rem;
+            margin-top: 1rem;
+        }
+
+        .card {
+            background: #f9fcf6;
+            border-radius: 20px;
+            padding: 1.4rem 1.8rem;
+            flex: 1 1 200px;
+            border: 1px solid #dce8d0;
+            box-shadow: 0 2px 8px rgba(100, 130, 70, 0.06);
+        }
+
+        .card h3 {
+            font-size: 1.2rem;
+            color: #1f4a0b;
+            margin-bottom: 0.6rem;
+        }
+
+        .card p {
+            font-size: 0.98rem;
+            color: #2f4025;
+            line-height: 1.5;
+        }
+
+        @media (max-width: 640px) {
+            section {
+                padding: 1.8rem 1.5rem;
+                border-radius: 24px;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            section:first-child h1 {
+                font-size: 2.2rem;
+            }
+
+            li {
+                font-size: 1rem;
+                padding-left: 1.8rem;
+            }
+
+            .row {
+                flex-direction: column;
+            }
+        }
+
+        .dir-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-top: 0.8rem;
+        }
+
+        .dir-item {
+            background: #f4f9ee;
+            padding: 0.8rem 1rem;
+            border-radius: 16px;
+            text-align: center;
+            font-weight: 600;
+            color: #1e4a0c;
+            border: 1px solid #d4e4c4;
+            font-size: 1rem;
+        }
+
+        .dir-item span {
+            display: block;
+            font-size: 1.6rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .footnote {
+            margin-top: 1.2rem;
+            font-size: 0.9rem;
+            color: #5a7350;
+            background: #f2f8ec;
+            padding: 0.6rem 1.4rem;
+            border-radius: 40px;
+            display: inline-block;
+        }
+
+        .evidence {
+            background: #f0f6ea;
+            border-radius: 16px;
+            padding: 1rem 1.6rem;
+            margin-top: 1.4rem;
+            font-size: 0.95rem;
+            color: #2d4d1e;
+            border: 1px dashed #b8d4a0;
+        }
+
+        .evidence strong {
+            color: #1e4a0b;
+        }
+    </style>
+</head>
+<body>
+<div class="slider">
+
+    <section>
+        <h1>光合作用</h1>
+        <h2>从光能到化学能的生命引擎</h2>
+        <ul class="icon-leaf">
+            <li>基于笔记整理的学习材料</li>
+            <li>核心内容：光反应 · 卡尔文循环 · 影响因素</li>
+            <li>适用对象：中学生物 / 大学通识 · 自学复习</li>
+        </ul>
+        <div class="footnote">绿色植物 · 藻类 · 光合细菌</div>
+    </section>
+
+    <section>
+        <h2>目录</h2>
+        <div class="dir-list">
+            <div class="dir-item"><span></span>背景与目标</div>
+            <div class="dir-item"><span></span>概念框架</div>
+            <div class="dir-item"><span>⚙️</span>机制与流程</div>
+            <div class="dir-item"><span></span>案例与应用</div>
+            <div class="dir-item"><span>⚠️</span>易错辨析</div>
+            <div class="dir-item"><span></span>总结复盘</div>
+        </div>
+        <div class="evidence">
+            <strong>素材来源：</strong> 本地笔记 · 光反应、卡尔文循环、影响因素；联网参考补充实验背景（希尔反应、鲁宾-卡门、阿尔农）。
+        </div>
+    </section>
+
+    <section>
+        <h2>背景与目标</h2>
+        <ul class="icon-sun">
+            <li>光合作用是地球生命能量流动的起点——将光能转化为化学能，驱动碳循环与氧气生成</li>
+            <li>绿色植物、藻类和光合细菌利用叶绿体（或类似结构）完成这一过程</li>
+            <li><strong>学习目标①</strong> 理解光反应与卡尔文循环的分工协作关系</li>
+            <li><strong>学习目标②</strong> 掌握光照强度、CO₂浓度、温度对光合效率的影响机制</li>
+            <li><strong>学习目标③</strong> 能够联系农业生产、温室调控和生态碳汇等实际应用</li>
+        </ul>
+        <div class="highlight">
+            光合作用总反应式：6CO₂ + 12H₂O → C₆H₁₂O₆ + 6O₂ + 6H₂O（光能驱动）
+        </div>
+        <div class="evidence">
+            <strong>补充：</strong> 1937年希尔反应证明水的光解与CO₂还原可分开进行；1941年鲁宾-卡门用¹⁸O标记确认氧气全部来源于水。
+        </div>
+    </section>
+
+    <section>
+        <h2>概念框架 · 光合作用三大模块</h2>
+        <div class="row">
+            <div class="card">
+                <h3>☀️ 光反应</h3>
+                <p>在<strong>类囊体膜</strong>上发生，依赖光照。<br>叶绿素吸收光能 → 水光解 → 产生 ATP + NADPH + O₂。</p>
+            </div>
+            <div class="card">
+                <h3>卡尔文循环</h3>
+                <p>在<strong>叶绿体基质</strong>中进行，不直接需光。<br>利用 ATP 和 NADPH 固定 CO₂，最终合成糖类（如葡萄糖）。</p>
+            </div>
+            <div class="card">
+                <h3>影响因素</h3>
+                <p><strong>光照强度、CO₂浓度、温度</strong> 三者协同调控光合速率，存在短板效应。</p>
+            </div>
+        </div>
+        <ul class="icon-cycle">
+            <li><strong>光反应 ↔ 卡尔文循环</strong>：光反应为暗反应提供 ATP（能量）和 NADPH（还原力）；暗反应消耗光反应产物，推动循环持续</li>
+            <li>三者相互联系，缺一不可——光反应受阻则暗反应无能量来源；暗反应受阻则光反应产物积累，导致反馈抑制</li>
+        </ul>
+        <div class="evidence">
+            <strong>本地笔记依据：</strong> 光反应将水分解并产生 ATP 和 NADPH；卡尔文循环固定 CO₂ 合成糖类；三大因子影响效率。
+        </div>
+    </section>
+
+    <section>
+        <h2>⚙️ 机制与流程 · 光反应详解</h2>
+        <ul class="icon-sun">
+            <li><strong>① 光能的吸收与传递</strong>：叶绿素（主要吸收红光和蓝紫光）捕获光子，激发电子进入高能态</li>
+            <li><strong>② 水的光解</strong>：2H₂O → 4H⁺ + 4e⁻ + O₂↑（氧气释放；电子用于补充叶绿素失去的电子）</li>
+            <li><strong>③ 电子传递与光合磷酸化</strong>：高能电子经电子传递链 → 驱动 H⁺ 跨膜运输 → 化学渗透合成 ATP</li>
+            <li><strong>④ NADPH 形成</strong>：电子最终传递给 NADP⁺，与 H⁺ 结合生成 NADPH（还原力）</li>
+        </ul>
+        <div class="highlight">
+            关键物质：ATP（能量货币）和 NADPH（还原剂）在光反应中生成，直接供给卡尔文循环。
+        </div>
+        <div style="margin-top:1.2rem;">
+            <h2 style="font-size:1.3rem; border-left-color:#9bcd7a;">卡尔文循环（C3 循环）</h2>
+            <ul class="icon-cycle">
+                <li><strong>① 羧化阶段</strong>：CO₂ + RuBP（五碳化合物）→ 2 × 3-磷酸甘油酸（3-PGA）——由 Rubisco 催化</li>
+                <li><strong>② 还原阶段</strong>：3-PGA 在 ATP 和 NADPH 作用下还原为 3-磷酸甘油醛（G3P）</li>
+                <li><strong>③ 再生阶段</strong>：大部分 G3P 用于再生 RuBP，少部分合成葡萄糖等有机物</li>
+            </ul>
+            <div class="evidence">
+                <strong>实验支撑：</strong> 1954年阿尔农发现光照下叶绿体可合成 ATP；1957年证实该过程与水的光解相伴随。光反应与 CO₂ 固定可分离（希尔反应）。
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2>⚡ 光反应与卡尔文循环的能量耦联</h2>
+        <ul class="icon-leaf">
+            <li><strong>ATP 和 NADPH</strong> 是连接两个阶段的“能量货币”与“还原力载体”</li>
+            <li>光反应产生的 ATP 和 NADPH 在卡尔文循环中被消耗，转化为 ADP、Pi 和 NADP⁺，重新返回光反应</li>
+            <li>这种循环耦联保证了光合作用的持续进行——光反应为“暗反应”提供燃料，暗反应为光反应提供再生底物</li>
+            <li><strong>氧气全部来源于水</strong>（希尔反应 + 鲁宾-卡门同位素标记实验证实），与 CO₂ 中的氧无关</li>
+        </ul>
+        <div class="card" style="background:#ebf5e0; margin-top:1rem;">
+            <h3>记忆要点</h3>
+            <p>光反应：类囊体 · 需光 · 产 ATP、NADPH、O₂<br>
+            卡尔文循环：基质 · 不需光（但依赖光产物） · 耗 ATP、NADPH · 固碳成糖</p>
+        </div>
+    </section>
+
+    <section>
+        <h2>案例与应用 · 光合作用在真实世界</h2>
+        <ul class="icon-leaf">
+            <li><strong>农业增产</strong>：合理密植（充分利用光照）、大棚补充 CO₂（气肥）、延长光照时间或补光</li>
+            <li><strong>温室调控</strong>：控制温度在植物最适光合温度（如 25~30℃），避免高温导致的光抑制和 Rubisco 失活</li>
+            <li><strong>植物工厂</strong>：使用 LED 灯精准调节光质（红光 + 蓝光组合）和光周期，最大化能量转化效率</li>
+            <li><strong>碳达峰与碳中和</strong>：利用造林、草地恢复等提升光合作用固碳能力，发展林业碳汇抵消碳排放</li>
+        </ul>
+        <div class="evidence">
+            <strong>补充解释：</strong> “光抑制”指过强光照导致光反应系统受损，实际光合速率反而下降；适当遮阴或调控光质可缓解。
+        </div>
+        <div class="highlight">
+            光合作用是全球碳循环的核心——每年约固定 2×10¹¹ 吨碳，维持大气 O₂/CO₂ 平衡。
+        </div>
+    </section>
+
+    <section>
+        <h2>⚠️ 易错辨析 · 常见误区澄清</h2>
+        <ul class="icon-warning">
+            <li><strong>❌ “暗反应”= 黑暗中反应？</strong> 卡尔文循环虽不直接需光，但依赖光反应产物（ATP、NADPH）。无光时产物耗尽，循环停止；“暗反应”应理解为“不直接依赖光”</li>
+            <li><strong>❌ 光合作用释放的氧气来自 CO₂？</strong> 同位素示踪（鲁宾-卡门，¹⁸O 标记 H₂O 和 CO₂）明确证明：氧气全部来源于水，而非 CO₂</li>
+            <li><strong>❌ 叶绿体只进行“暗反应”？</strong> 叶绿体是完整场所：光反应在类囊体，暗反应在基质，两者相互协作，缺一不可</li>
+            <li><strong>❌ ATP 和 NADPH 只是能量载体？</strong> NADPH 还提供<strong>还原力</strong>，直接参与 CO₂ 还原为糖类的过程；既是能量也是电子供体</li>
+            <li><strong>❌ 光照越强光合速率越快？</strong> 存在光饱和点；超过最适光强后，光抑制导致效率下降，甚至损伤光合系统</li>
+        </ul>
+        <div class="evidence">
+            <strong>小结：</strong> 以上误区在考试和实际理解中高频出现，牢记实验证据和概念边界可有效避免。
+        </div>
+    </section>
+
+    <section>
+        <h2>总结复盘 · 光合作用核心线索</h2>
+        <ul class="icon-check">
+            <li><strong>总反应式</strong>：6CO₂ + 12H₂O → C₆H₁₂O₆ + 6O₂ + 6H₂O（光能驱动，叶绿体）</li>
+            <li><strong>光反应</strong>：类囊体膜 · 光 → ATP + NADPH + O₂（水的光解）</li>
+            <li><strong>卡尔文循环</strong>：基质 · CO₂ → 糖类（消耗 ATP 和 NADPH）</li>
+            <li><strong>耦联纽带</strong>：ATP 和 NADPH 在两个阶段间循环使用</li>
+            <li><strong>三大影响因子</strong>：光照强度、CO₂浓度、温度 —— 存在短板效应，实际光合速率受最低因子限制</li>
+            <li><strong>应用延伸</strong>：农业增产、温室调控、植物工厂、碳汇工程</li>
+        </ul>
+        <div class="highlight" style="margin-top:1.2rem;">
+            理解光合作用是生态学、农学、环境科学和气候行动的共通基础 —— 从分子到全球，生命的光合引擎永不停歇。
+        </div>
+        <div class="footnote" style="margin-top:1.2rem; background:#e2edd6;">
+            ✅ 基于本地笔记 · 联网补充实验背景 · 学习课件 v1.0
+        </div>
+    </section>
+
+</div>
+</body>
+</html>

@@ -9,6 +9,7 @@ type UserResponse struct {
 	Email     string    `json:"email"`
 	Nickname  string    `json:"nickname"`
 	Avatar    string    `json:"avatar"`
+	Role      string    `json:"role"`
 	Status    int       `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

@@ -15,9 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	VectorDim = 2048 // 默认维度，实际由 embedder 决定
-)
+// VectorDim 已移除硬编码常量，维度由用户配置的 embedder 决定
 
 // UserCollectionName 返回用户专属的 Milvus Collection 名称
 func UserCollectionName(userID uint) string {
@@ -60,7 +58,7 @@ func NewMilvusWriter(ctx context.Context, cfg MilvusIndexerConfig) (*MilvusWrite
 }
 
 // EnsureCollection 确保用户专属 Collection 存在，不存在则创建
-func (w *MilvusWriter) EnsureCollection(ctx context.Context, userID uint) error {
+func (w *MilvusWriter) EnsureCollection(ctx context.Context, userID uint, vectorDim int) error {
 	collName := UserCollectionName(userID)
 
 	has, err := w.client.HasCollection(ctx, collName)
@@ -85,14 +83,14 @@ func (w *MilvusWriter) EnsureCollection(ctx context.Context, userID uint) error 
 				Name:     "content",
 				DataType: entity.FieldTypeVarChar,
 				TypeParams: map[string]string{
-					"max_length": "8192",
+					"max_length": "32768",
 				},
 			},
 			{
 				Name:     "vector",
 				DataType: entity.FieldTypeFloatVector,
 				TypeParams: map[string]string{
-					"dim": fmt.Sprintf("%d", VectorDim),
+					"dim": fmt.Sprintf("%d", vectorDim),
 				},
 			},
 			{
@@ -155,66 +153,6 @@ func (w *MilvusWriter) EnsureCollection(ctx context.Context, userID uint) error 
 	return nil
 }
 
-// Store 将文档和对应的向量写入用户专属 Collection
-// Deprecated: 使用 StoreWithSparse 代替，新 collection 包含 sparse_vector 字段
-func (w *MilvusWriter) Store(ctx context.Context, userID uint, docs []*schema.Document, vectors [][]float32) error {
-	if len(docs) == 0 || len(docs) != len(vectors) {
-		return fmt.Errorf("文档和向量数量不匹配: docs=%d, vectors=%d", len(docs), len(vectors))
-	}
-
-	n := len(docs)
-	contents := make([]string, n)
-	vectorsData := make([][]float32, n)
-	parentBlockIDs := make([]int64, n)
-	sourceIDs := make([]int64, n)
-	chunkTypes := make([]string, n)
-	metadatas := make([]string, n)
-
-	for i, doc := range docs {
-		contents[i] = doc.Content
-		vectorsData[i] = vectors[i]
-
-		if pid, ok := doc.MetaData["parent_index"].(int); ok {
-			parentBlockIDs[i] = int64(pid)
-		}
-		if sid, ok := doc.MetaData["source_id"].(uint); ok {
-			sourceIDs[i] = int64(sid)
-		}
-		if ct, ok := doc.MetaData["chunk_type"].(string); ok {
-			chunkTypes[i] = ct
-		}
-		metaJSON, err := json.Marshal(doc.MetaData)
-		if err != nil {
-			return fmt.Errorf("序列化文档元数据失败: %w", err)
-		}
-		metadatas[i] = string(metaJSON)
-	}
-
-	// 按 batch 写入
-	batchSize := 100
-	for start := 0; start < n; start += batchSize {
-		end := start + batchSize
-		if end > n {
-			end = n
-		}
-
-		columns := []entity.Column{
-			entity.NewColumnVarChar("content", contents[start:end]),
-			entity.NewColumnFloatVector("vector", VectorDim, vectorsData[start:end]),
-			entity.NewColumnInt64("parent_block_id", parentBlockIDs[start:end]),
-			entity.NewColumnInt64("source_id", sourceIDs[start:end]),
-			entity.NewColumnVarChar("chunk_type", chunkTypes[start:end]),
-			entity.NewColumnVarChar("metadata", metadatas[start:end]),
-		}
-
-		if _, err := w.client.Insert(ctx, UserCollectionName(userID), "", columns...); err != nil {
-			return fmt.Errorf("写入 Milvus 失败 (batch %d-%d): %w", start, end, err)
-		}
-	}
-
-	return nil
-}
-
 // mapToSparseEmbedding 将 map[int32]float32 转换为 Milvus SDK 的 SparseEmbedding
 func mapToSparseEmbedding(m map[int32]float32) (entity.SparseEmbedding, error) {
 	positions := make([]uint32, 0, len(m))
@@ -240,8 +178,11 @@ func mapsToSparseEmbeddings(maps []map[int32]float32) ([]entity.SparseEmbedding,
 }
 
 // StoreWithSparse 将文档、dense vector 和 sparse vector 写入用户专属 Collection
-func (w *MilvusWriter) StoreWithSparse(ctx context.Context, userID uint, docs []*schema.Document, denseVectors [][]float32, sparseVectors []map[int32]float32) error {
-	if len(docs) == 0 || len(docs) != len(denseVectors) || len(docs) != len(sparseVectors) {
+func (w *MilvusWriter) StoreWithSparse(ctx context.Context, userID uint, docs []*schema.Document, denseVectors [][]float32, sparseVectors []map[int32]float32, vectorDim int) error {
+	if len(docs) == 0 {
+		return fmt.Errorf("没有可写入的文档（内容可能为空或解析结果为空）")
+	}
+	if len(docs) != len(denseVectors) || len(docs) != len(sparseVectors) {
 		return fmt.Errorf("文档、dense向量和sparse向量数量不匹配: docs=%d, dense=%d, sparse=%d", len(docs), len(denseVectors), len(sparseVectors))
 	}
 
@@ -253,11 +194,19 @@ func (w *MilvusWriter) StoreWithSparse(ctx context.Context, userID uint, docs []
 	chunkTypes := make([]string, n)
 	metadatas := make([]string, n)
 
+	const maxContentLen = 32768
 	for i, doc := range docs {
-		contents[i] = doc.Content
+		c := doc.Content
+		if len(c) > maxContentLen {
+			c = c[:maxContentLen]
+		}
+		contents[i] = c
 		denseData[i] = denseVectors[i]
 
-		if pid, ok := doc.MetaData["parent_index"].(int); ok {
+		// 优先使用真实的 parent_block_id（MySQL 自增 ID），回退到 parent_index
+		if pid, ok := doc.MetaData["parent_block_id"].(uint); ok {
+			parentBlockIDs[i] = int64(pid)
+		} else if pid, ok := doc.MetaData["parent_index"].(int); ok {
 			parentBlockIDs[i] = int64(pid)
 		}
 		if sid, ok := doc.MetaData["source_id"].(uint); ok {
@@ -291,7 +240,7 @@ func (w *MilvusWriter) StoreWithSparse(ctx context.Context, userID uint, docs []
 
 		columns := []entity.Column{
 			entity.NewColumnVarChar("content", contents[start:end]),
-			entity.NewColumnFloatVector("vector", VectorDim, denseData[start:end]),
+			entity.NewColumnFloatVector("vector", vectorDim, denseData[start:end]),
 			entity.NewColumnInt64("parent_block_id", parentBlockIDs[start:end]),
 			entity.NewColumnInt64("source_id", sourceIDs[start:end]),
 			entity.NewColumnVarChar("chunk_type", chunkTypes[start:end]),
@@ -364,6 +313,31 @@ func hashToIndex(word string) int32 {
 func (w *MilvusWriter) DeleteBySourceID(ctx context.Context, userID uint, sourceID uint) error {
 	expr := fmt.Sprintf(`source_id == %d`, sourceID)
 	return w.client.Delete(ctx, UserCollectionName(userID), "", expr)
+}
+
+// DropUserCollection 删除用户的整个 Milvus Collection
+// 注意：此操作不可逆，会永久删除该用户的所有向量数据
+func (w *MilvusWriter) DropUserCollection(ctx context.Context, userID uint) error {
+	collName := UserCollectionName(userID)
+
+	// 先检查集合是否存在
+	has, err := w.client.HasCollection(ctx, collName)
+	if err != nil {
+		return fmt.Errorf("检查 Collection 失败: %w", err)
+	}
+	if !has {
+		return nil // 集合不存在，无需删除
+	}
+
+	if err := w.client.DropCollection(ctx, collName); err != nil {
+		return fmt.Errorf("删除 Collection 失败: %w", err)
+	}
+
+	logger.Info("成功删除用户 Milvus Collection",
+		zap.Uint("user_id", userID),
+		zap.String("collection", collName),
+	)
+	return nil
 }
 
 // MilvusSearchResult Milvus 检索结果
@@ -518,11 +492,6 @@ func parseSearchResults(results []milvusclient.SearchResult) []MilvusSearchResul
 		}
 	}
 	return parsed
-}
-
-// Close 关闭 Milvus 客户端
-func (w *MilvusWriter) Close() {
-	w.client.Close()
 }
 
 // WrapDocuments 为 ChildChunk Document 添加 source_id 元数据

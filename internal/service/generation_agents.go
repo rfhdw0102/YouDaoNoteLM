@@ -261,7 +261,7 @@ func (a *pptGenerationAgent) generatePPTDraft(ctx context.Context, state pptChai
 		content = strings.TrimSpace(generated)
 	}
 	if content == "" {
-		content = renderPPTSlides(state.expanded)
+		content = renderStyledPPTSlides(state.expanded)
 		fallbackUsed = true
 	}
 	repairPlan := state.expanded
@@ -269,9 +269,10 @@ func (a *pptGenerationAgent) generatePPTDraft(ctx context.Context, state pptChai
 }
 
 func (a *pptGenerationAgent) repairPPTStructure(ctx context.Context, draft generationDraft) (generationDraft, error) {
+	draft.content = sanitizePPTReferenceSections(draft.content)
 	if pptNeedsStructureRepair(draft.content) {
 		if draft.pptRepairPlan != nil {
-			draft.content = renderPPTSlides(*draft.pptRepairPlan)
+			draft.content = renderStyledPPTSlides(*draft.pptRepairPlan)
 		} else {
 			draft.content = a.fallback(draft.input)
 		}
@@ -348,7 +349,7 @@ func (a *pptGenerationAgent) generateOutline(ctx context.Context, input generati
 
 func fallbackPPTContent(input generationAgentInput) string {
 	analysis := analyzeLearningContent(input)
-	return renderPPTSlides(expandPPTContent(planPPTOutline(analysis), analysis))
+	return renderStyledPPTSlides(expandPPTContent(planPPTOutline(analysis), analysis))
 }
 func fallbackPPTOutline(input generationAgentInput) string {
 	title := extractTitle(input.Request.Markdown, "演示文稿")
@@ -598,6 +599,79 @@ func renderPPTSlides(plan pptOutlinePlan) string {
 		}
 		b.WriteString("</section>\n")
 	}
+	return strings.TrimSpace(b.String())
+}
+
+func renderStyledPPTSlides(plan pptOutlinePlan) string {
+	var b strings.Builder
+	b.WriteString(`<style>
+body { background: #eef3e8; font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; }
+.ppt-deck { display: flex; flex-direction: column; gap: 1.6rem; }
+.ppt-slide { background: #ffffff; border-radius: 32px; border: 1px solid #dce8d0; padding: 2.4rem 2.8rem; box-shadow: 0 12px 30px rgba(60, 80, 40, 0.12); }
+.ppt-slide:first-child { background: linear-gradient(145deg, #f6fbf0 0%, #e9f2db 100%); border-bottom: 4px solid #8bb86b; }
+.section-number { display: inline-block; margin-bottom: 0.8rem; color: #5a7350; font-size: 0.9rem; font-weight: 700; }
+h1 { margin: 0 0 0.4rem; font-size: 3rem; font-weight: 700; color: #1e3a0e; }
+h2 { margin: 0 0 1.2rem; font-size: 1.5rem; font-weight: 600; color: #2d5a1a; border-left: 5px solid #7bb05c; padding-left: 1rem; }
+.ppt-slide:first-child h2 { border-left: none; padding-left: 0; font-size: 1.3rem; color: #41692b; font-weight: 500; }
+ul { list-style: none; margin: 0; padding-left: 0.4rem; }
+li { padding: 0.5rem 0 0.5rem 1.8rem; border-bottom: 1px solid #f0f5ea; color: #1f2f16; font-size: 1.08rem; line-height: 1.6; }
+li:last-child { border-bottom: none; }
+.dir-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.9rem; margin-top: 0.6rem; }
+.dir-item { background: #f4f9ee; border: 1px solid #d4e4c4; border-radius: 16px; padding: 0.9rem 1rem; text-align: center; color: #1e4a0c; font-weight: 600; }
+.highlight-box { margin-top: 1.1rem; background: #faffed; border-left: 4px solid #7bb05c; border-radius: 14px; padding: 0.9rem 1.3rem; color: #1a3a0a; font-weight: 500; }
+.footnote { display: inline-block; margin-top: 1.2rem; background: #f2f8ec; color: #5a7350; border-radius: 999px; padding: 0.6rem 1.2rem; font-size: 0.92rem; }
+.evidence { margin-top: 1.2rem; background: #f0f6ea; border: 1px dashed #b8d4a0; border-radius: 16px; padding: 1rem 1.4rem; color: #2d4d1e; }
+</style>`)
+	b.WriteString(`<div class="ppt-deck">`)
+	for i, slide := range plan.Slides {
+		b.WriteString(`<section class="ppt-slide">`)
+		b.WriteString(`<span class="section-number">`)
+		b.WriteString(fmt.Sprintf("%02d", i+1))
+		b.WriteString(`</span>`)
+		if i == 0 {
+			b.WriteString("<h1>")
+			b.WriteString(htmlEscape(plan.Title))
+			b.WriteString("</h1>")
+			if strings.TrimSpace(slide.Title) != "" {
+				b.WriteString("<h2>")
+				b.WriteString(htmlEscape(slide.Title))
+				b.WriteString("</h2>")
+			}
+		} else {
+			b.WriteString("<h2>")
+			b.WriteString(htmlEscape(slide.Title))
+			b.WriteString("</h2>")
+		}
+		if i == 1 && len(slide.Bullets) > 0 {
+			b.WriteString(`<div class="dir-list">`)
+			for _, bullet := range slide.Bullets {
+				b.WriteString(`<div class="dir-item">`)
+				b.WriteString(htmlEscape(bullet))
+				b.WriteString(`</div>`)
+			}
+			b.WriteString(`</div>`)
+		} else if len(slide.Bullets) > 0 {
+			b.WriteString("<ul>")
+			for _, bullet := range slide.Bullets {
+				b.WriteString("<li>")
+				b.WriteString(htmlEscape(bullet))
+				b.WriteString("</li>")
+			}
+			b.WriteString("</ul>")
+		}
+		switch {
+		case i == 0:
+			b.WriteString(`<div class="footnote">Dynamic HTML fallback deck with editable PPT blocks</div>`)
+		case i == 1:
+			b.WriteString(`<div class="evidence">Fallback HTML keeps semantic cards and block styling so PPT export stays visually structured.</div>`)
+		case strings.TrimSpace(slide.Purpose) != "":
+			b.WriteString(`<div class="highlight-box">`)
+			b.WriteString(htmlEscape(slide.Purpose))
+			b.WriteString(`</div>`)
+		}
+		b.WriteString("</section>\n")
+	}
+	b.WriteString(`</div>`)
 	return strings.TrimSpace(b.String())
 }
 

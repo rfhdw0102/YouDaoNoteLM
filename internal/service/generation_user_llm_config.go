@@ -23,17 +23,21 @@ type userLLMConfigGenerationService struct {
 }
 
 func NewGenerationServiceWithUserLLMConfig(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader) GenerationService {
-	return newGenerationServiceWithUserLLMChatModelFactory(retriever, search, repo, func(ctx context.Context, cfg *entity.UserLLMConfig) (model.BaseChatModel, error) {
+	return NewGenerationServiceWithUserLLMConfigAndMemory(retriever, search, repo, nil)
+}
+
+func NewGenerationServiceWithUserLLMConfigAndMemory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memory GenerationMemoryStore) GenerationService {
+	return newGenerationServiceWithUserLLMChatModelFactory(retriever, search, repo, memory, func(ctx context.Context, cfg *entity.UserLLMConfig) (model.BaseChatModel, error) {
 		return llm.NewChatModel(ctx, cfg)
 	})
 }
 
-func newGenerationServiceWithUserLLMChatModelFactory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, factory chatModelFactory) GenerationService {
+func newGenerationServiceWithUserLLMChatModelFactory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memory GenerationMemoryStore, factory chatModelFactory) GenerationService {
 	return &userLLMConfigGenerationService{
 		repo:    repo,
 		factory: factory,
 		base: func(model GenerationModel) GenerationService {
-			return NewGenerationService(retriever, search, model)
+			return NewGenerationServiceWithMemory(retriever, search, model, memory)
 		},
 	}
 }
