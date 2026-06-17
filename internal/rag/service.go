@@ -304,6 +304,16 @@ func (s *ingestionService) DropUserCollection(ctx context.Context, userID uint) 
 		)
 		return fmt.Errorf("删除用户 Collection 失败: %w", err)
 	}
+
+	// 重置用户所有资料的向量化状态，使其可以重新导入
+	if err := s.sourceRepo.ResetVectorizedByUserID(userID); err != nil {
+		logger.Error("重置用户资料向量化状态失败",
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+		)
+		// 不返回错误，因为 collection 已经删除成功
+	}
+
 	logger.Info("删除用户 Milvus Collection 成功",
 		zap.Uint("user_id", userID),
 	)

@@ -35,5 +35,6 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 		cfg.POST("/embedding", ctrl.CreateEmbeddingConfig)
 		cfg.PUT("/embedding/:id", ctrl.UpdateEmbeddingConfig)
 		cfg.DELETE("/embedding/:id", ctrl.DeleteEmbeddingConfig)
+		cfg.DELETE("/embedding/:id/collection", ctrl.DeleteEmbeddingAndCollection)
 	}
 }

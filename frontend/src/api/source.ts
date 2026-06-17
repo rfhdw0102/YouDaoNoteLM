@@ -83,3 +83,15 @@ export async function getSourceDownloadURL(nbId: number, id: number): Promise<Ap
   const res = await client.get<ApiResponse<{ url: string }>>(`/notebooks/${nbId}/sources/${id}/download`);
   return res.data;
 }
+
+// 9. Reimport all unvectorized sources
+export async function reimportAll(): Promise<ApiResponse<{ reimported_count: number }>> {
+  const res = await client.post<ApiResponse<{ reimported_count: number }>>('/sources/reimport-all');
+  return res.data;
+}
+
+// 10. Reimport specific sources by IDs
+export async function reimportSources(sourceIds: number[]): Promise<ApiResponse<{ reimported_count: number }>> {
+  const res = await client.post<ApiResponse<{ reimported_count: number }>>('/sources/reimport', { source_ids: sourceIds });
+  return res.data;
+}

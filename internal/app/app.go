@@ -278,6 +278,7 @@ func (a *App) initDependencies() {
 		convSvc,
 		configSvc,
 		youdaoSvc,
+		ingestionSvc,
 	)
 }
 

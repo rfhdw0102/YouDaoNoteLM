@@ -14,6 +14,7 @@ import (
 	userconfig "YoudaoNoteLm/internal/api/v1/user_config"
 	youdao "YoudaoNoteLm/internal/api/v1/youdao"
 	"YoudaoNoteLm/internal/middleware"
+	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -54,6 +55,7 @@ func NewRouter(
 	convService service.ConversationService,
 	configService service.ConfigService,
 	youdaoService service.YoudaoService,
+	ingestionService rag.IngestionService,
 ) *Router {
 	return &Router{
 		userCtrl:       user.NewController(userService, tokenBlacklist),
@@ -68,7 +70,7 @@ func NewRouter(
 		adminCtrl:      admin.NewController(adminService),
 		providerCtrl:   providers.NewController(configService),
 		youdaoCtrl:     youdao.NewController(youdaoService),
-		userConfigCtrl: userconfig.NewController(userConfigService, tokenBlacklist),
+		userConfigCtrl: userconfig.NewController(userConfigService, tokenBlacklist, ingestionService),
 	}
 }
 
