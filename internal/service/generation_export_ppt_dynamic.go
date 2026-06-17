@@ -1,6 +1,7 @@
 package service
 
 import (
+	stdhtml "html"
 	"os"
 	"path/filepath"
 	"sort"
@@ -50,9 +51,15 @@ type pptHTMLBlock struct {
 	Kind     string
 	Layout   string
 	Text     string
+	Runs     []pptHTMLTextRun
 	Style    pptStyle
 	Classes  map[string]bool
 	Children []pptHTMLBlock
+}
+
+type pptHTMLTextRun struct {
+	Text  string
+	Style pptStyle
 }
 
 type pptCSSRule struct {
@@ -386,27 +393,32 @@ func parseHTMLBlocks(node *html.Node, doc *pptHTMLDocument, inheritedText pptSty
 
 	switch tag {
 	case "h1", "h2", "h3", "p":
-		text := normalizePPTExportText(extractNodeText(node))
+		runs := extractInlineTextRuns(node, doc, style)
+		text := textFromRuns(runs)
 		if text == "" {
 			return nil
 		}
 		return []pptHTMLBlock{{
 			Kind:    tag,
 			Text:    text,
+			Runs:    runs,
 			Style:   style,
 			Classes: classes,
 		}}
 	case "ul", "ol":
 		return parseHTMLList(node, doc, inheritTextStyle(style), tag == "ol")
 	case "li":
-		text := normalizePPTExportText(extractNodeText(node))
+		runs := extractInlineTextRuns(node, doc, style)
+		text := textFromRuns(runs)
 		if text == "" {
 			return nil
 		}
 		prefix := "- "
+		runs = prependInlineRunPrefix(runs, prefix, style)
 		return []pptHTMLBlock{{
 			Kind:    "list-item",
 			Text:    prefix + text,
+			Runs:    runs,
 			Style:   style,
 			Classes: classes,
 		}}
@@ -515,7 +527,8 @@ func parseHTMLList(node *html.Node, doc *pptHTMLDocument, inheritedText pptStyle
 			continue
 		}
 		style := computeNodeStyle(child, inheritedText, doc)
-		text := normalizePPTExportText(extractNodeText(child))
+		runs := extractInlineTextRuns(child, doc, style)
+		text := textFromRuns(runs)
 		if text == "" {
 			continue
 		}
@@ -523,15 +536,140 @@ func parseHTMLList(node *html.Node, doc *pptHTMLDocument, inheritedText pptStyle
 		if ordered {
 			prefix = strconv.Itoa(index) + ". "
 		}
+		runs = prependInlineRunPrefix(runs, prefix, style)
 		blocks = append(blocks, pptHTMLBlock{
 			Kind:    "list-item",
 			Text:    prefix + text,
+			Runs:    runs,
 			Style:   style,
 			Classes: parseClassSet(child),
 		})
 		index++
 	}
 	return blocks
+}
+
+func extractInlineTextRuns(node *html.Node, doc *pptHTMLDocument, inheritedText pptStyle) []pptHTMLTextRun {
+	var runs []pptHTMLTextRun
+	var walk func(*html.Node, pptStyle)
+	walk = func(current *html.Node, currentStyle pptStyle) {
+		if current == nil {
+			return
+		}
+		switch current.Type {
+		case html.TextNode:
+			text := normalizeInlineText(current.Data)
+			if text != "" {
+				runs = append(runs, pptHTMLTextRun{Text: text, Style: currentStyle})
+			}
+			return
+		case html.ElementNode:
+			tag := strings.ToLower(current.Data)
+			if shouldIgnoreHTMLElement(tag) {
+				return
+			}
+			nextStyle := computeNodeStyle(current, currentStyle, doc)
+			switch tag {
+			case "strong", "b":
+				nextStyle.FontWeight = intPtr(700)
+			case "em", "i":
+				if nextStyle.FontWeight == nil {
+					nextStyle.FontWeight = currentStyle.FontWeight
+				}
+			}
+			for child := current.FirstChild; child != nil; child = child.NextSibling {
+				walk(child, inheritInlineTextStyle(nextStyle))
+			}
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		walk(child, inheritInlineTextStyle(inheritedText))
+	}
+	return mergeAdjacentInlineRuns(runs)
+}
+
+func normalizeInlineText(value string) string {
+	value = strings.ReplaceAll(value, "&nbsp;", " ")
+	value = stdhtml.UnescapeString(value)
+	if strings.TrimSpace(value) == "" {
+		if strings.ContainsAny(value, " \n\r\t") {
+			return " "
+		}
+		return ""
+	}
+	leading := len(value) > 0 && isInlineWhitespace(rune(value[0]))
+	trailingRunes := []rune(value)
+	trailing := len(trailingRunes) > 0 && isInlineWhitespace(trailingRunes[len(trailingRunes)-1])
+	collapsed := strings.Join(strings.Fields(value), " ")
+	if leading {
+		collapsed = " " + collapsed
+	}
+	if trailing {
+		collapsed += " "
+	}
+	return collapsed
+}
+
+func isInlineWhitespace(r rune) bool {
+	return r == ' ' || r == '\n' || r == '\r' || r == '\t'
+}
+
+func textFromRuns(runs []pptHTMLTextRun) string {
+	var b strings.Builder
+	for _, run := range runs {
+		b.WriteString(run.Text)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func prependInlineRunPrefix(runs []pptHTMLTextRun, prefix string, style pptStyle) []pptHTMLTextRun {
+	if strings.TrimSpace(prefix) == "" {
+		return runs
+	}
+	prefixed := make([]pptHTMLTextRun, 0, len(runs)+1)
+	prefixed = append(prefixed, pptHTMLTextRun{Text: prefix, Style: inheritInlineTextStyle(style)})
+	prefixed = append(prefixed, runs...)
+	return mergeAdjacentInlineRuns(prefixed)
+}
+
+func inheritInlineTextStyle(style pptStyle) pptStyle {
+	return inheritTextStyle(style)
+}
+
+func mergeAdjacentInlineRuns(runs []pptHTMLTextRun) []pptHTMLTextRun {
+	merged := make([]pptHTMLTextRun, 0, len(runs))
+	for _, run := range runs {
+		if run.Text == "" {
+			continue
+		}
+		if len(merged) > 0 && inlineStylesEqual(merged[len(merged)-1].Style, run.Style) {
+			merged[len(merged)-1].Text += run.Text
+			continue
+		}
+		merged = append(merged, run)
+	}
+	return merged
+}
+
+func inlineStylesEqual(a, b pptStyle) bool {
+	return colorsEqual(a.TextColor, b.TextColor) &&
+		intPointersEqual(a.FontSize, b.FontSize) &&
+		intPointersEqual(a.FontWeight, b.FontWeight) &&
+		a.FontFamily == b.FontFamily
+}
+
+func colorsEqual(a, b *pptx.Color) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func intPointersEqual(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func computeNodeStyle(node *html.Node, inheritedText pptStyle, doc *pptHTMLDocument) pptStyle {
@@ -1341,6 +1479,10 @@ func renderTextAt(slide *pptx.SlideBuilder, measured measuredDynamicBlock) {
 	if strings.TrimSpace(block.Text) == "" {
 		return
 	}
+	if len(block.Runs) > 1 {
+		renderInlineRunsAt(slide, measured)
+		return
+	}
 	fontSize := resolveBlockFontSize(block, defaultFontSizeForBlock(block.Kind))
 	fontFamily := resolveFontFamily(block.Style, defaultFontFamilyForBlock(block.Kind))
 	color := resolveTextColor(block.Style, dynamicPPTDefaultText)
@@ -1368,6 +1510,88 @@ func renderTextAt(slide *pptx.SlideBuilder, measured measuredDynamicBlock) {
 			SetNoLine().
 			End()
 	}
+}
+
+func renderInlineRunsAt(slide *pptx.SlideBuilder, measured measuredDynamicBlock) {
+	block := measured.Block
+	x := measured.X
+	y := measured.Y
+	remainingWidth := measured.Width
+	totalWeight := inlineRunsWidthWeight(block.Runs, block)
+	if totalWeight <= 0 {
+		renderPlainTextAt(slide, measured, block)
+		return
+	}
+	for i, run := range block.Runs {
+		runText := run.Text
+		if runText == "" {
+			continue
+		}
+		runBlock := block
+		runBlock.Text = runText
+		runBlock.Runs = nil
+		runBlock.Style = mergePPTStyle(block.Style, run.Style)
+		runWeight := inlineRunWidthWeight(run, runBlock)
+		width := measured.Width * runWeight / totalWeight
+		if i == len(block.Runs)-1 || width > remainingWidth {
+			width = remainingWidth
+		}
+		if width <= 0 {
+			continue
+		}
+		renderPlainTextAt(slide, measuredDynamicBlock{
+			Block:  runBlock,
+			X:      x,
+			Y:      y,
+			Width:  width,
+			Height: measured.Height,
+		}, runBlock)
+		x += width
+		remainingWidth -= width
+		if remainingWidth <= 0 {
+			break
+		}
+	}
+}
+
+func renderPlainTextAt(slide *pptx.SlideBuilder, measured measuredDynamicBlock, block pptHTMLBlock) {
+	fontSize := resolveBlockFontSize(block, defaultFontSizeForBlock(block.Kind))
+	fontFamily := resolveFontFamily(block.Style, defaultFontFamilyForBlock(block.Kind))
+	color := resolveTextColor(block.Style, dynamicPPTDefaultText)
+	text := slide.AddText(block.Text).
+		SetFontSize(fontSize).
+		SetFontFamily(fontFamily).
+		SetColor(color).
+		SetAlignment(resolveAlignment(block.Style.TextAlign)).
+		SetPosition(pptx.Inches(measured.X), pptx.Inches(measured.Y)).
+		SetSize(pptx.Inches(measured.Width), pptx.Inches(measured.Height))
+	if dynamicPPTValueOrInt(block.Style.FontWeight, 0) >= 600 || block.Kind == "h1" || block.Kind == "h2" || block.Kind == "h3" {
+		text.SetBold(true)
+	}
+	text.End()
+}
+
+func inlineRunsWidthWeight(runs []pptHTMLTextRun, block pptHTMLBlock) float64 {
+	total := 0.0
+	for _, run := range runs {
+		runBlock := block
+		runBlock.Text = run.Text
+		runBlock.Style = mergePPTStyle(block.Style, run.Style)
+		total += inlineRunWidthWeight(run, runBlock)
+	}
+	return total
+}
+
+func inlineRunWidthWeight(run pptHTMLTextRun, block pptHTMLBlock) float64 {
+	size := resolveBlockFontSize(block, defaultFontSizeForBlock(block.Kind))
+	weight := float64(len([]rune(run.Text))) * float64(size)
+	if dynamicPPTValueOrInt(block.Style.FontWeight, 0) >= 600 {
+		weight *= 1.05
+	}
+	if weight <= 0 {
+		return 1
+	}
+	return weight
 }
 
 func renderDynamicBlock(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, block pptHTMLBlock) {

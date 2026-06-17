@@ -9,6 +9,7 @@ import NotebookPage from '../pages/NotebookPage';
 import SettingsPage from '../pages/SettingsPage';
 import ProfilePage from '../pages/ProfilePage';
 import AdminPage from '../pages/AdminPage';
+import PPTExportTestPage from '../pages/PPTExportTestPage';
 import { useAuthStore } from '../stores/useAuthStore';
 
 function RequireAuth() {
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
           { path: 'settings', element: <SettingsPage /> },
           { path: 'profile', element: <ProfilePage /> },
           { path: 'admin', element: <AdminPage /> },
+          { path: 'ppt-export-test', element: <PPTExportTestPage /> },
         ],
       },
     ],

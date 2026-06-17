@@ -234,7 +234,11 @@ func (a *pptGenerationAgent) planPPTChainOutline(ctx context.Context, state pptC
 		return pptChainState{}, err
 	}
 	state.outline = outline
-	state.outlinePlan = planPPTOutline(state.analysis)
+	if parsed, ok := parsePPTOutlineMarkdown(outline); ok {
+		state.outlinePlan = parsed
+	} else {
+		state.outlinePlan = planPPTOutline(state.analysis)
+	}
 	return state, nil
 }
 
@@ -252,7 +256,7 @@ func (a *pptGenerationAgent) generatePPTDraft(ctx context.Context, state pptChai
 			AgentName:    a.name,
 			System:       strategy.System,
 			User:         strings.TrimSpace(state.input.Request.Prompt),
-			Context:      appendPPTOutlineToContext(state.input.Context, state.outline),
+			Context:      appendPPTPlansToContext(state.input.Context, state.outline, state.expanded),
 			OutputFormat: strategy.OutputFormat,
 		})
 		if err != nil {
@@ -269,6 +273,7 @@ func (a *pptGenerationAgent) generatePPTDraft(ctx context.Context, state pptChai
 }
 
 func (a *pptGenerationAgent) repairPPTStructure(ctx context.Context, draft generationDraft) (generationDraft, error) {
+	draft.content = stripPPTExportPlaceholders(draft.content)
 	draft.content = sanitizePPTReferenceSections(draft.content)
 	if pptNeedsStructureRepair(draft.content) {
 		if draft.pptRepairPlan != nil {
@@ -352,7 +357,11 @@ func fallbackPPTContent(input generationAgentInput) string {
 	return renderStyledPPTSlides(expandPPTContent(planPPTOutline(analysis), analysis))
 }
 func fallbackPPTOutline(input generationAgentInput) string {
-	title := extractTitle(input.Request.Markdown, "演示文稿")
+	markdown := ""
+	if input.Request != nil {
+		markdown = input.Request.Markdown
+	}
+	title := extractTitle(markdown, "演示文稿")
 	points := buildPPTFallbackPoints(input, 6)
 	var b strings.Builder
 	b.WriteString("# ")
@@ -371,16 +380,198 @@ func fallbackPPTOutline(input generationAgentInput) string {
 	return strings.TrimSpace(b.String())
 }
 
-func appendPPTOutlineToContext(contextValue, outline string) string {
-	outline = strings.TrimSpace(outline)
-	if outline == "" {
-		return contextValue
+func parsePPTOutlineMarkdown(outline string) (pptOutlinePlan, bool) {
+	lines := strings.Split(strings.TrimSpace(outline), "\n")
+	plan := pptOutlinePlan{}
+	var current *pptSlidePlan
+	for _, line := range lines {
+		raw := strings.TrimRight(line, " \t\r")
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			title := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+			if title != "" && plan.Title == "" {
+				plan.Title = title
+			}
+			continue
+		}
+
+		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
+		text := strings.TrimSpace(strings.TrimLeft(trimmed, "-*0123456789. "))
+		if text == "" {
+			continue
+		}
+		if indent == 0 {
+			plan.Slides = append(plan.Slides, pptSlidePlan{Title: text})
+			current = &plan.Slides[len(plan.Slides)-1]
+			continue
+		}
+		if current == nil {
+			plan.Slides = append(plan.Slides, pptSlidePlan{Title: firstNonEmpty(plan.Title, "Slide")})
+			current = &plan.Slides[len(plan.Slides)-1]
+		}
+		current.Bullets = append(current.Bullets, text)
 	}
+	if plan.Title == "" && len(plan.Slides) > 0 {
+		plan.Title = plan.Slides[0].Title
+	}
+	if strings.TrimSpace(plan.Title) == "" || len(plan.Slides) == 0 {
+		return pptOutlinePlan{}, false
+	}
+	for i := range plan.Slides {
+		normalizePPTBullets(&plan.Slides[i])
+		if strings.TrimSpace(plan.Slides[i].Purpose) == "" {
+			plan.Slides[i].Purpose = purposeForPPTSlide(plan.Slides[i].Title, i, len(plan.Slides))
+		}
+	}
+	plan = ensurePPTPlanFrame(plan)
+	return plan, true
+}
+
+func ensurePPTPlanFrame(plan pptOutlinePlan) pptOutlinePlan {
+	if strings.TrimSpace(plan.Title) == "" {
+		plan.Title = "演示文稿"
+	}
+	if len(plan.Slides) == 0 {
+		return planPPTOutline(learningContentAnalysis{Topic: plan.Title, Sparse: true})
+	}
+	if !isCoverSlideTitle(plan.Slides[0].Title) {
+		cover := pptSlidePlan{
+			Title:   "封面页",
+			Purpose: "建立演示主题",
+			Bullets: []string{plan.Title},
+		}
+		plan.Slides = append([]pptSlidePlan{cover}, plan.Slides...)
+	}
+	if len(plan.Slides) < 2 || !isAgendaSlideTitle(plan.Slides[1].Title) {
+		agenda := pptSlidePlan{
+			Title:   "目录页",
+			Purpose: "呈现演示路径",
+		}
+		for _, slide := range plan.Slides[1:] {
+			if !isEndingSlideTitle(slide.Title) {
+				agenda.Bullets = append(agenda.Bullets, slide.Title)
+			}
+		}
+		if len(agenda.Bullets) == 0 {
+			agenda.Bullets = append(agenda.Bullets, "内容页")
+		}
+		plan.Slides = append([]pptSlidePlan{plan.Slides[0], agenda}, plan.Slides[1:]...)
+	}
+	last := plan.Slides[len(plan.Slides)-1]
+	if !isEndingSlideTitle(last.Title) {
+		plan.Slides = append(plan.Slides, pptSlidePlan{
+			Title:   "结束页",
+			Purpose: "收束结论与下一步",
+			Bullets: []string{"总结核心观点", "明确下一步行动"},
+		})
+	}
+	for i := range plan.Slides {
+		if strings.TrimSpace(plan.Slides[i].Purpose) == "" {
+			plan.Slides[i].Purpose = purposeForPPTSlide(plan.Slides[i].Title, i, len(plan.Slides))
+		}
+		normalizePPTBullets(&plan.Slides[i])
+	}
+	return plan
+}
+
+func purposeForPPTSlide(title string, index, total int) string {
+	switch {
+	case index == 0 || isCoverSlideTitle(title):
+		return "建立演示主题"
+	case index == 1 || isAgendaSlideTitle(title):
+		return "呈现演示路径"
+	case index == total-1 || isEndingSlideTitle(title):
+		return "收束结论与下一步"
+	default:
+		return "展开核心内容"
+	}
+}
+
+func isCoverSlideTitle(title string) bool {
+	return containsAnyFold(title, "封面", "cover", "title")
+}
+
+func isAgendaSlideTitle(title string) bool {
+	return containsAnyFold(title, "目录", "agenda", "outline")
+}
+
+func isEndingSlideTitle(title string) bool {
+	return containsAnyFold(title, "结束", "总结", "closing", "end", "finish")
+}
+
+func stripPPTExportPlaceholders(content string) string {
+	cleaned := stripTaggedBlock(content, "PPT_FILE")
+	cleaned = stripTaggedBlock(cleaned, "PREVIEW_LINK")
+	return strings.TrimSpace(cleaned)
+}
+
+func stripTaggedBlock(content, tag string) string {
+	lower := strings.ToLower(content)
+	openTag := "<" + strings.ToLower(tag) + ">"
+	closeTag := "</" + strings.ToLower(tag) + ">"
+	for {
+		start := strings.Index(lower, openTag)
+		if start < 0 {
+			return content
+		}
+		closeStart := strings.Index(lower[start+len(openTag):], closeTag)
+		if closeStart < 0 {
+			return content[:start] + content[start+len(openTag):]
+		}
+		end := start + len(openTag) + closeStart + len(closeTag)
+		content = content[:start] + content[end:]
+		lower = strings.ToLower(content)
+	}
+}
+
+func appendPPTPlansToContext(contextValue, outline string, plan pptOutlinePlan) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(contextValue))
-	b.WriteString("\n\n内部演示大纲：\n")
-	b.WriteString(outline)
-	return b.String()
+	if strings.TrimSpace(outline) != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("内部演示大纲：\n")
+		b.WriteString(outline)
+	}
+	if strings.TrimSpace(plan.Title) != "" || len(plan.Slides) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("STRUCTURED_PPT_PLAN\n")
+		b.WriteString(renderPPTPlanForPrompt(plan))
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func renderPPTPlanForPrompt(plan pptOutlinePlan) string {
+	var b strings.Builder
+	if strings.TrimSpace(plan.Title) != "" {
+		b.WriteString("Title: ")
+		b.WriteString(strings.TrimSpace(plan.Title))
+		b.WriteString("\n")
+	}
+	for i, slide := range plan.Slides {
+		b.WriteString(fmt.Sprintf("Slide %02d: %s\n", i+1, strings.TrimSpace(slide.Title)))
+		if strings.TrimSpace(slide.Purpose) != "" {
+			b.WriteString("Purpose: ")
+			b.WriteString(strings.TrimSpace(slide.Purpose))
+			b.WriteString("\n")
+		}
+		for _, bullet := range slide.Bullets {
+			bullet = strings.TrimSpace(bullet)
+			if bullet == "" {
+				continue
+			}
+			b.WriteString("- ")
+			b.WriteString(bullet)
+			b.WriteString("\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func fallbackMindmapContent(input generationAgentInput) string {
@@ -431,11 +622,17 @@ func learningDeckSections() []string {
 }
 
 func analyzeLearningContent(input generationAgentInput) learningContentAnalysis {
-	points := extractKeyPoints(input.Request.Markdown, 12)
+	markdown := ""
+	prompt := ""
+	if input.Request != nil {
+		markdown = input.Request.Markdown
+		prompt = input.Request.Prompt
+	}
+	points := extractKeyPoints(markdown, 12)
 	analysis := learningContentAnalysis{
-		Topic:       extractTitle(input.Request.Markdown, "学习资料"),
+		Topic:       extractTitle(markdown, "学习资料"),
 		KeyConcepts: points,
-		UserIntent:  strings.TrimSpace(input.Request.Prompt),
+		UserIntent:  strings.TrimSpace(prompt),
 		Evidence:    append(evidenceFromReferences(input.References), evidenceFromSearch(input.SearchResults)...),
 		Sparse:      len(points) < 3,
 	}
@@ -687,16 +884,12 @@ li:last-child { border-bottom: none; }
 func pptNeedsStructureRepair(content string) bool {
 	trimmed := strings.TrimSpace(content)
 	lower := strings.ToLower(trimmed)
-	if strings.Count(lower, "<section") < len(requiredPPTSlideTitles()) || strings.Contains(lower, "<section></section>") {
+	sectionCount := strings.Count(lower, "<section")
+	if sectionCount < 4 || strings.Contains(lower, "<section></section>") {
 		return true
 	}
 	if len([]rune(strings.TrimSpace(stripSimpleHTML(trimmed)))) < 20 {
 		return true
-	}
-	for _, title := range requiredPPTSlideTitles() {
-		if !strings.Contains(trimmed, title) {
-			return true
-		}
 	}
 	return false
 }
@@ -988,9 +1181,15 @@ func buildPPTFallbackPoints(input generationAgentInput, limit int) []string {
 	if limit <= 0 {
 		limit = 9
 	}
-	title := extractTitle(input.Request.Markdown, "演示文稿")
-	candidates := extractKeyPoints(input.Request.Markdown, limit)
-	if prompt := strings.TrimSpace(input.Request.Prompt); prompt != "" {
+	markdown := ""
+	prompt := ""
+	if input.Request != nil {
+		markdown = input.Request.Markdown
+		prompt = input.Request.Prompt
+	}
+	title := extractTitle(markdown, "演示文稿")
+	candidates := extractKeyPoints(markdown, limit)
+	if prompt := strings.TrimSpace(prompt); prompt != "" {
 		candidates = append(candidates, prompt)
 	}
 	for _, ref := range input.References {

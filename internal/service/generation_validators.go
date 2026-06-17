@@ -15,6 +15,9 @@ func validateMindmapContent(content string) bool {
 
 func validatePPTContent(content string) bool {
 	lower := strings.ToLower(strings.TrimSpace(content))
+	if strings.Contains(lower, "<ppt_file") || strings.Contains(lower, "<preview_link") {
+		return false
+	}
 	if !strings.Contains(lower, "<section") || !strings.Contains(lower, "</section>") {
 		return false
 	}

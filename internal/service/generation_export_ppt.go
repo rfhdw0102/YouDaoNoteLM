@@ -3,6 +3,7 @@ package service
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"fmt"
 	"html"
 	"io"
@@ -131,7 +132,7 @@ var (
 	pptBulletPattern  = regexp.MustCompile(`(?is)<li\b[^>]*>(.*?)</li>`)
 )
 
-func exportPPT(content, title, templateID string) (*GenerationExportResult, error) {
+func exportPPT(ctx context.Context, content, title, templateID string) (*GenerationExportResult, error) {
 	filename := resolveExportFilename(title, content, "ppt-export", ".pptx")
 
 	trimmedTemplateID := strings.TrimSpace(templateID)
@@ -141,7 +142,7 @@ func exportPPT(content, title, templateID string) (*GenerationExportResult, erro
 	)
 
 	if trimmedTemplateID == "" {
-		data, err = buildDynamicHTMLPPTX(content, strings.TrimSuffix(filename, ".pptx"))
+		data, err = exportPPTWithDefaultEngine(ctx, content, strings.TrimSuffix(filename, ".pptx"))
 		if err != nil {
 			return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "build ppt export failed", err)
 		}

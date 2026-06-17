@@ -1,0 +1,12 @@
+{
+  "name": "youdaonotelm-ppt-exporter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node export_dom_to_pptx.mjs --self-test"
+  },
+  "dependencies": {
+    "dom-to-pptx": "^1.1.10",
+    "playwright": "^1.60.0"
+  }
+}
