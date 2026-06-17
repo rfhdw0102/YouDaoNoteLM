@@ -222,7 +222,7 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 func (s *chatAgentService) buildTools(userID uint, sourceIDs []uint) ([]tool.BaseTool, *[]response.Reference) {
 	var refs []response.Reference
 	ragTool := chatTools.NewRAGRetrieverTool(s.retriever, userID, sourceIDs, &refs)
-	historyTool := chatTools.NewChatHistoryTool(s.messageRepo, s.cache)
+	historyTool := chatTools.NewChatHistoryTool(s.messageRepo, s.conversationRepo, s.cache)
 
 	return []tool.BaseTool{ragTool, historyTool}, &refs
 }

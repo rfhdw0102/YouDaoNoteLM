@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"YoudaoNoteLm/pkg/logger"
 	"context"
 	"encoding/json"
 	"fmt"
+	"go.uber.org/zap"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -15,15 +17,17 @@ import (
 
 // ChatHistoryTool 对话历史工具
 type ChatHistoryTool struct {
-	messageRepo repository.MessageRepository
-	cache       *cache.ChatCache
+	messageRepo      repository.MessageRepository
+	conversationRepo repository.ConversationRepository
+	cache            *cache.ChatCache
 }
 
 // NewChatHistoryTool 创建对话历史工具
-func NewChatHistoryTool(messageRepo repository.MessageRepository, cache *cache.ChatCache) tool.InvokableTool {
+func NewChatHistoryTool(messageRepo repository.MessageRepository, conversationRepo repository.ConversationRepository, cache *cache.ChatCache) tool.InvokableTool {
 	return &ChatHistoryTool{
-		messageRepo: messageRepo,
-		cache:       cache,
+		messageRepo:      messageRepo,
+		conversationRepo: conversationRepo,
+		cache:            cache,
 	}
 }
 
@@ -62,12 +66,8 @@ func (t *ChatHistoryTool) InvokableRun(ctx context.Context, argumentsInJSON stri
 		params.Limit = 10
 	}
 
-	// 获取摘要
-	summary, hasSummary, err := t.cache.GetSummary(ctx, params.ConversationID)
-	if err != nil {
-		summary = ""
-		hasSummary = false
-	}
+	// 获取摘要（Redis 优先，数据库降级）
+	summary := t.getSummaryWithFallback(ctx, params.ConversationID)
 
 	// 优先从缓存获取历史消息
 	history, err := t.cache.GetRecentMessages(ctx, params.ConversationID)
@@ -80,11 +80,36 @@ func (t *ChatHistoryTool) InvokableRun(ctx context.Context, argumentsInJSON stri
 		history = convertToCachePairs(msgs, params.Limit)
 	}
 
-	if !hasSummary && len(history) == 0 {
+	if summary == "" && len(history) == 0 {
 		return "暂无对话历史和摘要", nil
 	}
 
-	return FormatChatHistoryWithSummary(summary, hasSummary, history), nil
+	return FormatChatHistoryWithSummary(summary, summary != "", history), nil
+}
+
+// getSummaryWithFallback 获取摘要（Redis 优先，数据库降级）
+func (t *ChatHistoryTool) getSummaryWithFallback(ctx context.Context, conversationID uint) string {
+	// 1. 尝试从 Redis 获取
+	summary, found, err := t.cache.GetSummary(ctx, conversationID)
+	if err == nil && found && summary != "" {
+		return summary
+	}
+
+	// 2. 降级：从数据库获取
+	conv, dbErr := t.conversationRepo.FindByID(conversationID)
+	if dbErr != nil {
+		return ""
+	}
+
+	if conv.Summary != "" {
+		// 回写到 Redis，下次直接从缓存读
+		err = t.cache.SetSummary(ctx, conversationID, conv.Summary)
+		if err != nil {
+			logger.Warn("写入redis摘要失败：", zap.Error(err))
+		}
+	}
+
+	return conv.Summary
 }
 
 // convertToCachePairs 将数据库消息转为缓存格式的 MessagePair

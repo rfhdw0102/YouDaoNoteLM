@@ -23,9 +23,9 @@ func (s *chatAgentService) buildAgentMessages(ctx context.Context, userID uint, 
 
 	// 加载历史消息（如果对话已存在）
 	if conversationID > 0 {
-		// 1. 获取摘要（如果有）
-		summary, hasSummary, err := s.cache.GetSummary(ctx, conversationID)
-		if err == nil && hasSummary && summary != "" {
+		// 1. 获取摘要（Redis 优先，失败则从数据库降级）
+		summary := s.getSummaryWithFallback(ctx, conversationID)
+		if summary != "" {
 			// 将摘要作为系统消息放在最前面
 			messages = append(messages, &schema.Message{
 				Role:    schema.System,
@@ -55,6 +55,42 @@ func (s *chatAgentService) buildAgentMessages(ctx context.Context, userID uint, 
 	messages = append(messages, schema.UserMessage(content))
 
 	return messages, nil
+}
+
+// getSummaryWithFallback 获取摘要（Redis 优先，数据库降级）
+func (s *chatAgentService) getSummaryWithFallback(ctx context.Context, conversationID uint) string {
+	// 1. 尝试从 Redis 获取
+	summary, found, err := s.cache.GetSummary(ctx, conversationID)
+	if err == nil && found && summary != "" {
+		return summary
+	}
+
+	if err != nil {
+		logger.Warn("[Agent] 从 Redis 获取摘要失败，尝试从数据库降级",
+			zap.Uint("conversationID", conversationID),
+			zap.Error(err),
+		)
+	}
+
+	// 2. 降级：从数据库获取
+	conv, dbErr := s.conversationRepo.FindByID(conversationID)
+	if dbErr != nil {
+		logger.Warn("[Agent] 从数据库获取摘要也失败",
+			zap.Uint("conversationID", conversationID),
+			zap.Error(dbErr),
+		)
+		return ""
+	}
+
+	if conv.Summary != "" {
+		// 回写到 Redis，下次直接从缓存读
+		err = s.cache.SetSummary(ctx, conversationID, conv.Summary)
+		if err != nil {
+			logger.Warn("写入redis摘要失败：", zap.Error(err))
+		}
+	}
+
+	return conv.Summary
 }
 
 // convertToMessagePairs 将数据库消息转为 MessagePair
@@ -138,8 +174,36 @@ func (s *chatAgentService) updateSummary(ctx context.Context, conversationID uin
 		return nil
 	}
 
-	// 1. 获取现有摘要
-	existingSummary, _, _ := s.cache.GetSummary(ctx, conversationID)
+	// 1. 获取现有摘要（Redis 优先，失败则从数据库降级）
+	existingSummary, found, err := s.cache.GetSummary(ctx, conversationID)
+	if err != nil {
+		logger.Warn("[Agent] 从 Redis 获取摘要失败，尝试从数据库降级",
+			zap.Uint("conversationID", conversationID),
+			zap.Error(err),
+		)
+		// 降级：从数据库获取
+		conv, dbErr := s.conversationRepo.FindByID(conversationID)
+		if dbErr != nil {
+			logger.Warn("[Agent] 从数据库获取摘要也失败",
+				zap.Uint("conversationID", conversationID),
+				zap.Error(dbErr),
+			)
+			existingSummary = ""
+		} else {
+			existingSummary = conv.Summary
+		}
+	} else if !found {
+		// Redis 没有，尝试从数据库获取
+		conv, dbErr := s.conversationRepo.FindByID(conversationID)
+		if dbErr == nil && conv.Summary != "" {
+			existingSummary = conv.Summary
+			// 回写到 Redis，下次直接从缓存读
+			err = s.cache.SetSummary(ctx, conversationID, existingSummary)
+			if err != nil {
+				logger.Warn("写入redis摘要失败：", zap.Error(err))
+			}
+		}
+	}
 
 	// 2. 构建增量更新 prompt
 	newMessagesText := fmt.Sprintf("用户: %s\n助手: %s", evictedPair.User, evictedPair.Assistant)
@@ -178,9 +242,17 @@ func (s *chatAgentService) updateSummary(ctx context.Context, conversationID uin
 		return nil
 	}
 
-	// 4. 保存摘要到 Redis
+	// 4. 保存摘要到 Redis 和数据库
 	if err := s.cache.SetSummary(ctx, conversationID, summary); err != nil {
-		return fmt.Errorf("保存摘要失败: %w", err)
+		logger.Warn("[Agent] 保存摘要到 Redis 失败", zap.Error(err))
+	}
+
+	// 同步到数据库
+	if err := s.conversationRepo.Update(&entity.Conversation{
+		BaseEntity: entity.BaseEntity{ID: conversationID},
+		Summary:    summary,
+	}); err != nil {
+		logger.Warn("[Agent] 保存摘要到数据库失败", zap.Error(err))
 	}
 
 	logger.Info("[Agent] 对话摘要更新成功",
