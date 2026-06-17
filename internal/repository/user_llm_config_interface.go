@@ -6,6 +6,8 @@ import "YoudaoNoteLm/internal/model/entity"
 type UserLLMConfigRepository interface {
 	// FindByID 根据 ID 查找配置
 	FindByID(id uint) (*entity.UserLLMConfig, error)
+	// FindByIDAndUserID 根据 ID 和用户 ID 查找配置（防越权）
+	FindByIDAndUserID(id, userID uint) (*entity.UserLLMConfig, error)
 	// FindByUserID 查找用户的所有 LLM 配置
 	FindByUserID(userID uint) ([]*entity.UserLLMConfig, error)
 	// FindEnabledByUserID 查找用户的启用的 LLM 配置

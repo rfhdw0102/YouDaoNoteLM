@@ -174,6 +174,7 @@ func (ctrl *Controller) SendMessage(c *gin.Context) {
 		Content:        req.Content,
 		SourceIDs:      req.SourceIDs,
 		UserID:         userID,
+		LLMConfigID:    req.LLMConfigID,
 	})
 	if err != nil {
 		c.SSEvent("error", gin.H{"content": err.Error()})

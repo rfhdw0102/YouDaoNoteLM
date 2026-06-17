@@ -310,7 +310,7 @@ func (a *App) initIngestionService(sourceRepo repository.SourceRepository, confi
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		batchSize := rag.GetBatchSizeByAPIKey(cfg.APIKey)
+		batchSize := rag.GetBatchSizeByProvider(cfg.Provider, cfg.APIURL)
 		vectorDim := 0
 		if cfg.Dimensions != nil {
 			vectorDim = *cfg.Dimensions

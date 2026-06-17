@@ -158,3 +158,60 @@ export const ERROR_CODES: Record<number, string> = {
 export function getErrorCodeMessage(code: number): string {
   return ERROR_CODES[code] || '未知错误';
 }
+
+/**
+ * 聊天/对话相关的原始错误 → 友好提示映射
+ * 后端可能返回原始 Go 错误信息，需要转换为用户可读的提示
+ */
+const CHAT_ERROR_PATTERNS: Array<[RegExp, string]> = [
+  // LLM 服务相关
+  [/LLM.*配置.*不存在/i, '所选模型配置不存在，请在设置中重新配置'],
+  [/LLM.*调用.*失败/i, '模型服务调用失败，请检查模型配置或稍后重试'],
+  [/LLM.*返回.*异常/i, '模型返回结果异常，请稍后重试'],
+  [/未.*配置.*LLM/i, '请先在设置中配置 LLM 服务'],
+  [/no.*llm.*config/i, '请先在设置中配置 LLM 服务'],
+  [/api.*key.*无效/i, 'API Key 无效，请在设置中更新'],
+  [/api.*key.*过期/i, 'API Key 已过期，请在设置中更新'],
+  [/quota.*exceed/i, 'API 配额已耗尽，请稍后重试'],
+  [/rate.*limit/i, '请求过于频繁，请稍后重试'],
+  [/context.*length/i, '对话内容过长，请新建对话或减少输入'],
+  [/token.*limit/i, '对话内容超出长度限制，请新建对话'],
+
+  // 网络/超时相关
+  [/timeout/i, '请求超时，请稍后重试'],
+  [/connection.*refused/i, '无法连接到模型服务，请稍后重试'],
+  [/network.*error/i, '网络连接异常，请检查网络后重试'],
+  [/context.*cancel/i, '请求已取消'],
+  [/context.*deadline/i, '请求超时，请稍后重试'],
+
+  // 向量/RAG 相关
+  [/vector/i, '知识库检索异常，请稍后重试'],
+  [/embedding/i, '向量化处理失败，请稍后重试'],
+  [/milvus/i, '知识库服务异常，请稍后重试'],
+
+  // 通用
+  [/内部.*错误/i, '服务内部异常，请稍后重试'],
+  [/internal.*error/i, '服务内部异常，请稍后重试'],
+];
+
+/**
+ * 将聊天场景下的原始错误转换为友好提示
+ * 如果无法匹配已知模式，返回默认的友好提示
+ */
+export function getChatErrorMessage(error: string): string {
+  if (!error) return '回答生成失败，请重试';
+
+  for (const [pattern, friendly] of CHAT_ERROR_PATTERNS) {
+    if (pattern.test(error)) {
+      return friendly;
+    }
+  }
+
+  // 如果错误信息已经是中文且较短（≤20字），可能是后端已处理过的友好提示，直接使用
+  if (/^[一-龥]+$/.test(error) && error.length <= 20) {
+    return error;
+  }
+
+  // 兜底：不暴露原始错误
+  return '回答生成失败，请重试';
+}

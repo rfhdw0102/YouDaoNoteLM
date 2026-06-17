@@ -5,7 +5,7 @@ import * as sourceApi from '../api/source';
 import * as importApi from '../api/import';
 import * as searchApi from '../api/search';
 import * as chatApi from '../api/chat';
-import { getErrorMessage } from '../utils/error';
+import { getErrorMessage, getChatErrorMessage } from '../utils/error';
 
 // Store the abort controller for the current streaming request
 let currentStreamAbortController: AbortController | null = null;
@@ -76,7 +76,7 @@ interface NotebookState {
 
   // Message actions (API-backed)
   fetchMessages: (notebookId: string, conversationId: string) => Promise<void>;
-  sendMessage: (notebookId: string, conversationId: string, content: string, sourceIds?: number[]) => Promise<void>;
+  sendMessage: (notebookId: string, conversationId: string, content: string, sourceIds?: number[], llmConfigId?: number) => Promise<void>;
   stopGeneration: (notebookId: string, conversationId: string) => Promise<void>;
   addMessage: (notebookId: string, conversationId: string, message: ChatMessage) => void;
   updateMessage: (notebookId: string, conversationId: string, messageId: string, updates: Partial<ChatMessage>) => void;
@@ -1004,7 +1004,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
     }
   },
 
-  sendMessage: async (notebookId, conversationId, content, sourceIds) => {
+  sendMessage: async (notebookId, conversationId, content, sourceIds, llmConfigId) => {
     // Add user message immediately
     const userMessageId = `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const userMessage: ChatMessage = {
@@ -1033,7 +1033,8 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       const response = await chatApi.sendMessage(
         Number(conversationId),
         content,
-        sourceIds
+        sourceIds,
+        llmConfigId
       );
 
       console.log('Response status:', response.status, response.ok);
@@ -1042,7 +1043,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Response error:', errorText);
-        throw new Error(`HTTP error: ${response.status} - ${errorText}`);
+        throw new Error(getChatErrorMessage(errorText));
       }
 
       // Check if response is SSE or regular JSON
@@ -1187,6 +1188,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         },
         onError: (error) => {
           console.error('Stream error:', error);
+          const friendlyMessage = getChatErrorMessage(error);
           set((state) => ({
             notebooks: state.notebooks.map((n) =>
               n.id === notebookId
@@ -1198,7 +1200,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
                             ...c,
                             messages: c.messages.map((m) =>
                               m.id === assistantMessageId
-                                ? { ...m, content: error, isStreaming: false }
+                                ? { ...m, content: friendlyMessage, isStreaming: false }
                                 : m
                             ),
                           }

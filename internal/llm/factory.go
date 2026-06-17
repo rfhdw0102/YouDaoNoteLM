@@ -6,8 +6,6 @@ import (
 
 	"YoudaoNoteLm/internal/model/entity"
 
-	"github.com/cloudwego/eino-ext/components/model/ark"
-	"github.com/cloudwego/eino-ext/components/model/deepseek"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 )
@@ -19,14 +17,8 @@ func NewChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCal
 	}
 
 	switch cfg.Provider {
-	case "ark", "doubao":
-		return newArkChatModel(ctx, cfg)
-	case "deepseek":
-		return newDeepSeekChatModel(ctx, cfg)
 	case "openai":
 		return newOpenAIChatModel(ctx, cfg)
-	case "qianwen", "qwen":
-		return newQianwenChatModel(ctx, cfg)
 	case "anthropic", "claude":
 		return newAnthropicChatModel(ctx, cfg)
 	default:
@@ -49,30 +41,6 @@ func NewToolCallingChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (mo
 	return tccm, nil
 }
 
-// newArkChatModel 创建火山引擎 Ark ChatModel
-func newArkChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCallingChatModel, error) {
-	arkCfg := &ark.ChatModelConfig{
-		APIKey: cfg.APIKey,
-		Model:  cfg.Model,
-	}
-	if cfg.APIURL != "" {
-		arkCfg.BaseURL = cfg.APIURL
-	}
-	return ark.NewChatModel(ctx, arkCfg)
-}
-
-// newDeepSeekChatModel 创建 DeepSeek ChatModel
-func newDeepSeekChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCallingChatModel, error) {
-	dsCfg := &deepseek.ChatModelConfig{
-		APIKey: cfg.APIKey,
-		Model:  cfg.Model,
-	}
-	if cfg.APIURL != "" {
-		dsCfg.BaseURL = cfg.APIURL
-	}
-	return deepseek.NewChatModel(ctx, dsCfg)
-}
-
 // newOpenAIChatModel 创建 OpenAI ChatModel
 func newOpenAIChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCallingChatModel, error) {
 	oaiCfg := &openai.ChatModelConfig{
@@ -83,19 +51,6 @@ func newOpenAIChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.T
 		oaiCfg.BaseURL = cfg.APIURL
 	}
 	return openai.NewChatModel(ctx, oaiCfg)
-}
-
-// newQianwenChatModel 创建千问 ChatModel（使用 OpenAI 兼容接口）
-func newQianwenChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCallingChatModel, error) {
-	qwCfg := &openai.ChatModelConfig{
-		APIKey:  cfg.APIKey,
-		Model:   cfg.Model,
-		BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-	}
-	if cfg.APIURL != "" {
-		qwCfg.BaseURL = cfg.APIURL
-	}
-	return openai.NewChatModel(ctx, qwCfg)
 }
 
 // newAnthropicChatModel 创建 Anthropic (Claude) ChatModel
