@@ -18,7 +18,8 @@ type EmbeddingProvider string
 const (
 	ProviderArk        EmbeddingProvider = "ark"        // 火山引擎（豆包）
 	ProviderVolcengine EmbeddingProvider = "volcengine" // 火山引擎（豆包）- 另一个名称
-	ProviderOpenAI     EmbeddingProvider = "openai"     // OpenAI
+	ProviderDoubao     EmbeddingProvider = "doubao"
+	ProviderOpenAI     EmbeddingProvider = "openai" // OpenAI
 )
 
 // EmbeddingConfig embedding 模型配置
@@ -38,7 +39,7 @@ func NewEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Embedder,
 	}
 
 	switch cfg.Provider {
-	case ProviderArk, ProviderVolcengine:
+	case ProviderArk, ProviderVolcengine, ProviderDoubao:
 		return createArkEmbedder(ctx, cfg)
 	case ProviderOpenAI:
 		return createOpenAIEmbedder(ctx, cfg)

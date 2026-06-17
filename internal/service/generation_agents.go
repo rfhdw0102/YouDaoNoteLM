@@ -31,9 +31,15 @@ type learningContentAnalysis struct {
 	Processes   []string
 	Examples    []string
 	Evidence    []learningEvidence
+	Sections    []pptSourceSection
 	Gaps        []string
 	UserIntent  string
 	Sparse      bool
+}
+
+type pptSourceSection struct {
+	Title  string
+	Points []string
 }
 
 type learningEvidence struct {
@@ -229,6 +235,11 @@ func (a *pptGenerationAgent) analyzePPTContent(ctx context.Context, input genera
 }
 
 func (a *pptGenerationAgent) planPPTChainOutline(ctx context.Context, state pptChainState) (pptChainState, error) {
+	if len(state.analysis.Sections) > 0 {
+		state.outline = fallbackPPTOutline(state.input)
+		state.outlinePlan = planPPTOutline(state.analysis)
+		return state, nil
+	}
 	outline, err := a.generateOutline(ctx, state.input)
 	if err != nil {
 		return pptChainState{}, err
@@ -275,7 +286,7 @@ func (a *pptGenerationAgent) generatePPTDraft(ctx context.Context, state pptChai
 func (a *pptGenerationAgent) repairPPTStructure(ctx context.Context, draft generationDraft) (generationDraft, error) {
 	draft.content = stripPPTExportPlaceholders(draft.content)
 	draft.content = sanitizePPTReferenceSections(draft.content)
-	if pptNeedsStructureRepair(draft.content) {
+	if pptNeedsStructureRepair(draft.content) || pptContainsInternalPromptLeak(draft.content) || pptNeedsPlanCoverageRepair(draft.content, draft.pptRepairPlan) {
 		if draft.pptRepairPlan != nil {
 			draft.content = renderStyledPPTSlides(*draft.pptRepairPlan)
 		} else {
@@ -357,27 +368,26 @@ func fallbackPPTContent(input generationAgentInput) string {
 	return renderStyledPPTSlides(expandPPTContent(planPPTOutline(analysis), analysis))
 }
 func fallbackPPTOutline(input generationAgentInput) string {
-	markdown := ""
-	if input.Request != nil {
-		markdown = input.Request.Markdown
+	plan := planPPTOutline(analyzeLearningContent(input))
+	var outline strings.Builder
+	outline.WriteString("# ")
+	outline.WriteString(plan.Title)
+	outline.WriteString("\n")
+	for _, slide := range plan.Slides {
+		outline.WriteString("- ")
+		outline.WriteString(strings.TrimSpace(slide.Title))
+		outline.WriteString("\n")
+		for _, point := range slide.Bullets {
+			point = strings.TrimSpace(point)
+			if point == "" {
+				continue
+			}
+			outline.WriteString("  - ")
+			outline.WriteString(point)
+			outline.WriteString("\n")
+		}
 	}
-	title := extractTitle(markdown, "演示文稿")
-	points := buildPPTFallbackPoints(input, 6)
-	var b strings.Builder
-	b.WriteString("# ")
-	b.WriteString(title)
-	b.WriteString("\n")
-	for _, item := range learningDeckSections() {
-		b.WriteString("- ")
-		b.WriteString(item)
-		b.WriteString("\n")
-	}
-	for _, point := range points {
-		b.WriteString("  - ")
-		b.WriteString(point)
-		b.WriteString("\n")
-	}
-	return strings.TrimSpace(b.String())
+	return strings.TrimSpace(outline.String())
 }
 
 func parsePPTOutlineMarkdown(outline string) (pptOutlinePlan, bool) {
@@ -543,6 +553,13 @@ func appendPPTPlansToContext(contextValue, outline string, plan pptOutlinePlan) 
 		}
 		b.WriteString("STRUCTURED_PPT_PLAN\n")
 		b.WriteString(renderPPTPlanForPrompt(plan))
+		b.WriteString("\n\nPPT_HTML_GENERATION_RULES\n")
+		b.WriteString("- Treat each Slide entry as the writing brief for exactly one HTML <section>; do not merge, omit, or reorder slides.\n")
+		b.WriteString("- The outline bullets are source material, not the final wording. Expand each slide into polished presentation content with concrete explanations, comparisons, process details, or examples grounded in the provided Markdown.\n")
+		b.WriteString("- Keep every planned slide title visible as h1/h2/h3, then add 3-5 substantial points or content blocks for that page.\n")
+		b.WriteString("- The agenda slide must match the later content sections one-to-one; if the agenda lists a chapter, a later section with the same chapter title must exist.\n")
+		b.WriteString("- Design every section as a real 16:9 PPT canvas: width: 1920px; height: 1080px; overflow: hidden; use px font sizes, not web-card rem layouts.\n")
+		b.WriteString("- Finish all planned sections before returning. If the plan is long, make each section concise instead of truncating the deck.\n")
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -628,12 +645,14 @@ func analyzeLearningContent(input generationAgentInput) learningContentAnalysis 
 		markdown = input.Request.Markdown
 		prompt = input.Request.Prompt
 	}
-	points := extractKeyPoints(markdown, 12)
+	sections := extractPPTSourceSections(markdown, 18)
+	points := extractKeyPoints(markdown, 48)
 	analysis := learningContentAnalysis{
 		Topic:       extractTitle(markdown, "学习资料"),
 		KeyConcepts: points,
 		UserIntent:  strings.TrimSpace(prompt),
 		Evidence:    append(evidenceFromReferences(input.References), evidenceFromSearch(input.SearchResults)...),
+		Sections:    sections,
 		Sparse:      len(points) < 3,
 	}
 	for _, point := range points {
@@ -690,11 +709,85 @@ func containsAnyFold(value string, terms ...string) bool {
 	return false
 }
 
+func extractPPTSourceSections(markdown string, maxSections int) []pptSourceSection {
+	if maxSections <= 0 {
+		maxSections = 18
+	}
+	var sections []pptSourceSection
+	var overview []string
+	var current *pptSourceSection
+	flush := func() {
+		if current == nil {
+			return
+		}
+		current.Points = uniqueNonEmpty(current.Points)
+		if strings.TrimSpace(current.Title) != "" && len(current.Points) > 0 {
+			if len(current.Points) > 5 {
+				current.Points = append([]string{}, current.Points[:5]...)
+			}
+			sections = append(sections, *current)
+		}
+		current = nil
+	}
+
+	for _, line := range strings.Split(markdown, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			level := 0
+			for level < len(line) && line[level] == '#' {
+				level++
+			}
+			title := strings.TrimSpace(strings.TrimLeft(line, "#"))
+			if title == "" {
+				continue
+			}
+			if level == 1 && len(sections) == 0 && current == nil {
+				continue
+			}
+			if level <= 3 {
+				flush()
+				if len(sections) >= maxSections {
+					break
+				}
+				current = &pptSourceSection{Title: title}
+				continue
+			}
+		}
+		point := strings.TrimSpace(strings.TrimLeft(line, "-*0123456789. "))
+		if len([]rune(point)) < 4 {
+			continue
+		}
+		if current == nil {
+			overview = append(overview, point)
+			continue
+		}
+		current.Points = append(current.Points, point)
+	}
+	flush()
+	if len(overview) > 0 {
+		if len(overview) > 5 {
+			overview = append([]string{}, overview[:5]...)
+		}
+		sections = append([]pptSourceSection{{
+			Title:  "概述",
+			Points: uniqueNonEmpty(overview),
+		}}, sections...)
+	}
+	return sections
+}
+
 func requiredPPTSlideTitles() []string {
 	return []string{"封面", "目录", "背景与目标", "概念框架", "机制与流程", "案例与应用", "易错辨析", "总结复盘"}
 }
 
 func planPPTOutline(analysis learningContentAnalysis) pptOutlinePlan {
+	return planDynamicPPTOutline(analysis)
+}
+
+func planStaticPPTOutline(analysis learningContentAnalysis) pptOutlinePlan {
 	plan := pptOutlinePlan{Title: analysis.Topic}
 	for _, title := range requiredPPTSlideTitles() {
 		slide := pptSlidePlan{Title: title}
@@ -735,6 +828,174 @@ func planPPTOutline(analysis learningContentAnalysis) pptOutlinePlan {
 	return plan
 }
 
+func planDynamicPPTOutline(analysis learningContentAnalysis) pptOutlinePlan {
+	plan := pptOutlinePlan{Title: analysis.Topic}
+	contentSlides := pptContentSlidesFromAnalysis(analysis)
+	plan.Slides = append(plan.Slides, pptSlidePlan{
+		Title:   "封面",
+		Purpose: "建立演示主题和受众预期",
+		Bullets: uniqueNonEmpty([]string{analysis.Topic, analysis.UserIntent}),
+	})
+	agenda := pptSlidePlan{
+		Title:   "目录",
+		Purpose: "呈现演示路径",
+	}
+	for _, slide := range contentSlides {
+		agenda.Bullets = append(agenda.Bullets, slide.Title)
+	}
+	normalizePPTBullets(&agenda)
+	plan.Slides = append(plan.Slides, agenda)
+	plan.Slides = append(plan.Slides, contentSlides...)
+	if len(contentSlides) == 0 {
+		plan.Slides = append(plan.Slides, supplementalPPTSlides(analysis, 1)...)
+	}
+	plan.Slides = append(plan.Slides, pptSlidePlan{
+		Title:   "总结与行动",
+		Purpose: "收束核心结论并给出下一步",
+		Bullets: []string{
+			fmt.Sprintf("回顾“%s”的核心结构和关键判断。", analysis.Topic),
+			"提炼最需要记住的结论、风险点和应用场景。",
+			"明确后续复习、讲解或执行时的重点顺序。",
+		},
+	})
+	return plan
+}
+
+func pptContentSlidesFromAnalysis(analysis learningContentAnalysis) []pptSlidePlan {
+	sections := analysis.Sections
+	if len(sections) == 0 {
+		sections = sectionsFromFlatPoints(analysis.KeyConcepts, 12)
+	}
+	if len(sections) == 0 {
+		sections = []pptSourceSection{{
+			Title:  "核心内容",
+			Points: append([]string{}, analysis.KeyConcepts...),
+		}}
+	}
+	if len(sections) > 16 {
+		sections = sections[:16]
+	}
+	slides := make([]pptSlidePlan, 0, len(sections))
+	for i, section := range sections {
+		title := strings.TrimSpace(section.Title)
+		if title == "" {
+			title = fmt.Sprintf("内容展开 %d", i+1)
+		}
+		points := uniqueNonEmpty(section.Points)
+		if len(points) == 0 && i < len(analysis.Evidence) {
+			points = append(points, analysis.Evidence[i].Text)
+		}
+		if len(points) == 0 {
+			continue
+		}
+		slides = append(slides, pptSlidePlan{
+			Title:   title,
+			Purpose: pptSectionPurpose(title, i, len(sections)),
+			Bullets: points,
+		})
+	}
+	return slides
+}
+
+func sectionsFromFlatPoints(points []string, maxSections int) []pptSourceSection {
+	points = uniqueNonEmpty(points)
+	if len(points) == 0 {
+		return nil
+	}
+	if maxSections <= 0 {
+		maxSections = 12
+	}
+	var sections []pptSourceSection
+	for i := 0; i < len(points) && len(sections) < maxSections; i += 4 {
+		end := i + 4
+		if end > len(points) {
+			end = len(points)
+		}
+		sections = append(sections, pptSourceSection{
+			Title:  summarizeLine(points[i], 36),
+			Points: append([]string{}, points[i:end]...),
+		})
+	}
+	return sections
+}
+
+func supplementalPPTSlides(analysis learningContentAnalysis, count int) []pptSlidePlan {
+	if len(analysis.Sections) > 0 {
+		return nil
+	}
+	candidates := []pptSlidePlan{
+		{
+			Title:   "背景与目标",
+			Purpose: "说明材料背景和演示目标",
+			Bullets: []string{fmt.Sprintf("围绕“%s”建立背景、问题和目标。", analysis.Topic), "说明为什么需要理解这些内容。", "给出本次演示的学习或行动范围。"},
+		},
+		{
+			Title:   "关键关系",
+			Purpose: "梳理概念之间的关系",
+			Bullets: append([]string{}, analysis.KeyConcepts...),
+		},
+		{
+			Title:   "应用与案例",
+			Purpose: "连接材料和实际使用场景",
+			Bullets: append([]string{}, analysis.Examples...),
+		},
+	}
+	if count > len(candidates) {
+		count = len(candidates)
+	}
+	return candidates[:count]
+}
+
+func appendRealEvidencePPTSlides(slides []pptSlidePlan, analysis learningContentAnalysis, count int) []pptSlidePlan {
+	if count <= 0 || len(analysis.Evidence) == 0 {
+		return slides
+	}
+	used := map[string]struct{}{}
+	for _, slide := range slides {
+		for _, bullet := range slide.Bullets {
+			used[strings.TrimSpace(bullet)] = struct{}{}
+		}
+	}
+	points := make([]string, 0, count*3)
+	for _, ev := range analysis.Evidence {
+		point := strings.TrimSpace(ev.Text)
+		if point == "" {
+			continue
+		}
+		if _, ok := used[point]; ok {
+			continue
+		}
+		points = append(points, point)
+		if len(points) >= count*3 {
+			break
+		}
+	}
+	for i := 0; i < len(points) && count > 0; i += 3 {
+		end := i + 3
+		if end > len(points) {
+			end = len(points)
+		}
+		slides = append(slides, pptSlidePlan{
+			Title:   fmt.Sprintf("补充资料 %d", len(slides)+1),
+			Purpose: "呈现检索或引用资料中的真实要点",
+			Bullets: append([]string{}, points[i:end]...),
+		})
+		count--
+	}
+	return slides
+}
+
+func pptSectionPurpose(title string, index, total int) string {
+	switch {
+	case index == 0:
+		return "展开材料开头的核心背景和问题"
+	case index == total-1:
+		return "收束本部分材料并提炼结论"
+	default:
+		return fmt.Sprintf("解释“%s”的关键论点、证据和推导关系", title)
+	}
+}
+
 func expandPPTContent(plan pptOutlinePlan, analysis learningContentAnalysis) pptOutlinePlan {
 	evidenceIndex := 0
 	for i := range plan.Slides {
@@ -745,12 +1006,6 @@ func expandPPTContent(plan pptOutlinePlan, analysis learningContentAnalysis) ppt
 				slide.Bullets = append(slide.Bullets, ev.Text)
 				evidenceIndex++
 			}
-			for len(slide.Bullets) < 3 {
-				slide.Bullets = append(slide.Bullets, supplementBullet(slide.Title, "围绕本页主题补充学习解释。"))
-			}
-		}
-		if analysis.Sparse && slide.Title != "封面" && slide.Title != "目录" && !hasSupplementBullet(slide.Bullets) {
-			slide.Bullets = append(slide.Bullets, supplementBullet(slide.Title, "原始材料较少，本页内容为解释性学习补充。"))
 		}
 		normalizePPTBullets(slide)
 	}
@@ -762,9 +1017,6 @@ func normalizePPTBullets(slide *pptSlidePlan) {
 	switch slide.Title {
 	case "封面", "目录":
 		return
-	}
-	for len(slide.Bullets) < 3 {
-		slide.Bullets = append(slide.Bullets, supplementBullet(slide.Title, "围绕本页主题补充学习解释。"))
 	}
 	if len(slide.Bullets) > 5 {
 		slide.Bullets = append([]string{}, slide.Bullets[:5]...)
@@ -803,34 +1055,108 @@ func renderStyledPPTSlides(plan pptOutlinePlan) string {
 	var b strings.Builder
 	b.WriteString(`<style>
 :root {
-  --bg: #f7f5f0; --card: #ffffff; --card-cover: #f0ede6;
-  --accent: #c45c14; --accent-soft: #fae8d8; --accent-border: #e8a070;
-  --text: #2a2420; --muted: #6b6460; --heading: #3a1a08;
-  --border: #e4ddd4; --li-sep: #f0ece6; --dir-bg: #faf7f3;
-  --hl-bg: #fffbf0; --hl-border: #d4a460; --ev-bg: #f5f2ec;
+  --bg: #f8fafc; --surface: #ffffff; --surface-soft: #eef6f2;
+  --accent: #0f766e; --accent-2: #c2410c; --accent-soft: #d9f1ec;
+  --text: #111827; --muted: #4b5563; --heading: #0f172a;
+  --border: #d7e3df; --panel: #f3f7f6;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: var(--bg); font-family: system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif; padding: 2rem 1rem; }
-.ppt-deck { max-width: 1060px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.6rem; }
-.ppt-slide { background: var(--card); border-radius: 28px; border: 1px solid var(--border); padding: 2.6rem 3rem; box-shadow: 0 8px 24px rgba(80,50,20,.09); }
-.ppt-slide:first-child { background: var(--card-cover); border-top: 5px solid var(--accent); }
-.section-number { display: inline-block; margin-bottom: 0.7rem; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 0.2rem 0.9rem; font-size: 0.82rem; font-weight: 700; letter-spacing: 0.04em; }
-h1 { font-size: 2.6rem; font-weight: 800; color: var(--heading); line-height: 1.18; margin-bottom: 0.5rem; }
-h2 { font-size: 1.42rem; font-weight: 700; color: var(--heading); margin-bottom: 1.3rem; padding-left: 1rem; border-left: 4px solid var(--accent); }
-.ppt-slide:first-child h2 { border-left: none; padding-left: 0; font-size: 1.2rem; color: var(--muted); font-weight: 500; margin-bottom: 0.9rem; }
+.ppt-slide {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--text);
+  font-family: system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  padding: 86px 112px;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+.ppt-slide::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 520px;
+  height: 16px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+.ppt-cover {
+  justify-content: center;
+  background: linear-gradient(135deg, #f7fbfa 0%, #e8f2ef 58%, #fff7ed 100%);
+  padding: 120px 150px;
+}
+.ppt-agenda { background: #fbfdfc; }
+.section-number {
+  width: fit-content;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 10px 24px;
+  font-size: 26px;
+  font-weight: 800;
+}
+h1 { max-width: 1360px; font-size: 76px; font-weight: 850; color: var(--heading); line-height: 1.12; }
+h2 { max-width: 1480px; font-size: 52px; font-weight: 800; color: var(--heading); line-height: 1.18; }
+.ppt-cover h2 { font-size: 34px; color: var(--accent); font-weight: 750; }
 ul { list-style: none; padding-left: 0; }
-li { display: flex; align-items: baseline; gap: 0.7rem; padding: 0.55rem 0; border-bottom: 1px solid var(--li-sep); color: var(--text); font-size: 1.05rem; line-height: 1.62; }
-li::before { content: "▸"; color: var(--accent); font-size: 0.85rem; flex-shrink: 0; }
+li {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 18px 0;
+  color: var(--text);
+  font-size: 32px;
+  line-height: 1.36;
+  border-bottom: 1px solid var(--border);
+}
+li::before { content: ""; width: 12px; height: 12px; margin-top: 16px; border-radius: 999px; background: var(--accent); flex-shrink: 0; }
 li:last-child { border-bottom: none; }
-.dir-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.9rem; margin-top: 0.7rem; }
-.dir-item { background: var(--dir-bg); border: 1px solid var(--border); border-radius: 18px; padding: 1rem 1.1rem; text-align: center; color: var(--heading); font-weight: 600; font-size: 0.98rem; }
-.highlight-box { margin-top: 1.2rem; background: var(--hl-bg); border-left: 4px solid var(--hl-border); border-radius: 14px; padding: 0.9rem 1.3rem; color: var(--heading); font-weight: 500; font-size: 1.02rem; }
-.footnote { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 1.2rem; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 0.45rem 1.1rem; font-size: 0.9rem; font-weight: 600; }
-.evidence { margin-top: 1.2rem; background: var(--ev-bg); border: 1px dashed var(--accent-border); border-radius: 16px; padding: 0.9rem 1.3rem; color: var(--muted); font-size: 0.94rem; }
+.content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(420px, .7fr);
+  gap: 54px;
+  align-items: start;
+}
+.main-points {
+  background: var(--surface);
+  border-top: 6px solid var(--accent);
+  padding: 12px 0 0;
+}
+.dir-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+.dir-item {
+  min-height: 118px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 28px 32px;
+  color: var(--heading);
+  font-weight: 750;
+  font-size: 31px;
+  line-height: 1.25;
+}
+.highlight-box, .evidence, .footnote {
+  border-radius: 8px;
+  padding: 28px 34px;
+  font-size: 28px;
+  line-height: 1.36;
+}
+.highlight-box { background: #fff7ed; border-left: 8px solid var(--accent-2); color: #2d1d12; }
+.evidence { background: var(--surface-soft); border: 1px solid var(--border); color: var(--muted); }
+.footnote { width: fit-content; background: var(--accent-soft); color: var(--accent); font-weight: 750; }
 </style>`)
-	b.WriteString(`<div class="ppt-deck">`)
 	for i, slide := range plan.Slides {
-		b.WriteString(`<section class="ppt-slide">`)
+		className := "ppt-slide"
+		if i == 0 {
+			className += " ppt-cover"
+		} else if i == 1 {
+			className += " ppt-agenda"
+		}
+		b.WriteString(`<section class="`)
+		b.WriteString(className)
+		b.WriteString(`" data-ppt-slide="true">`)
 		b.WriteString(`<span class="section-number">`)
 		b.WriteString(fmt.Sprintf("%02d", i+1))
 		b.WriteString(`</span>`)
@@ -857,27 +1183,32 @@ li:last-child { border-bottom: none; }
 			}
 			b.WriteString(`</div>`)
 		} else if len(slide.Bullets) > 0 {
-			b.WriteString("<ul>")
+			b.WriteString(`<div class="content-grid"><ul class="main-points">`)
 			for _, bullet := range slide.Bullets {
 				b.WriteString("<li>")
 				b.WriteString(htmlEscape(bullet))
 				b.WriteString("</li>")
 			}
 			b.WriteString("</ul>")
+			if strings.TrimSpace(slide.Purpose) != "" && i > 0 {
+				b.WriteString(`<div class="highlight-box">`)
+				b.WriteString(htmlEscape(slide.Purpose))
+				b.WriteString(`</div>`)
+			}
+			b.WriteString("</div>")
 		}
 		switch {
 		case i == 0:
-			b.WriteString(`<div class="footnote">Dynamic HTML fallback deck with editable PPT blocks</div>`)
+			b.WriteString(`<div class="footnote">Based on imported notes and selected knowledge points</div>`)
 		case i == 1:
-			b.WriteString(`<div class="evidence">Fallback HTML keeps semantic cards and block styling so PPT export stays visually structured.</div>`)
-		case strings.TrimSpace(slide.Purpose) != "":
+			b.WriteString(`<div class="evidence">Agenda items are organized from the note sections and key points.</div>`)
+		case strings.TrimSpace(slide.Purpose) != "" && len(slide.Bullets) == 0:
 			b.WriteString(`<div class="highlight-box">`)
 			b.WriteString(htmlEscape(slide.Purpose))
 			b.WriteString(`</div>`)
 		}
 		b.WriteString("</section>\n")
 	}
-	b.WriteString(`</div>`)
 	return strings.TrimSpace(b.String())
 }
 
@@ -892,6 +1223,120 @@ func pptNeedsStructureRepair(content string) bool {
 		return true
 	}
 	return false
+}
+
+func pptContainsInternalPromptLeak(content string) bool {
+	text := strings.ToLower(strings.Join(strings.Fields(stripSimpleHTML(content)), " "))
+	if text == "" {
+		return false
+	}
+	leakTokens := []string{
+		"structured_ppt_plan",
+		"ppt_html_generation_rules",
+		"treat each slide entry",
+		"the outline bullets are source material",
+		"keep every planned slide title visible",
+		"design every section as a real 16:9 ppt canvas",
+		"finish all planned sections before returning",
+		"internal slide outline",
+		"generation constraints",
+		"original markdown:",
+		"local references:",
+	}
+	for _, token := range leakTokens {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func pptNeedsPlanCoverageRepair(content string, plan *pptOutlinePlan) bool {
+	if plan == nil || len(plan.Slides) == 0 {
+		return false
+	}
+	if strings.TrimSpace(plan.Title) != "" && !containsPlannedHeading(pptHTMLHeadings(content), strings.ToLower(strings.TrimSpace(plan.Title))) {
+		return true
+	}
+	actual := pptSectionCount(content)
+	expected := len(plan.Slides)
+	if expected <= 4 {
+		return actual < expected
+	}
+	return actual < expected || actual < 6 || pptMissingPlannedTitles(content, plan)
+}
+
+func pptSectionCount(content string) int {
+	return strings.Count(strings.ToLower(content), "<section")
+}
+
+func pptMissingPlannedTitles(content string, plan *pptOutlinePlan) bool {
+	headings := pptHTMLHeadings(content)
+	required := 0
+	missing := 0
+	for _, slide := range plan.Slides {
+		title := strings.ToLower(strings.TrimSpace(slide.Title))
+		if title == "" || isGenericPPTPlanTitle(title) {
+			continue
+		}
+		required++
+		if !containsPlannedHeading(headings, title) {
+			missing++
+		}
+	}
+	if required == 0 {
+		return false
+	}
+	return missing > 0
+}
+
+func containsPlannedHeading(headings []string, title string) bool {
+	for _, heading := range headings {
+		if strings.Contains(heading, title) || strings.Contains(title, heading) {
+			return true
+		}
+	}
+	return false
+}
+
+func pptHTMLHeadings(content string) []string {
+	lower := strings.ToLower(content)
+	var headings []string
+	for _, tag := range []string{"h1", "h2", "h3"} {
+		open := "<" + tag
+		close := "</" + tag + ">"
+		searchFrom := 0
+		for {
+			start := strings.Index(lower[searchFrom:], open)
+			if start < 0 {
+				break
+			}
+			start += searchFrom
+			openEnd := strings.Index(lower[start:], ">")
+			if openEnd < 0 {
+				break
+			}
+			textStart := start + openEnd + 1
+			end := strings.Index(lower[textStart:], close)
+			if end < 0 {
+				break
+			}
+			textEnd := textStart + end
+			heading := strings.ToLower(strings.TrimSpace(stripSimpleHTML(content[textStart:textEnd])))
+			if heading != "" {
+				headings = append(headings, heading)
+			}
+			searchFrom = textEnd + len(close)
+		}
+	}
+	return headings
+}
+
+func isGenericPPTPlanTitle(title string) bool {
+	return containsAnyFold(title,
+		"cover", "agenda", "closing", "finish", "end",
+		"封面", "目录", "总结", "结束", "行动",
+	)
 }
 
 func requiredMindmapBranchTitles() []string {
