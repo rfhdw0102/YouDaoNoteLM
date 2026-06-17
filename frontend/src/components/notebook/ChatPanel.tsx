@@ -2,13 +2,16 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Send, Plus, MessageSquare, Trash2, Save, Loader2,
-  ChevronDown, Sparkles, Edit3, Square, X, Copy, Check
+  ChevronDown, Sparkles, Edit3, Square, X, Copy, Check,
+  Bot, Settings
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { visit } from 'unist-util-visit';
 import { useNotebookStore } from '../../stores/useNotebookStore';
 import { cn } from '../../utils/cn';
+import { listLLMConfigs } from '../../api/userConfig';
+import type { UserLLMConfig } from '../../api/userConfig';
 import type { NoteType, Reference } from '../../types';
 import type { Root, Text } from 'mdast';
 
@@ -279,10 +282,14 @@ export default function ChatPanel() {
 
   const [input, setInput] = useState('');
   const [showConvList, setShowConvList] = useState(false);
+  const [showModelList, setShowModelList] = useState(false);
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editConvTitle, setEditConvTitle] = useState('');
+  const [llmConfigs, setLlmConfigs] = useState<UserLLMConfig[]>([]);
+  const [selectedLlmConfigId, setSelectedLlmConfigId] = useState<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const prevConvIdRef = useRef<string | null>(null);
+  const modelListRef = useRef<HTMLDivElement>(null);
 
   // Check if any message is streaming
   const isStreaming = conversation?.messages.some((m) => m.isStreaming) ?? false;
@@ -303,6 +310,34 @@ export default function ChatPanel() {
     }
   }, [currentNotebookId, conversation?.id, fetchMessages]);
 
+  // Load LLM configs on mount
+  useEffect(() => {
+    listLLMConfigs().then((res) => {
+      if (res.code === 0 && res.data) {
+        const enabledConfigs = res.data.filter((c) => c.enabled);
+        setLlmConfigs(enabledConfigs);
+        if (enabledConfigs.length > 0 && selectedLlmConfigId === 0) {
+          setSelectedLlmConfigId(enabledConfigs[0].id);
+        }
+      }
+    }).catch((err) => {
+      console.error('Failed to load LLM configs:', err);
+    });
+  }, []);
+
+  // Close model dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (modelListRef.current && !modelListRef.current.contains(e.target as Node)) {
+        setShowModelList(false);
+      }
+    }
+    if (showModelList) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showModelList]);
+
   const handleCopy = useCallback(async (content: string) => {
     try {
       await navigator.clipboard.writeText(content);
@@ -320,6 +355,7 @@ export default function ChatPanel() {
 
   const handleSend = async () => {
     if (!input.trim() || isStreaming || !conversation?.id) return;
+    if (llmConfigs.length === 0) return;
 
     const messageContent = input.trim();
     setInput('');
@@ -327,7 +363,7 @@ export default function ChatPanel() {
     const sourceIds = selectedSources.map((s) => Number(s.id));
 
     try {
-      await sendMessage(currentNotebookId, conversation.id, messageContent, sourceIds);
+      await sendMessage(currentNotebookId, conversation.id, messageContent, sourceIds, selectedLlmConfigId);
     } catch (err) {
       console.error('Failed to send message:', err);
     }
@@ -587,7 +623,75 @@ export default function ChatPanel() {
             )}
           />
           <div className="flex items-center justify-between px-3 pb-2">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
+              {llmConfigs.length > 0 ? (
+                <div className="relative" ref={modelListRef}>
+                  <button
+                    onClick={() => !isStreaming && setShowModelList(!showModelList)}
+                    disabled={isStreaming}
+                    className={cn(
+                      'flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border transition-all cursor-pointer',
+                      showModelList
+                        ? 'bg-accent/10 border-accent/30 text-accent'
+                        : 'bg-bg-hover border-border-light text-text-secondary hover:border-accent/30 hover:text-accent'
+                    )}
+                  >
+                    <Bot size={12} />
+                    <span className="max-w-[120px] truncate">
+                      {llmConfigs.find((c) => c.id === selectedLlmConfigId)?.name || '选择模型'}
+                    </span>
+                    <ChevronDown size={11} className={cn('transition-transform', showModelList && 'rotate-180')} />
+                  </button>
+
+                  <AnimatePresence>
+                    {showModelList && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 4 }}
+                        className="absolute left-0 bottom-full mb-1 w-56 bg-bg-card border border-border-light rounded-xl shadow-xl z-50 overflow-hidden"
+                      >
+                        <div className="p-1.5">
+                          {llmConfigs.map((config) => (
+                            <button
+                              key={config.id}
+                              onClick={() => {
+                                setSelectedLlmConfigId(config.id);
+                                setShowModelList(false);
+                              }}
+                              className={cn(
+                                'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all cursor-pointer',
+                                config.id === selectedLlmConfigId
+                                  ? 'bg-accent/10 text-accent'
+                                  : 'text-text-secondary hover:bg-bg-hover'
+                              )}
+                            >
+                              <div className={cn(
+                                'w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0',
+                                config.id === selectedLlmConfigId ? 'bg-accent/20' : 'bg-bg-hover'
+                              )}>
+                                <Bot size={12} className={config.id === selectedLlmConfigId ? 'text-accent' : 'text-text-muted'} />
+                              </div>
+                              <div className="flex-1 text-left min-w-0">
+                                <div className="font-medium truncate">{config.name || config.model}</div>
+                                <div className="text-[10px] text-text-muted truncate">{config.provider} · {config.model}</div>
+                              </div>
+                              {config.id === selectedLlmConfigId && (
+                                <Check size={12} className="text-accent flex-shrink-0" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              ) : (
+                <span className="flex items-center gap-1 text-[11px] text-warning">
+                  <Settings size={11} />
+                  请先配置 LLM
+                </span>
+              )}
               {selectedSources.length > 0 && (
                 <span className="text-[10px] text-accent bg-accent-glow px-1.5 py-0.5 rounded">
                   基于 {selectedSources.length} 份资料
@@ -604,10 +708,10 @@ export default function ChatPanel() {
             ) : (
               <button
                 onClick={handleSend}
-                disabled={!input.trim()}
+                disabled={!input.trim() || llmConfigs.length === 0}
                 className={cn(
                   'p-2 rounded-lg transition-all cursor-pointer',
-                  input.trim()
+                  input.trim() && llmConfigs.length > 0
                     ? 'bg-accent text-white hover:bg-accent-light shadow-md shadow-accent/30'
                     : 'bg-bg-hover text-text-muted cursor-not-allowed'
                 )}

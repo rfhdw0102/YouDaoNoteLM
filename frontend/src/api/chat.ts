@@ -1,5 +1,6 @@
 import client, { doRefreshToken } from './client';
 import type { ApiResponse } from './auth';
+import { getChatErrorMessage } from '../utils/error';
 
 // ============ Request/Response Types ============
 
@@ -120,7 +121,8 @@ async function isTokenErrorResponse(response: Response): Promise<boolean> {
 export async function sendMessage(
   conversationId: number,
   content: string,
-  sourceIds?: number[]
+  sourceIds?: number[],
+  llmConfigId?: number
 ): Promise<Response> {
   const makeRequest = (token: string) =>
     fetch(`/api/v1/chat/conversations/${conversationId}/messages`, {
@@ -132,6 +134,7 @@ export async function sendMessage(
       body: JSON.stringify({
         content,
         source_ids: sourceIds || [],
+        llm_config_id: llmConfigId || 0,
       }),
     });
 
@@ -276,7 +279,8 @@ export function parseSSEStream(
         // Call onDone to preserve the accumulated content
         callbacks.onDone?.('');
       } else {
-        callbacks.onError?.(error instanceof Error ? error.message : '流读取错误');
+        const rawMessage = error instanceof Error ? error.message : '流读取错误';
+        callbacks.onError?.(getChatErrorMessage(rawMessage));
       }
     }
   })();

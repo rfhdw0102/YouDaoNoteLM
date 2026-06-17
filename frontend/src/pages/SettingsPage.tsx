@@ -1221,9 +1221,8 @@ export default function SettingsPage() {
               </div>
             </motion.div>
           ) : (
-            // 只有当该服务类型没有用户配置时才显示添加按钮
-            // 注意：configs 列表只包含用户配置，不包含系统配置
-            configs.length === 0 && (
+            // LLM 类型允许多个配置，其他类型只能配置一个
+            (activeTab === 'llm' || configs.length === 0) && (
               <button
                 onClick={() => setShowAddForm(true)}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-dashed border-border-light text-text-muted hover:text-accent hover:border-accent/40 transition-all cursor-pointer mt-4"
