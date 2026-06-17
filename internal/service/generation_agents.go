@@ -605,22 +605,31 @@ func renderPPTSlides(plan pptOutlinePlan) string {
 func renderStyledPPTSlides(plan pptOutlinePlan) string {
 	var b strings.Builder
 	b.WriteString(`<style>
-body { background: #eef3e8; font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; }
-.ppt-deck { display: flex; flex-direction: column; gap: 1.6rem; }
-.ppt-slide { background: #ffffff; border-radius: 32px; border: 1px solid #dce8d0; padding: 2.4rem 2.8rem; box-shadow: 0 12px 30px rgba(60, 80, 40, 0.12); }
-.ppt-slide:first-child { background: linear-gradient(145deg, #f6fbf0 0%, #e9f2db 100%); border-bottom: 4px solid #8bb86b; }
-.section-number { display: inline-block; margin-bottom: 0.8rem; color: #5a7350; font-size: 0.9rem; font-weight: 700; }
-h1 { margin: 0 0 0.4rem; font-size: 3rem; font-weight: 700; color: #1e3a0e; }
-h2 { margin: 0 0 1.2rem; font-size: 1.5rem; font-weight: 600; color: #2d5a1a; border-left: 5px solid #7bb05c; padding-left: 1rem; }
-.ppt-slide:first-child h2 { border-left: none; padding-left: 0; font-size: 1.3rem; color: #41692b; font-weight: 500; }
-ul { list-style: none; margin: 0; padding-left: 0.4rem; }
-li { padding: 0.5rem 0 0.5rem 1.8rem; border-bottom: 1px solid #f0f5ea; color: #1f2f16; font-size: 1.08rem; line-height: 1.6; }
+:root {
+  --bg: #f7f5f0; --card: #ffffff; --card-cover: #f0ede6;
+  --accent: #c45c14; --accent-soft: #fae8d8; --accent-border: #e8a070;
+  --text: #2a2420; --muted: #6b6460; --heading: #3a1a08;
+  --border: #e4ddd4; --li-sep: #f0ece6; --dir-bg: #faf7f3;
+  --hl-bg: #fffbf0; --hl-border: #d4a460; --ev-bg: #f5f2ec;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); font-family: system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif; padding: 2rem 1rem; }
+.ppt-deck { max-width: 1060px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.6rem; }
+.ppt-slide { background: var(--card); border-radius: 28px; border: 1px solid var(--border); padding: 2.6rem 3rem; box-shadow: 0 8px 24px rgba(80,50,20,.09); }
+.ppt-slide:first-child { background: var(--card-cover); border-top: 5px solid var(--accent); }
+.section-number { display: inline-block; margin-bottom: 0.7rem; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 0.2rem 0.9rem; font-size: 0.82rem; font-weight: 700; letter-spacing: 0.04em; }
+h1 { font-size: 2.6rem; font-weight: 800; color: var(--heading); line-height: 1.18; margin-bottom: 0.5rem; }
+h2 { font-size: 1.42rem; font-weight: 700; color: var(--heading); margin-bottom: 1.3rem; padding-left: 1rem; border-left: 4px solid var(--accent); }
+.ppt-slide:first-child h2 { border-left: none; padding-left: 0; font-size: 1.2rem; color: var(--muted); font-weight: 500; margin-bottom: 0.9rem; }
+ul { list-style: none; padding-left: 0; }
+li { display: flex; align-items: baseline; gap: 0.7rem; padding: 0.55rem 0; border-bottom: 1px solid var(--li-sep); color: var(--text); font-size: 1.05rem; line-height: 1.62; }
+li::before { content: "▸"; color: var(--accent); font-size: 0.85rem; flex-shrink: 0; }
 li:last-child { border-bottom: none; }
-.dir-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.9rem; margin-top: 0.6rem; }
-.dir-item { background: #f4f9ee; border: 1px solid #d4e4c4; border-radius: 16px; padding: 0.9rem 1rem; text-align: center; color: #1e4a0c; font-weight: 600; }
-.highlight-box { margin-top: 1.1rem; background: #faffed; border-left: 4px solid #7bb05c; border-radius: 14px; padding: 0.9rem 1.3rem; color: #1a3a0a; font-weight: 500; }
-.footnote { display: inline-block; margin-top: 1.2rem; background: #f2f8ec; color: #5a7350; border-radius: 999px; padding: 0.6rem 1.2rem; font-size: 0.92rem; }
-.evidence { margin-top: 1.2rem; background: #f0f6ea; border: 1px dashed #b8d4a0; border-radius: 16px; padding: 1rem 1.4rem; color: #2d4d1e; }
+.dir-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.9rem; margin-top: 0.7rem; }
+.dir-item { background: var(--dir-bg); border: 1px solid var(--border); border-radius: 18px; padding: 1rem 1.1rem; text-align: center; color: var(--heading); font-weight: 600; font-size: 0.98rem; }
+.highlight-box { margin-top: 1.2rem; background: var(--hl-bg); border-left: 4px solid var(--hl-border); border-radius: 14px; padding: 0.9rem 1.3rem; color: var(--heading); font-weight: 500; font-size: 1.02rem; }
+.footnote { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 1.2rem; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 0.45rem 1.1rem; font-size: 0.9rem; font-weight: 600; }
+.evidence { margin-top: 1.2rem; background: var(--ev-bg); border: 1px dashed var(--accent-border); border-radius: 16px; padding: 0.9rem 1.3rem; color: var(--muted); font-size: 0.94rem; }
 </style>`)
 	b.WriteString(`<div class="ppt-deck">`)
 	for i, slide := range plan.Slides {

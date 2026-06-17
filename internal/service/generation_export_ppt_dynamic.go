@@ -1755,6 +1755,31 @@ func resolveAlignment(value string) pptx.Alignment {
 	}
 }
 
+func containsCJK(text string) bool {
+	for _, r := range text {
+		if (r >= 0x4E00 && r <= 0x9FFF) ||
+			(r >= 0x3400 && r <= 0x4DBF) ||
+			(r >= 0xF900 && r <= 0xFAFF) ||
+			(r >= 0x3000 && r <= 0x303F) ||
+			(r >= 0xFF00 && r <= 0xFFEF) {
+			return true
+		}
+	}
+	return false
+}
+
+func charsPerLineForText(text string, width float64) int {
+	density := 6.5
+	if containsCJK(text) {
+		density = 4.6
+	}
+	n := int(width * density)
+	if n < 8 {
+		n = 8
+	}
+	return n
+}
+
 func estimateTextHeight(text string, fontSize int, width float64) float64 {
 	if fontSize <= 0 {
 		fontSize = dynamicPPTDefaultBodyFont
@@ -1766,32 +1791,30 @@ func estimateTextHeight(text string, fontSize int, width float64) float64 {
 	if runes == 0 {
 		return 0.22
 	}
-	charsPerLine := int(width * 7.0)
-	if charsPerLine < 10 {
-		charsPerLine = 10
-	}
+	charsPerLine := charsPerLineForText(text, width)
 	lines := (runes + charsPerLine - 1) / charsPerLine
-	lineHeight := float64(fontSize) * 1.22 / 72.0
+	lineHeight := float64(fontSize) * 1.28 / 72.0
 	return dynamicPPTMaxFloat(lineHeight*float64(lines), 0.26)
 }
 
 func estimateTextHeightWithStyle(text string, style pptStyle, fontSize int, width float64) float64 {
-	height := estimateTextHeight(text, fontSize, width)
-	if style.LineHeight == nil || *style.LineHeight <= 0 {
-		return height
-	}
-
 	trimmed := strings.TrimSpace(text)
 	runes := len([]rune(trimmed))
 	if runes == 0 {
 		return 0.22
 	}
-	charsPerLine := int(width * 7.0)
-	if charsPerLine < 10 {
-		charsPerLine = 10
-	}
+	charsPerLine := charsPerLineForText(trimmed, width)
 	lines := (runes + charsPerLine - 1) / charsPerLine
-	return dynamicPPTMaxFloat(*style.LineHeight*float64(lines), 0.26)
+
+	if style.LineHeight != nil && *style.LineHeight > 0 {
+		return dynamicPPTMaxFloat(*style.LineHeight*float64(lines), 0.26)
+	}
+
+	if fontSize <= 0 {
+		fontSize = dynamicPPTDefaultBodyFont
+	}
+	lineHeight := float64(fontSize) * 1.28 / 72.0
+	return dynamicPPTMaxFloat(lineHeight*float64(lines), 0.26)
 }
 
 func parseInlineStyleMap(value string) map[string]string {
