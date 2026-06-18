@@ -607,7 +607,21 @@ func normalizeInlineText(value string) string {
 	if trailing {
 		collapsed += " "
 	}
+	if !leading && startsWithPPTMarkdownSyntaxMarker(collapsed) {
+		collapsed = cleanPPTVisibleText(collapsed)
+	}
 	return collapsed
+}
+
+func startsWithPPTMarkdownSyntaxMarker(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") || strings.HasPrefix(trimmed, "• ") {
+		return true
+	}
+	return false
 }
 
 func isInlineWhitespace(r rune) bool {

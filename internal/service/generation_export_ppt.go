@@ -230,7 +230,7 @@ func normalizePPTExportText(value string) string {
 	value = stripSimpleHTML(value)
 	value = html.UnescapeString(value)
 	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
-	return value
+	return cleanPPTVisibleText(value)
 }
 
 func buildPPTXBytes(slides []pptExportSlide, deckTitle string, template pptExportTemplate) ([]byte, error) {
