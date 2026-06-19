@@ -175,7 +175,7 @@ func (a *App) initDependencies() {
 	audioPreviewCache := cache.NewAudioPreviewCache(redisCache)
 
 	// 创建 ConfigService（配置路由降级，管理 ASR/Search/LLM/Embedding 等动态服务）
-	configSvc := service.NewConfigService(sysConfigRepo, userConfigRepo, llmConfigRepo, redisCache, minioStorage)
+	configSvc := service.NewConfigService(sysConfigRepo, userConfigRepo, llmConfigRepo, redisCache, minioStorage, a.cfg.Security.EncryptionKey)
 
 	// 创建 AdminService（依赖 configSvc 用于清除配置缓存，必须在 configSvc 之后创建）
 	adminSvc := service.NewAdminService(userRepo, sysConfigRepo, configSvc)
@@ -234,7 +234,7 @@ func (a *App) initDependencies() {
 	logger.Info("RAGRetriever 初始化成功")
 
 	// 创建用户配置服务
-	userCfgSvc := service.NewUserConfigService(userConfigRepo, llmConfigRepo, configSvc)
+	userCfgSvc := service.NewUserConfigService(userConfigRepo, llmConfigRepo, configSvc, a.cfg.Security.EncryptionKey)
 
 	// 创建有道云笔记服务（CLI 不可用时仅打 warning，不影响启动）
 	youdaoCLI := externalYoudao.NewCLI(a.cfg.External.Youdao.CLIPath, a.cfg.External.Youdao.ConverterScriptPath)
@@ -253,10 +253,10 @@ func (a *App) initDependencies() {
 	if a.redis != nil {
 		generationMemory = service.NewGenerationMemoryCacheStore(cache.NewGenerationMemoryCache(a.redis))
 	}
-	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory)
+	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory, a.cfg.Security.EncryptionKey)
 
 	// 创建 ChatAgentService 和 ConversationService
-	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache)
+	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache, a.cfg.Security.EncryptionKey)
 	convSvc := service.NewConversationService(conversationRepo, messageRepo, chatCache)
 	logger.Info("ChatAgentService 初始化成功")
 	logger.Info("ConversationService 初始化成功")
@@ -310,7 +310,7 @@ func (a *App) initIngestionService(sourceRepo repository.SourceRepository, confi
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		batchSize := rag.GetBatchSizeByProvider(cfg.Provider, cfg.APIURL)
+		batchSize := rag.GetBatchSize(cfg.Provider, cfg.APIURL)
 		vectorDim := 0
 		if cfg.Dimensions != nil {
 			vectorDim = *cfg.Dimensions

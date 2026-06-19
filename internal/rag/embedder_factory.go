@@ -3,6 +3,7 @@ package rag
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"YoudaoNoteLm/internal/model/entity"
@@ -116,21 +117,69 @@ func NewEmbedderFromConfig(ctx context.Context, cfg *entity.UserConfig) (embeddi
 	return NewEmbedder(ctx, embeddingCfg)
 }
 
-// GetBatchSizeByProvider 根据 provider 和 baseURL 返回对应的批量限制
-func GetBatchSizeByProvider(provider, baseURL string) int {
+// hostBatchEntry base_url 主机名 → 单次 EmbedStrings 最大输入条数。
+// OpenAI 兼容厂商；OpenAI 官方协议上限较高，单独列出。
+type hostBatchEntry struct {
+	suffix string // 主机名后缀，支持精确匹配或子域匹配（a.b.com 匹配 b.com）
+	batch  int
+}
+
+// hostBatchTable 按 base_url 主机名查 batch size 的表。
+// 维护说明：新增厂商时按 host 后缀追加即可，匹配逻辑见 batchSizeByHost。
+var hostBatchTable = []hostBatchEntry{
+	{"api.openai.com", 2048},           // OpenAI 官方
+	{"dashscope.aliyuncs.com", 10},     // 通义千问
+	{"open.bigmodel.cn", 64},           // 智谱
+	{"api.siliconflow.cn", 32},         // 硅基流动
+	{"api.together.xyz", 100},          // Together
+	{"api.baichuan-ai.com", 16},        // 百川
+	{"api.moonshot.cn", 16},            // Moonshot
+	{"ark.cn-beijing.volces.com", 256}, // 火山方舟 OpenAI 兼容入口
+}
+
+const (
+	// arkBatchSize 火山方舟原生协议（非 OpenAI 兼容入口）的默认批量。
+	arkBatchSize = 256
+	// defaultOpenAICompatibleBatchSize 未识别 host 的 OpenAI 兼容厂商兜底，
+	defaultOpenAICompatibleBatchSize = 16
+)
+
+// batchSizeByHost 按 base_url 的主机名在 hostBatchTable 中查 batch size。
+// 用 url.Parse + 后缀匹配，避免 strings.Contains 的子串误匹配。
+func batchSizeByHost(baseURL string) (int, bool) {
+	if baseURL == "" {
+		return 0, false
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return 0, false
+	}
+	host := strings.ToLower(u.Host)
+	for _, e := range hostBatchTable {
+		suffix := strings.ToLower(e.suffix)
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return e.batch, true
+		}
+	}
+	return 0, false
+}
+
+// GetBatchSize 决定一次 EmbedStrings 调用的最大输入条数。
+// 判定优先级：
+//  1. base_url 主机名查表（hostBatchTable）
+//  2. 协议默认：火山方舟原生 256，其余 OpenAI 兼容厂商兜底 16
+func GetBatchSize(provider, baseURL string) int {
+	// 1. 按 base_url 主机名查表
+	if size, ok := batchSizeByHost(baseURL); ok {
+		return size
+	}
+
+	// 2. 协议默认
 	switch EmbeddingProvider(provider) {
 	case ProviderArk, ProviderVolcengine:
-		// 火山引擎/豆包
-		return 256
-	case ProviderOpenAI:
-		// 检查是否是通义千问
-		if strings.Contains(baseURL, "dashscope.aliyuncs.com") {
-			return 10
-		}
-		// OpenAI
-		return 2048
+		return arkBatchSize
 	default:
-		// 未知厂商，使用保守值
-		return 10
+		// ProviderOpenAI 及其它未识别 host 的 OpenAI 兼容厂商统一兜底
+		return defaultOpenAICompatibleBatchSize
 	}
 }

@@ -8,15 +8,20 @@ import (
 	"YoudaoNoteLm/pkg/cache"
 )
 
-// FormatRetrievalResults 格式化检索结果，offset 用于多次检索时编号连续
-func FormatRetrievalResults(results []*rag.RetrieveResult) string {
+// FormatRetrievalResults 格式化检索结果。
+// startIndex 用于多次检索时编号连续：第 N 次检索从 startIndex 开始编号，
+// 与 ReferenceCollector 中的全局序号一致，避免 LLM 引用 [n] 与前端列表错位。
+func FormatRetrievalResults(results []*rag.RetrieveResult, startIndex int) string {
 	if len(results) == 0 {
 		return "未找到相关资料"
+	}
+	if startIndex <= 0 {
+		startIndex = 1
 	}
 
 	var sb strings.Builder
 	for i, r := range results {
-		sb.WriteString(fmt.Sprintf("[%d] 来源: %s\n", i+1, r.SourceName))
+		sb.WriteString(fmt.Sprintf("[%d] 来源: %s\n", startIndex+i, r.SourceName))
 		if r.Heading != "" {
 			sb.WriteString(fmt.Sprintf("章节: %s\n", r.Heading))
 		}

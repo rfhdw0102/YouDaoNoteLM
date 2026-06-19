@@ -27,13 +27,7 @@ func (s *chatAgentService) forwardAgentEvents(ctx context.Context, eventCh chan<
 			// 检查是否是主动取消
 			if ctx.Err() == context.Canceled {
 				logger.Info("[Agent] 用户主动取消，保留已生成内容", zap.Int("contentLen", len(fullContent)))
-				// 如果有已生成内容，发送 token 事件让前端保留
-				if len(fullContent) > 0 {
-					eventCh <- AgentStreamEvent{
-						Type:    AgentEventToken,
-						Content: "", // 空内容表示流结束
-					}
-				}
+				// 已经流式推送的内容保留即可，不再额外发空 token 事件
 				return fullContent
 			}
 			logger.Error("[Agent] Agent 错误", zap.Error(event.Err))

@@ -11,6 +11,7 @@ import (
 
 	"YoudaoNoteLm/internal/llm"
 	"YoudaoNoteLm/pkg/logger"
+	"YoudaoNoteLm/pkg/utils"
 
 	"go.uber.org/zap"
 )
@@ -41,7 +42,7 @@ func (s *chatAgentService) generateAndUpdateTitle(ctx context.Context, conversat
 		{Role: schema.User, Content: titlePrompt},
 	}
 
-	stream, err := (*llmModel).Stream(ctx, messages)
+	stream, err := llmModel.Stream(ctx, messages)
 	if err != nil {
 		logger.Warn("[Agent] 调用 LLM 生成标题失败", zap.Error(err))
 		return ""
@@ -67,15 +68,8 @@ func (s *chatAgentService) generateAndUpdateTitle(ctx context.Context, conversat
 		return ""
 	}
 
-	// 更新数据库中的标题
-	conv, err := s.conversationRepo.FindByID(conversationID)
-	if err != nil || conv == nil {
-		logger.Warn("[Agent] 查询对话失败", zap.Error(err))
-		return ""
-	}
-
-	conv.Title = title
-	if err := s.conversationRepo.Update(conv); err != nil {
+	// 仅更新 title 字段，避免 db.Save 把 summary 等其他字段清零
+	if err := s.conversationRepo.UpdateTitle(conversationID, title); err != nil {
 		logger.Warn("[Agent] 更新对话标题失败", zap.Error(err))
 		return ""
 	}
@@ -85,7 +79,7 @@ func (s *chatAgentService) generateAndUpdateTitle(ctx context.Context, conversat
 }
 
 // getChatModel 获取用户的 ChatModel
-func (s *chatAgentService) getChatModel(ctx context.Context, userID uint) (*model.ToolCallingChatModel, error) {
+func (s *chatAgentService) getChatModel(ctx context.Context, userID uint) (model.ToolCallingChatModel, error) {
 	cfg, err := s.llmConfigRepo.FindDefaultByUserID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("获取用户 LLM 配置失败: %w", err)
@@ -94,11 +88,17 @@ func (s *chatAgentService) getChatModel(ctx context.Context, userID uint) (*mode
 		return nil, fmt.Errorf("用户 %d 未配置 LLM", userID)
 	}
 
-	chatModel, err := llm.NewChatModel(ctx, cfg)
-	if err != nil {
-		return nil, err
+	// 解密 API Key
+	if cfg.APIKey != "" && len(s.encryptionKey) > 0 {
+		decrypted, decErr := utils.Decrypt(cfg.APIKey, s.encryptionKey)
+		if decErr != nil {
+			logger.Debug("解密 API Key 失败（可能未加密）", zap.Error(decErr))
+		} else {
+			cfg.APIKey = decrypted
+		}
 	}
-	return &chatModel, nil
+
+	return llm.NewChatModel(ctx, cfg)
 }
 
 // cleanTitle 清理标题

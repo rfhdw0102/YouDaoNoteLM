@@ -14,19 +14,19 @@ import (
 
 // RAGRetrieverTool 知识库检索工具
 type RAGRetrieverTool struct {
-	retriever  rag.RAGRetriever
-	userID     uint
-	sourceIDs  []uint
-	references *[]response.Reference // 引用收集器
+	retriever rag.RAGRetriever
+	userID    uint
+	sourceIDs []uint
+	collector *ReferenceCollector // 引用收集器，跨多次调用累积
 }
 
 // NewRAGRetrieverTool 创建检索工具
-func NewRAGRetrieverTool(retriever rag.RAGRetriever, userID uint, sourceIDs []uint, references *[]response.Reference) tool.InvokableTool {
+func NewRAGRetrieverTool(retriever rag.RAGRetriever, userID uint, sourceIDs []uint, collector *ReferenceCollector) tool.InvokableTool {
 	return &RAGRetrieverTool{
-		retriever:  retriever,
-		userID:     userID,
-		sourceIDs:  sourceIDs,
-		references: references,
+		retriever: retriever,
+		userID:    userID,
+		sourceIDs: sourceIDs,
+		collector: collector,
 	}
 }
 
@@ -75,23 +75,26 @@ func (t *RAGRetrieverTool) InvokableRun(ctx context.Context, argumentsInJSON str
 		return "检索失败: " + err.Error(), nil
 	}
 
-	if t.references != nil {
-		*t.references = (*t.references)[:0]
-		for _, r := range results {
-			*t.references = append(*t.references, response.Reference{
-				SourceID:      r.SourceID,
-				SourceName:    r.SourceName,
-				ParentBlockID: r.ParentBlockID,
-				ChunkContent: func() string {
-					if r.ParentContent != "" {
-						return r.ParentContent
-					}
-					return r.Content
-				}(),
-				Score: r.Score,
-			})
-		}
+	// 累积引用到 collector，并拿到本次检索在全局列表中的起始编号
+	refs := make([]response.Reference, 0, len(results))
+	for _, r := range results {
+		refs = append(refs, response.Reference{
+			SourceID:      r.SourceID,
+			SourceName:    r.SourceName,
+			ParentBlockID: r.ParentBlockID,
+			ChunkContent: func() string {
+				if r.ParentContent != "" {
+					return r.ParentContent
+				}
+				return r.Content
+			}(),
+			Score: r.Score,
+		})
+	}
+	startIndex := 1
+	if t.collector != nil {
+		startIndex = t.collector.Add(refs)
 	}
 
-	return FormatRetrievalResults(results), nil
+	return FormatRetrievalResults(results, startIndex), nil
 }

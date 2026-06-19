@@ -15,6 +15,7 @@ type UpdateConversationRequest struct {
 type SendMessageRequest struct {
 	Content     string `json:"content" binding:"required"`
 	SourceIDs   []uint `json:"source_ids"`
+	NotebookID  uint   `json:"notebook_id"`   // 笔记本 ID（新建对话时需要）
 	LLMConfigID uint   `json:"llm_config_id"` // 指定使用的 LLM 配置 ID，0 表示使用默认
 }
 

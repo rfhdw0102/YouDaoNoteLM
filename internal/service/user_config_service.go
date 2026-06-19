@@ -7,6 +7,7 @@ import (
 	"YoudaoNoteLm/internal/repository"
 	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/logger"
+	"YoudaoNoteLm/pkg/utils"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -17,25 +18,51 @@ type userConfigService struct {
 	llmConfigRepo repository.UserLLMConfigRepository
 	configSvc     ConfigService        // 配置路由服务，用于获取系统配置
 	healthChk     *ConfigHealthChecker // 配置健康检查器
+	encryptionKey []byte               // API Key 加密密钥
 }
 
-func NewUserConfigService(configRepo repository.UserConfigRepository, llmConfigRepo repository.UserLLMConfigRepository, configSvc ConfigService) UserConfigService {
+func NewUserConfigService(configRepo repository.UserConfigRepository, llmConfigRepo repository.UserLLMConfigRepository, configSvc ConfigService, encryptionKey string) UserConfigService {
 	return &userConfigService{
 		configRepo:    configRepo,
 		llmConfigRepo: llmConfigRepo,
 		configSvc:     configSvc,
 		healthChk:     NewConfigHealthChecker(),
+		encryptionKey: []byte(encryptionKey),
 	}
 }
 
 // ===== LLM Config =====
 
 func (s *userConfigService) ListLLMConfigs(userID uint) ([]*entity.UserLLMConfig, error) {
-	return s.llmConfigRepo.FindByUserID(userID)
+	configs, err := s.llmConfigRepo.FindByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	// 解密 API Key
+	for _, config := range configs {
+		if config.APIKey != "" {
+			decrypted, err := utils.Decrypt(config.APIKey, s.encryptionKey)
+			if err != nil {
+				logger.Error("解密 LLM API Key 失败", zap.Uint("config_id", config.ID), zap.Error(err))
+				continue
+			}
+			config.APIKey = decrypted
+		}
+	}
+	return configs, nil
 }
 
 func (s *userConfigService) CreateLLMConfig(userID uint, config *entity.UserLLMConfig) error {
 	config.UserID = userID
+	// 加密 API Key
+	if config.APIKey != "" {
+		encrypted, err := utils.Encrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("加密 LLM API Key 失败", zap.Error(err))
+			return err
+		}
+		config.APIKey = encrypted
+	}
 	return s.llmConfigRepo.Create(config)
 }
 
@@ -55,6 +82,15 @@ func (s *userConfigService) UpdateLLMConfig(userID uint, id uint, config *entity
 	config.UserID = existing.UserID
 	config.CreatedAt = existing.CreatedAt
 	config.UpdatedAt = existing.UpdatedAt
+	// 加密 API Key
+	if config.APIKey != "" {
+		encrypted, err := utils.Encrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("加密 LLM API Key 失败", zap.Error(err))
+			return err
+		}
+		config.APIKey = encrypted
+	}
 	logger.Info("更新LLM配置", zap.Uint("id", id), zap.Any("config", config))
 	return s.llmConfigRepo.Update(config)
 }
@@ -83,6 +119,15 @@ func (s *userConfigService) ListSearchConfigs(userID uint) ([]*entity.UserConfig
 	if config == nil {
 		return []*entity.UserConfig{}, nil
 	}
+	// 解密 API Key
+	if config.APIKey != "" {
+		decrypted, err := utils.Decrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("解密 Search API Key 失败", zap.Uint("config_id", config.ID), zap.Error(err))
+		} else {
+			config.APIKey = decrypted
+		}
+	}
 	return []*entity.UserConfig{config}, nil
 }
 
@@ -91,6 +136,16 @@ func (s *userConfigService) CreateSearchConfig(userID uint, config *entity.UserC
 	config.ConfigType = "search"
 	if config.ExtraConfig == "" {
 		config.ExtraConfig = "{}"
+	}
+
+	// 加密 API Key
+	if config.APIKey != "" {
+		encrypted, err := utils.Encrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("加密 Search API Key 失败", zap.Error(err))
+			return err
+		}
+		config.APIKey = encrypted
 	}
 
 	// 检查是否已经存在相同类型的配置（包括已删除的记录）
@@ -127,6 +182,15 @@ func (s *userConfigService) UpdateSearchConfig(id uint, config *entity.UserConfi
 	if config.ExtraConfig == "" {
 		config.ExtraConfig = "{}"
 	}
+	// 加密 API Key
+	if config.APIKey != "" {
+		encrypted, err := utils.Encrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("加密 Search API Key 失败", zap.Error(err))
+			return err
+		}
+		config.APIKey = encrypted
+	}
 	if err := s.configRepo.Update(config); err != nil {
 		return err
 	}
@@ -159,6 +223,15 @@ func (s *userConfigService) ListASRConfigs(userID uint) ([]*entity.UserConfig, e
 	if config == nil {
 		return []*entity.UserConfig{}, nil
 	}
+	// 解密 API Key
+	if config.APIKey != "" {
+		decrypted, err := utils.Decrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("解密 ASR API Key 失败", zap.Uint("config_id", config.ID), zap.Error(err))
+		} else {
+			config.APIKey = decrypted
+		}
+	}
 	return []*entity.UserConfig{config}, nil
 }
 
@@ -167,6 +240,16 @@ func (s *userConfigService) CreateASRConfig(userID uint, config *entity.UserConf
 	config.ConfigType = "asr"
 	if config.ExtraConfig == "" {
 		config.ExtraConfig = "{}"
+	}
+
+	// 加密 API Key
+	if config.APIKey != "" {
+		encrypted, err := utils.Encrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("加密 ASR API Key 失败", zap.Error(err))
+			return err
+		}
+		config.APIKey = encrypted
 	}
 
 	// 检查是否已经存在相同类型的配置（包括已删除的记录）
@@ -203,6 +286,15 @@ func (s *userConfigService) UpdateASRConfig(id uint, config *entity.UserConfig) 
 	if config.ExtraConfig == "" {
 		config.ExtraConfig = "{}"
 	}
+	// 加密 API Key
+	if config.APIKey != "" {
+		encrypted, err := utils.Encrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("加密 ASR API Key 失败", zap.Error(err))
+			return err
+		}
+		config.APIKey = encrypted
+	}
 	if err := s.configRepo.Update(config); err != nil {
 		return err
 	}
@@ -235,6 +327,15 @@ func (s *userConfigService) ListEmbeddingConfigs(userID uint) ([]*entity.UserCon
 	if config == nil {
 		return []*entity.UserConfig{}, nil
 	}
+	// 解密 API Key
+	if config.APIKey != "" {
+		decrypted, err := utils.Decrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("解密 Embedding API Key 失败", zap.Uint("config_id", config.ID), zap.Error(err))
+		} else {
+			config.APIKey = decrypted
+		}
+	}
 	return []*entity.UserConfig{config}, nil
 }
 
@@ -243,6 +344,16 @@ func (s *userConfigService) CreateEmbeddingConfig(userID uint, config *entity.Us
 	config.ConfigType = "embedding"
 	if config.ExtraConfig == "" {
 		config.ExtraConfig = "{}"
+	}
+
+	// 加密 API Key
+	if config.APIKey != "" {
+		encrypted, err := utils.Encrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("加密 Embedding API Key 失败", zap.Error(err))
+			return err
+		}
+		config.APIKey = encrypted
 	}
 
 	// 检查是否已经存在相同类型的配置（包括已删除的记录）
@@ -279,6 +390,15 @@ func (s *userConfigService) UpdateEmbeddingConfig(id uint, config *entity.UserCo
 	if config.ExtraConfig == "" {
 		config.ExtraConfig = "{}"
 	}
+	// 加密 API Key
+	if config.APIKey != "" {
+		encrypted, err := utils.Encrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("加密 Embedding API Key 失败", zap.Error(err))
+			return err
+		}
+		config.APIKey = encrypted
+	}
 	if err := s.configRepo.Update(config); err != nil {
 		return err
 	}
@@ -307,6 +427,15 @@ func (s *userConfigService) GetActiveConfig(userID uint, configType string) (*en
 	userCfg, err := s.configRepo.FindByUserAndType(userID, configType)
 	if err == nil && userCfg != nil && userCfg.Enabled {
 		userCfg.Source = "user"
+		// 解密 API Key
+		if userCfg.APIKey != "" {
+			decrypted, err := utils.Decrypt(userCfg.APIKey, s.encryptionKey)
+			if err != nil {
+				logger.Error("解密用户配置 API Key 失败", zap.Uint("user_id", userID), zap.Error(err))
+			} else {
+				userCfg.APIKey = decrypted
+			}
+		}
 		return userCfg, nil
 	}
 

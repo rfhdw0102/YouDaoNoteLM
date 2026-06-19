@@ -30,5 +30,5 @@ type ChatAgentService interface {
 	ProcessMessageWithAgent(ctx context.Context, req *request.ProcessMessageRequest) (<-chan AgentStreamEvent, error)
 
 	// StopGeneration 终止 Agent 生成
-	StopGeneration(ctx context.Context, conversationID uint) error
+	StopGeneration(ctx context.Context, userID, conversationID uint) error
 }

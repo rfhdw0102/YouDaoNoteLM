@@ -56,13 +56,19 @@ func (ctrl *Controller) Create(c *gin.Context) {
 
 // List 获取对话列表
 func (ctrl *Controller) List(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "用户未登录")
+		return
+	}
+
 	notebookID, err := strconv.ParseUint(c.Param("nbId"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "无效的笔记本 ID")
 		return
 	}
 
-	convs, err := ctrl.convService.ListConversations(c.Request.Context(), uint(notebookID))
+	convs, err := ctrl.convService.ListConversations(c.Request.Context(), userID, uint(notebookID))
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -73,13 +79,19 @@ func (ctrl *Controller) List(c *gin.Context) {
 
 // Get 获取对话详情
 func (ctrl *Controller) Get(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "用户未登录")
+		return
+	}
+
 	convID, err := strconv.ParseUint(c.Param("convId"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "无效的对话 ID")
 		return
 	}
 
-	conv, err := ctrl.convService.GetConversation(c.Request.Context(), uint(convID))
+	conv, err := ctrl.convService.GetConversation(c.Request.Context(), userID, uint(convID))
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -90,6 +102,12 @@ func (ctrl *Controller) Get(c *gin.Context) {
 
 // Update 更新对话
 func (ctrl *Controller) Update(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "用户未登录")
+		return
+	}
+
 	convID, err := strconv.ParseUint(c.Param("convId"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "无效的对话 ID")
@@ -102,7 +120,7 @@ func (ctrl *Controller) Update(c *gin.Context) {
 		return
 	}
 
-	if err := ctrl.convService.UpdateConversation(c.Request.Context(), uint(convID), req.Title); err != nil {
+	if err := ctrl.convService.UpdateConversation(c.Request.Context(), userID, uint(convID), req.Title); err != nil {
 		response.BizError(c, err)
 		return
 	}
@@ -112,13 +130,19 @@ func (ctrl *Controller) Update(c *gin.Context) {
 
 // Delete 删除对话
 func (ctrl *Controller) Delete(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "用户未登录")
+		return
+	}
+
 	convID, err := strconv.ParseUint(c.Param("convId"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "无效的对话 ID")
 		return
 	}
 
-	if err := ctrl.convService.DeleteConversation(c.Request.Context(), uint(convID)); err != nil {
+	if err := ctrl.convService.DeleteConversation(c.Request.Context(), userID, uint(convID)); err != nil {
 		response.BizError(c, err)
 		return
 	}
@@ -128,13 +152,19 @@ func (ctrl *Controller) Delete(c *gin.Context) {
 
 // GetMessages 获取消息历史
 func (ctrl *Controller) GetMessages(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "用户未登录")
+		return
+	}
+
 	convID, err := strconv.ParseUint(c.Param("convId"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "无效的对话 ID")
 		return
 	}
 
-	msgs, err := ctrl.convService.GetMessages(c.Request.Context(), uint(convID))
+	msgs, err := ctrl.convService.GetMessages(c.Request.Context(), userID, uint(convID))
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -163,23 +193,26 @@ func (ctrl *Controller) SendMessage(c *gin.Context) {
 		return
 	}
 
-	// 设置 SSE 头
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-
+	// 注意：先调用 Service，等校验/锁/创建对话都通过再写 SSE 头，
+	// 这样错误情况下能直接走普通 JSON 错误响应。
 	eventCh, err := ctrl.chatService.ProcessMessageWithAgent(c.Request.Context(), &request.ProcessMessageRequest{
 		ConversationID: uint(convID),
+		NotebookID:     req.NotebookID,
 		Content:        req.Content,
 		SourceIDs:      req.SourceIDs,
 		UserID:         userID,
 		LLMConfigID:    req.LLMConfigID,
 	})
 	if err != nil {
-		c.SSEvent("error", gin.H{"content": err.Error()})
+		response.BizError(c, err)
 		return
 	}
+
+	// 设置 SSE 头
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
 
 	// 流式输出
 	c.Stream(func(w io.Writer) bool {
@@ -194,13 +227,19 @@ func (ctrl *Controller) SendMessage(c *gin.Context) {
 
 // StopGeneration 终止回答
 func (ctrl *Controller) StopGeneration(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "用户未登录")
+		return
+	}
+
 	convID, err := strconv.ParseUint(c.Param("convId"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "无效的对话 ID")
 		return
 	}
 
-	if err := ctrl.chatService.StopGeneration(c.Request.Context(), uint(convID)); err != nil {
+	if err := ctrl.chatService.StopGeneration(c.Request.Context(), userID, uint(convID)); err != nil {
 		response.BizError(c, err)
 		return
 	}

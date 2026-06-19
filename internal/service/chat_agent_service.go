@@ -11,13 +11,13 @@ import (
 	chatTools "YoudaoNoteLm/internal/agent/chat/tools"
 	"YoudaoNoteLm/internal/llm"
 	"YoudaoNoteLm/internal/model/dto/request"
-	"YoudaoNoteLm/internal/model/dto/response"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/repository"
 	"YoudaoNoteLm/pkg/cache"
 	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/logger"
+	"YoudaoNoteLm/pkg/utils"
 
 	"go.uber.org/zap"
 )
@@ -30,6 +30,7 @@ type chatAgentService struct {
 	messageRepo      repository.MessageRepository
 	cache            *cache.ChatCache
 	cancelFuncs      sync.Map
+	encryptionKey    []byte // API Key 加密密钥
 }
 
 // NewChatAgentService 创建 Agent 对话服务
@@ -39,6 +40,7 @@ func NewChatAgentService(
 	conversationRepo repository.ConversationRepository,
 	messageRepo repository.MessageRepository,
 	chatCache *cache.ChatCache,
+	encryptionKey string,
 ) ChatAgentService {
 	return &chatAgentService{
 		llmConfigRepo:    llmConfigRepo,
@@ -46,35 +48,50 @@ func NewChatAgentService(
 		conversationRepo: conversationRepo,
 		messageRepo:      messageRepo,
 		cache:            chatCache,
+		encryptionKey:    []byte(encryptionKey),
 	}
 }
 
 // ProcessMessageWithAgent 使用 Agent 处理消息
 func (s *chatAgentService) ProcessMessageWithAgent(ctx context.Context, req *request.ProcessMessageRequest) (<-chan AgentStreamEvent, error) {
-	// 1. 获取并发锁
-	lockValue, acquired, err := s.cache.AcquireLock(ctx, req.ConversationID)
-	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取并发锁失败", err)
-	}
-	if !acquired {
-		return nil, bizerrors.New(bizerrors.CodeConflict, "该对话正在处理中，请稍后再试")
-	}
-
-	// 2. 创建对话（如果是新对话）
+	// 1. 准备/校验对话：必须先得到一个属于该用户的真实 conversationID，
+	//    再用它去加并发锁，避免多个用户的"新建对话首条消息"全部抢同一把 chat:0:lock 的全局锁。
 	conversationID := req.ConversationID
 	isNewConversation := false
+
 	if conversationID == 0 {
-		isNewConversation = true
+		// 新建对话场景
+		if req.NotebookID == 0 {
+			return nil, bizerrors.New(bizerrors.CodeBadRequest, "新建对话需要传入 notebook_id")
+		}
 		conv := &entity.Conversation{
 			NotebookID: req.NotebookID,
 			UserID:     req.UserID,
 			Title:      "新对话",
 		}
 		if err := s.conversationRepo.Create(conv); err != nil {
-			s.cache.ReleaseLock(ctx, conversationID, lockValue)
 			return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "创建对话失败", err)
 		}
 		conversationID = conv.ID
+		isNewConversation = true
+	} else {
+		// 已有对话场景：校验归属
+		conv, err := s.conversationRepo.FindByIDAndUserID(conversationID, req.UserID)
+		if err != nil {
+			return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询对话失败", err)
+		}
+		if conv == nil {
+			return nil, bizerrors.ErrNotFound
+		}
+	}
+
+	// 2. 获取该对话的并发锁
+	lockValue, acquired, err := s.cache.AcquireLock(ctx, conversationID)
+	if err != nil {
+		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取并发锁失败", err)
+	}
+	if !acquired {
+		return nil, bizerrors.New(bizerrors.CodeConflict, "该对话正在处理中，请稍后再试")
 	}
 
 	// 3. 创建可取消的 context
@@ -129,6 +146,16 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 		return
 	}
 
+	// 解密 API Key
+	if llmConfig.APIKey != "" && len(s.encryptionKey) > 0 {
+		decrypted, decErr := utils.Decrypt(llmConfig.APIKey, s.encryptionKey)
+		if decErr != nil {
+			logger.Debug("[Agent] 解密 API Key 失败（可能未加密）", zap.Error(decErr))
+		} else {
+			llmConfig.APIKey = decrypted
+		}
+	}
+
 	// 3. 创建 ToolCallingChatModel
 	logger.Info("[Agent] 步骤2: 创建 ToolCallingChatModel")
 	chatModel, err := llm.NewToolCallingChatModel(ctx, llmConfig)
@@ -140,7 +167,7 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 
 	// 4. 准备工具集
 	logger.Info("[Agent] 步骤3: 准备工具集")
-	tools, references := s.buildTools(req.UserID, req.SourceIDs)
+	tools, refCollector := s.buildTools(req.UserID, req.SourceIDs)
 
 	// 5. 创建 Agent
 	logger.Info("[Agent] 步骤4: 创建 ChatAgent")
@@ -172,36 +199,40 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 	// 8. 转发流式事件
 	fullContent := s.forwardAgentEvents(ctx, eventCh, iter)
 
-	// 9. 发送引用事件,不去重，保持与 LLM 看到的编号一致
-	if len(*references) > 0 {
+	// 9. 发送引用事件，跨多次 search_knowledge 调用累积，编号与 LLM 看到的一致
+	references := refCollector.All()
+	if len(references) > 0 {
 		eventCh <- AgentStreamEvent{
 			Type:    AgentEventReference,
 			Content: "",
-			Data:    *references,
+			Data:    references,
 		}
 	}
 
-	// 10. 保存消息（即使取消也保存用户消息，保留对话完整性）
+	// 10. 保存消息、即使取消也保存用户消息，保留对话完整性
+	//     这里用 background ctx，避免请求 ctx 被取消导致 DB/Redis 写入失败
 	logger.Info("[Agent] 步骤7: 保存消息", zap.Int("contentLen", len(fullContent)))
-	evictedPair, err := s.saveAgentMessages(ctx, conversationID, req.Content, fullContent, *references)
+	saveCtx := context.Background()
+	evictedPair, err := s.saveAgentMessages(saveCtx, conversationID, req.Content, fullContent, references)
 	if err != nil {
 		logger.Error("[Agent] 保存消息失败", zap.Error(err))
 	}
 
-	// 11. 异步更新摘要（不阻塞主流程）
-	go func() {
-		if err := s.updateSummary(context.Background(), conversationID, req.UserID, evictedPair); err != nil {
-			logger.Warn("[Agent] 更新摘要失败", zap.Error(err))
-		}
-	}()
+	// 11. 异步更新摘要：仅在生成正常完成且确实有消息被淘汰时才做
+	if ctx.Err() == nil && len(fullContent) > 0 && evictedPair != nil {
+		go func(ep *cache.MessagePair) {
+			if err := s.updateSummary(context.Background(), conversationID, req.UserID, ep); err != nil {
+				logger.Warn("[Agent] 更新摘要失败", zap.Error(err))
+			}
+		}(evictedPair)
+	}
 
-	// 12. 检查是否需要生成标题（仅在有回答内容时）
+	// 12. 检查是否需要生成标题（仅在有回答内容、且当前为初始 "新对话" 标题时）
 	if len(fullContent) > 0 {
 		conv, findErr := s.conversationRepo.FindByID(conversationID)
 		if findErr != nil {
 			logger.Warn("[Agent] 查询对话失败，跳过标题生成", zap.Error(findErr))
-		}
-		if conv != nil && conv.Title == "新对话" {
+		} else if conv != nil && conv.Title == "新对话" {
 			title := s.generateAndUpdateTitle(ctx, conversationID, req.UserID, req.Content)
 			if title != "" {
 				eventCh <- AgentStreamEvent{
@@ -219,16 +250,25 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 }
 
 // buildTools 构建工具集，同时返回引用收集器
-func (s *chatAgentService) buildTools(userID uint, sourceIDs []uint) ([]tool.BaseTool, *[]response.Reference) {
-	var refs []response.Reference
-	ragTool := chatTools.NewRAGRetrieverTool(s.retriever, userID, sourceIDs, &refs)
+func (s *chatAgentService) buildTools(userID uint, sourceIDs []uint) ([]tool.BaseTool, *chatTools.ReferenceCollector) {
+	collector := chatTools.NewReferenceCollector()
+	ragTool := chatTools.NewRAGRetrieverTool(s.retriever, userID, sourceIDs, collector)
 	historyTool := chatTools.NewChatHistoryTool(s.messageRepo, s.conversationRepo, s.cache)
 
-	return []tool.BaseTool{ragTool, historyTool}, &refs
+	return []tool.BaseTool{ragTool, historyTool}, collector
 }
 
-// StopGeneration 终止 Agent 生成
-func (s *chatAgentService) StopGeneration(ctx context.Context, conversationID uint) error {
+// StopGeneration 终止 Agent 生成（校验对话归属后再取消）
+func (s *chatAgentService) StopGeneration(ctx context.Context, userID, conversationID uint) error {
+	// 校验对话归属：避免任意登录用户随意中断别人的会话
+	conv, err := s.conversationRepo.FindByIDAndUserID(conversationID, userID)
+	if err != nil {
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询对话失败", err)
+	}
+	if conv == nil {
+		return bizerrors.ErrNotFound
+	}
+
 	cancelFunc, ok := s.cancelFuncs.Load(conversationID)
 	if !ok {
 		return bizerrors.New(bizerrors.CodeNotFound, "未找到正在进行的生成任务")
@@ -240,5 +280,7 @@ func (s *chatAgentService) StopGeneration(ctx context.Context, conversationID ui
 	}
 
 	cancel()
+	// 主动从 map 中删除，避免下一次请求被复用到已取消的 cancel
+	s.cancelFuncs.Delete(conversationID)
 	return nil
 }
