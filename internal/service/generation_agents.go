@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"strings"
 
+	"YoudaoNoteLm/pkg/logger"
+
 	"github.com/cloudwego/eino/compose"
+	"go.uber.org/zap"
 )
 
 type baseGenerationAgent struct {
@@ -491,6 +494,7 @@ func (a *pptGenerationAgent) polishPPTHTML(ctx context.Context, draft generation
 	content = sanitizePPTReferenceSections(content)
 	content = stripPPTPlanningArtifacts(content)
 	content = stripPPTReferenceMetadata(content)
+	content = stripPPTHTMLRepeatedTitlePrefix(content)
 	content = deduplicatePPTCardTitles(content)
 	content = ensurePPTSlideAttributes(content)
 	content = ensurePPTCanvasSize(content)
@@ -1129,6 +1133,188 @@ func deduplicateCardTitlesInSection(section string) (string, bool) {
 		}
 	}
 	return result, true
+}
+
+// stripPPTHTMLRepeatedTitlePrefix removes redundant slide-title prefixes
+// that the LLM occasionally injects into every <li>/<p> on a page. For
+// example a slide titled "卡尔文循环" may emit
+//
+//	<li>卡尔文循环：场所：叶绿体基质</li>
+//	<li>卡尔文循环：CO₂固定：与RuBP结合</li>
+//
+// for every bullet; this rewrites them to
+//
+//	<li>场所：叶绿体基质</li>
+//	<li>CO₂固定：与RuBP结合</li>
+//
+// The pass walks each <section> independently and uses the first heading
+// (h1/h2/h3) inside the section as the title. Text nodes inside heading,
+// <style>, and <script> tags are skipped — only body text is rewritten,
+// so the heading itself never has its title stripped to nothing.
+func stripPPTHTMLRepeatedTitlePrefix(content string) string {
+	sections := pptExtractSections(content)
+	if len(sections) == 0 {
+		return content
+	}
+	for _, sec := range sections {
+		candidates := pptCollectSectionTitleCandidates(sec)
+		if len(candidates) == 0 {
+			continue
+		}
+		rewritten := pptStripBodyTextTitlePrefix(sec, candidates)
+		if rewritten == sec {
+			continue
+		}
+		content = strings.Replace(content, sec, rewritten, 1)
+	}
+	return content
+}
+
+// pptCollectSectionTitleCandidates gathers every heading (h1–h6) text and
+// every card-title text inside a section. Any of these can be repeated as a
+// redundant prefix on body text — not just the section's main heading. A
+// slide titled "卡尔文循环" may have a card titled "暗反应" whose body reads
+// "暗反应：场所：叶绿体基质"; we need "暗反应" as a candidate, not only
+// "卡尔文循环". Short (<2 rune) and duplicate entries are dropped. The
+// returned slice is unsorted here; stripPPTBulletTitlePrefixes sorts it
+// longest-first before use.
+func pptCollectSectionTitleCandidates(section string) []string {
+	var candidates []string
+	for _, name := range []string{"h1", "h2", "h3", "h4", "h5", "h6"} {
+		candidates = append(candidates, pptCollectHeadingTexts(section, name)...)
+	}
+	lower := strings.ToLower(section)
+	candidates = append(candidates, extractClassText(section, lower, "card-title")...)
+	out := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		c = strings.TrimSpace(stripPPTVisibleText(c))
+		if len([]rune(c)) < 2 {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// pptCollectHeadingTexts returns the visible text of every <name> element
+// inside section. Markdown markers and nested tags are stripped so the text
+// matches the form bullets repeat.
+func pptCollectHeadingTexts(section, name string) []string {
+	lower := strings.ToLower(section)
+	open := "<" + name
+	var texts []string
+	searchFrom := 0
+	for {
+		idx := strings.Index(lower[searchFrom:], open)
+		if idx < 0 {
+			break
+		}
+		idx += searchFrom
+		// ensure the tag name is not a prefix of a longer tag (h2 vs h2x is
+		// impossible in HTML, but guard against "<h2" matching inside "<h2..." ok)
+		gtRel := strings.IndexByte(lower[idx:], '>')
+		if gtRel < 0 {
+			break
+		}
+		textStart := idx + gtRel + 1
+		closeTag := "</" + name + ">"
+		closeRel := strings.Index(lower[textStart:], closeTag)
+		if closeRel < 0 {
+			searchFrom = textStart
+			continue
+		}
+		raw := section[textStart : textStart+closeRel]
+		text := strings.TrimSpace(stripPPTVisibleText(raw))
+		if text != "" {
+			texts = append(texts, text)
+		}
+		searchFrom = textStart + closeRel + len(closeTag)
+	}
+	return texts
+}
+
+// pptStripBodyTextTitlePrefix rewrites text nodes inside the given section
+// using stripPPTBulletTitlePrefixes, while leaving text inside heading,
+// <style>, and <script> tags untouched. A small depth counter tracks
+// whether the cursor is currently inside a skip-tag.
+func pptStripBodyTextTitlePrefix(section string, titles []string) string {
+	skipTags := map[string]bool{
+		"h1": true, "h2": true, "h3": true,
+		"h4": true, "h5": true, "h6": true,
+		"style": true, "script": true,
+	}
+	var b strings.Builder
+	b.Grow(len(section))
+	lower := strings.ToLower(section)
+	pos := 0
+	skipDepth := 0
+	for pos < len(section) {
+		ltRel := strings.IndexByte(lower[pos:], '<')
+		if ltRel < 0 {
+			b.WriteString(pptApplyTitlePrefixStrip(section[pos:], titles, skipDepth > 0))
+			break
+		}
+		lt := pos + ltRel
+		b.WriteString(pptApplyTitlePrefixStrip(section[pos:lt], titles, skipDepth > 0))
+		gtRel := strings.IndexByte(lower[lt:], '>')
+		if gtRel < 0 {
+			b.WriteString(section[lt:])
+			break
+		}
+		gt := lt + gtRel
+		tag := section[lt : gt+1]
+		b.WriteString(tag)
+		name, isClose, selfClose := pptParseTagName(tag)
+		if name != "" && skipTags[name] && !selfClose {
+			if isClose {
+				if skipDepth > 0 {
+					skipDepth--
+				}
+			} else {
+				skipDepth++
+			}
+		}
+		pos = gt + 1
+	}
+	return b.String()
+}
+
+func pptApplyTitlePrefixStrip(text string, titles []string, skip bool) string {
+	if skip || strings.TrimSpace(text) == "" {
+		return text
+	}
+	leading := text[:len(text)-len(strings.TrimLeft(text, " \t\r\n"))]
+	body := strings.TrimLeft(text, " \t\r\n")
+	stripped := stripPPTBulletTitlePrefixes(body, titles)
+	if stripped == body || stripped == "" {
+		// Leave text unchanged when nothing matched, or when stripping would
+		// blank the node — a bare <li></li> is worse than the duplicated text.
+		return text
+	}
+	return leading + stripped
+}
+
+func pptParseTagName(tag string) (name string, isClose bool, selfClose bool) {
+	if len(tag) < 2 || tag[0] != '<' {
+		return "", false, false
+	}
+	inner := strings.TrimSpace(tag[1 : len(tag)-1])
+	if strings.HasSuffix(inner, "/") {
+		selfClose = true
+		inner = strings.TrimSpace(strings.TrimSuffix(inner, "/"))
+	}
+	if strings.HasPrefix(inner, "/") {
+		isClose = true
+		inner = strings.TrimSpace(inner[1:])
+	}
+	end := len(inner)
+	for i, r := range inner {
+		if r == ' ' || r == '\t' || r == '\n' {
+			end = i
+			break
+		}
+	}
+	return strings.ToLower(inner[:end]), isClose, selfClose
 }
 
 func stripTaggedBlock(content, tag string) string {
@@ -1976,8 +2162,12 @@ func expandPPTContent(plan pptOutlinePlan, analysis learningContentAnalysis) ppt
 }
 
 // enrichPPTContent calls the LLM to expand short bullet points into full
-// paragraphs suitable for presentation slides. If the LLM call fails or
-// returns invalid JSON, it falls back to the original plan.
+// paragraphs suitable for presentation slides. The call is wrapped with
+// robust JSON extraction (so prose / code fences around the JSON object
+// no longer kill the result), one stricter-prompt retry on failure, and
+// warning logs at every drop point so we can tell from production logs
+// whether HTML generation is actually receiving enriched paragraphs or
+// silently falling back to the raw outline bullets.
 func (a *pptGenerationAgent) enrichPPTContent(ctx context.Context, state pptChainState) (pptChainState, error) {
 	if a.model == nil {
 		return state, nil
@@ -1990,38 +2180,140 @@ func (a *pptGenerationAgent) enrichPPTContent(ctx context.Context, state pptChai
 	contextValue += "\n\nPPT_OUTLINE_FOR_ENRICHMENT\n"
 	contextValue += renderPPTPlanForPrompt(state.expanded)
 
+	rich, ok := a.tryEnrichPPTContent(ctx, strategy, state, contextValue, false)
+	if !ok {
+		rich, ok = a.tryEnrichPPTContent(ctx, strategy, state, contextValue, true)
+	}
+	if ok {
+		state.richContent = rich
+	}
+	return state, nil
+}
+
+// tryEnrichPPTContent issues one enrichment call and returns the parsed
+// rich content. On retry the OutputFormat is appended with a stricter
+// JSON-only reminder; the system prompt itself is left unchanged so the
+// model still knows what to write.
+func (a *pptGenerationAgent) tryEnrichPPTContent(ctx context.Context, strategy generationPromptStrategy, state pptChainState, contextValue string, retry bool) (pptRichContent, bool) {
+	outputFormat := strategy.OutputFormat
+	if retry {
+		outputFormat += "\n\n严格要求：上一次输出无法被解析为 JSON。本次回复必须只包含一个 JSON 对象，第一个字符必须是 '{'，最后一个字符必须是 '}'。不要输出 ```、不要任何解释、不要前后空行说明。"
+	}
 	generated, err := a.model.Generate(ctx, GenerationPrompt{
 		AgentName:    a.name + "_content_enrich",
 		System:       strategy.System,
 		User:         strings.TrimSpace(state.input.Request.Prompt),
 		Context:      contextValue,
-		OutputFormat: strategy.OutputFormat,
+		OutputFormat: outputFormat,
 	})
-	if err != nil || strings.TrimSpace(generated) == "" {
-		return state, nil
+	logFields := pptEnrichLogFields(state, retry)
+	if err != nil {
+		logger.Warn("enrich ppt content: model generate failed",
+			append(logFields, zap.Error(err))...)
+		return pptRichContent{}, false
 	}
-
 	generated = strings.TrimSpace(generated)
-	// Strip markdown code fences if present
-	generated = strings.TrimPrefix(generated, "```json")
-	generated = strings.TrimPrefix(generated, "```")
-	generated = strings.TrimSuffix(generated, "```")
-	generated = strings.TrimSpace(generated)
-
-	var richContent pptRichContent
-	if err := json.Unmarshal([]byte(generated), &richContent); err != nil {
-		return state, nil
+	if generated == "" {
+		logger.Warn("enrich ppt content: model returned empty", logFields...)
+		return pptRichContent{}, false
 	}
-
-	if len(richContent.Slides) == 0 {
-		return state, nil
+	jsonStr := extractFirstJSONObject(generated)
+	if jsonStr == "" {
+		logger.Warn("enrich ppt content: no json object in output",
+			append(logFields,
+				zap.Int("output_len", len(generated)),
+				zap.String("output_head", truncate(generated, 200)),
+			)...)
+		return pptRichContent{}, false
 	}
+	var rich pptRichContent
+	if err := json.Unmarshal([]byte(jsonStr), &rich); err != nil {
+		logger.Warn("enrich ppt content: json unmarshal failed",
+			append(logFields,
+				zap.Int("json_len", len(jsonStr)),
+				zap.String("json_head", truncate(jsonStr, 200)),
+				zap.Error(err),
+			)...)
+		return pptRichContent{}, false
+	}
+	if !pptRichContentHasUsableSlides(rich) {
+		paragraphTotal := 0
+		for _, slide := range rich.Slides {
+			paragraphTotal += len(slide.Paragraphs)
+		}
+		logger.Warn("enrich ppt content: parsed but no usable slides",
+			append(logFields,
+				zap.Int("slide_count", len(rich.Slides)),
+				zap.Int("paragraph_total", paragraphTotal),
+			)...)
+		return pptRichContent{}, false
+	}
+	return rich, true
+}
 
-	state.richContent = richContent
-	return state, nil
+// pptEnrichLogFields builds the common log field set used by every drop
+// point inside tryEnrichPPTContent so failures can be grouped per user /
+// notebook / retry-attempt without copy-pasting the same boilerplate.
+func pptEnrichLogFields(state pptChainState, retry bool) []zap.Field {
+	var userID, notebookID uint
+	if state.input.Request != nil {
+		userID = state.input.Request.UserID
+		notebookID = state.input.Request.NotebookID
+	}
+	return []zap.Field{
+		zap.Uint("user_id", userID),
+		zap.Uint("notebook_id", notebookID),
+		zap.Bool("retry", retry),
+		zap.Int("plan_slide_count", len(state.expanded.Slides)),
+	}
+}
+
+// extractFirstJSONObject locates the first '{' and the last '}' in the
+// model output and returns the slice between them. This tolerates the
+// most common LLM artifacts that the previous code missed: ```json fences
+// that are not at the very start/end, leading "Here is the JSON:" prose,
+// trailing "希望对你有帮助" tails, and stray whitespace inside fences.
+// Bracket pairing is intentionally not validated here — json.Unmarshal in
+// the caller is the source of truth, and the retry path picks up any
+// pathological cases (e.g. multiple top-level objects).
+func extractFirstJSONObject(s string) string {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return ""
+	}
+	end := strings.LastIndexByte(s, '}')
+	if end <= start {
+		return ""
+	}
+	return s[start : end+1]
+}
+
+// pptRichContentHasUsableSlides verifies that at least one slide carries
+// a non-empty paragraph. A response with slides whose paragraphs are all
+// empty is worse than no enrichment at all — it would let the HTML stage
+// believe enrichment succeeded and skip the fallback to source-topics.
+func pptRichContentHasUsableSlides(rich pptRichContent) bool {
+	if len(rich.Slides) == 0 {
+		return false
+	}
+	for _, slide := range rich.Slides {
+		for _, p := range slide.Paragraphs {
+			if strings.TrimSpace(p) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func normalizePPTBullets(slide *pptSlidePlan) {
+	// Strip a leading repetition of the slide title from each bullet before
+	// dedup/truncation. The section extractor and the LLM frequently prefix
+	// every point with the page title (e.g. a slide titled "卡尔文循环" gets
+	// "卡尔文循环：场所：叶绿体基质"), which reads redundantly under the heading.
+	for i, bullet := range slide.Bullets {
+		slide.Bullets[i] = stripPPTBulletSlideTitlePrefix(bullet, slide.Title)
+	}
 	slide.Bullets = uniqueNonEmpty(slide.Bullets)
 	switch slide.Title {
 	case "封面", "目录":
@@ -2030,6 +2322,131 @@ func normalizePPTBullets(slide *pptSlidePlan) {
 	if len(slide.Bullets) > 7 {
 		slide.Bullets = append([]string{}, slide.Bullets[:7]...)
 	}
+}
+
+// stripPPTBulletSlideTitlePrefix removes a leading repetition of the slide
+// title from a single bullet. It only strips when the title is immediately
+// followed by a separator (：: - — ~ | / 、 or whitespace), so a short title
+// like "封面" never trims "封面页" and a title never trims a bullet that just
+// happens to start with the same characters as prose. Stripping repeats up to
+// 3 times to handle "卡尔文循环：卡尔文循环：场所：叶绿体基质".
+func stripPPTBulletSlideTitlePrefix(bullet, title string) string {
+	return stripPPTBulletTitlePrefixes(bullet, []string{title})
+}
+
+// stripPPTBulletTitlePrefixes is the multi-title variant used by the HTML
+// pass: a slide may have a section heading (h2) plus one or more sub-headings
+// (h3/card-title), and any of them can be repeated as a redundant prefix on
+// body text. Candidates are tried from longest to shortest each iteration so
+// the most specific match wins; iteration repeats up to 3 times to peel
+// stacked prefixes like "卡尔文循环：暗反应：场所" → "场所".
+func stripPPTBulletTitlePrefixes(bullet string, candidates []string) string {
+	bullet = strings.TrimSpace(bullet)
+	if bullet == "" || len(candidates) == 0 {
+		return bullet
+	}
+	usable := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, c := range candidates {
+		c = strings.TrimSpace(c)
+		if len([]rune(c)) < 2 {
+			continue
+		}
+		key := strings.ToLower(c)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		usable = append(usable, c)
+	}
+	if len(usable) == 0 {
+		return bullet
+	}
+	// Longest first so "卡尔文循环：暗反应" wins before "卡尔文循环".
+	for i := 1; i < len(usable); i++ {
+		for j := i; j > 0 && len([]rune(usable[j])) > len([]rune(usable[j-1])); j-- {
+			usable[j], usable[j-1] = usable[j-1], usable[j]
+		}
+	}
+	for iter := 0; iter < 3; iter++ {
+		stripped, ok := stripPPTBulletPrefixesOnce(bullet, usable)
+		if !ok {
+			break
+		}
+		bullet = stripped
+	}
+	return bullet
+}
+
+func stripPPTBulletPrefixesOnce(bullet string, candidates []string) (string, bool) {
+	for _, prefix := range candidates {
+		for _, variant := range pptSlideTitlePrefixCandidates(prefix) {
+			rest, ok := cutPPTTitlePrefix(bullet, variant)
+			if ok {
+				return rest, true
+			}
+		}
+	}
+	return bullet, false
+}
+
+func stripPPTBulletTitlePrefixOnce(bullet, title string) (string, bool) {
+	return stripPPTBulletPrefixesOnce(bullet, []string{title})
+}
+
+// pptSlideTitlePrefixCandidates returns the title variants that should be
+// stripped when they appear at the start of a bullet. Besides the raw title,
+// this includes the core part before any bracketed suffix ("卡尔文循环（一）"
+// -> "卡尔文循环") so numbered chapter titles still match their plain form.
+func pptSlideTitlePrefixCandidates(title string) []string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return nil
+	}
+	candidates := []string{title}
+	if idx := strings.IndexAny(title, "（([【"); idx > 0 {
+		core := strings.TrimSpace(title[:idx])
+		if len([]rune(core)) >= 2 && core != title {
+			candidates = append(candidates, core)
+		}
+	}
+	return candidates
+}
+
+// cutPPTTitlePrefix checks whether bullet starts with prefix (case-insensitive)
+// immediately followed by a separator, and if so returns the remainder after
+// the separator. Returns ok=false when there is no such prefix+separator,
+// which prevents trimming a prefix that is merely the start of a longer word.
+// Whitespace is intentionally NOT trimmed before the separator check, so a
+// space-separated form like "光合作用 光反应" is also recognized.
+func cutPPTTitlePrefix(bullet, prefix string) (string, bool) {
+	if prefix == "" {
+		return bullet, false
+	}
+	if !strings.HasPrefix(strings.ToLower(bullet), strings.ToLower(prefix)) {
+		return bullet, false
+	}
+	rest := bullet[len(prefix):]
+	if rest == "" {
+		return bullet, false
+	}
+	r := []rune(rest)[0]
+	if !isPPTTitleSeparatorRune(r) && r != ' ' && r != '\t' {
+		return bullet, false
+	}
+	after := strings.TrimSpace(string([]rune(rest)[1:]))
+	if after == "" {
+		return bullet, false
+	}
+	return after, true
+}
+
+func isPPTTitleSeparatorRune(r rune) bool {
+	switch r {
+	case '：', ':', '-', '—', '–', '~', '|', '/', '、', '·':
+		return true
+	}
+	return false
 }
 
 func renderPPTSlides(plan pptOutlinePlan) string {
