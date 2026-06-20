@@ -9,6 +9,7 @@ import (
 	"YoudaoNoteLm/pkg/logger"
 
 	"github.com/cloudwego/eino/components/embedding"
+	"github.com/cloudwego/eino/schema"
 	"go.uber.org/zap"
 )
 
@@ -32,7 +33,7 @@ type ingestionService struct {
 	sourceRepo       repository.SourceRepository
 	parentRepo       repository.ParentBlockRepository
 	embedderProvider EmbedderProvider
-	milvusWriter     *MilvusWriter
+	einoIndexer      *EinoIndexerWrapper
 	maxRetries       int // 默认 3
 }
 
@@ -41,13 +42,13 @@ func NewIngestionService(
 	sourceRepo repository.SourceRepository,
 	parentRepo repository.ParentBlockRepository,
 	embedderProvider EmbedderProvider,
-	milvusWriter *MilvusWriter,
+	einoIndexer *EinoIndexerWrapper,
 ) IngestionService {
 	return &ingestionService{
 		sourceRepo:       sourceRepo,
 		parentRepo:       parentRepo,
 		embedderProvider: embedderProvider,
-		milvusWriter:     milvusWriter,
+		einoIndexer:      einoIndexer,
 		maxRetries:       3,
 	}
 }
@@ -205,25 +206,18 @@ func (s *ingestionService) IngestSingle(ctx context.Context, sourceID uint) erro
 	}
 	logger.Info("Embedding 全部完成", zap.Uint("source_id", sourceID), zap.Int("vector_count", len(vectors)))
 
-	// 9. 生成 sparse vector
-	sparseVectors := make([]map[int32]float32, len(enhancedDocs))
-	for i, doc := range enhancedDocs {
-		sparseVectors[i] = GenerateSparseVector(doc.Content)
-	}
-	logger.Info("Sparse vector 生成完成", zap.Uint("source_id", sourceID), zap.Int("count", len(sparseVectors)))
-
-	// 10. 确保用户的 Milvus Collection 存在
-	if err := s.milvusWriter.EnsureCollection(ctx, source.UserID, vectorDim); err != nil {
+	// 9. 确保用户的 Milvus Collection 存在
+	if err := s.einoIndexer.EnsureCollection(ctx, source.UserID, vectorDim); err != nil {
 		errMsg := "确保 Milvus Collection 失败: " + err.Error()
 		logger.Error(errMsg, zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID))
 		s.updateFailedStatus(sourceID, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	// 11. 写入 Milvus
+	// 10. 写入 Milvus
 	logger.Info("写入 Milvus", zap.Uint("source_id", sourceID), zap.Uint("user_id", source.UserID), zap.Int("doc_count", len(enhancedDocs)))
 	if err := s.retry(func() error {
-		return s.milvusWriter.StoreWithSparse(ctx, source.UserID, enhancedDocs, vectors, sparseVectors, vectorDim)
+		return s.einoIndexer.StoreWithSparse(ctx, source.UserID, enhancedDocs, vectors, vectorDim)
 	}); err != nil {
 		errMsg := "写入 Milvus 失败: " + err.Error()
 		logger.Error(errMsg, zap.Uint("source_id", sourceID))
@@ -268,7 +262,7 @@ func (s *ingestionService) DeleteSource(ctx context.Context, userID uint, source
 		zap.Uint("user_id", userID),
 		zap.Uint("source_id", sourceID),
 	)
-	if err := s.milvusWriter.DeleteBySourceID(ctx, userID, sourceID); err != nil {
+	if err := s.einoIndexer.DeleteBySourceID(ctx, userID, sourceID); err != nil {
 		logger.Error("删除 Milvus 数据失败",
 			zap.Uint("user_id", userID),
 			zap.Uint("source_id", sourceID),
@@ -297,7 +291,7 @@ func (s *ingestionService) DropUserCollection(ctx context.Context, userID uint) 
 	logger.Info("删除用户 Milvus Collection",
 		zap.Uint("user_id", userID),
 	)
-	if err := s.milvusWriter.DropUserCollection(ctx, userID); err != nil {
+	if err := s.einoIndexer.DropUserCollection(ctx, userID); err != nil {
 		logger.Error("删除用户 Milvus Collection 失败",
 			zap.Uint("user_id", userID),
 			zap.Error(err),
@@ -330,4 +324,12 @@ func (s *ingestionService) retry(fn func() error) error {
 		}
 	}
 	return err
+}
+
+// WrapDocuments 为 ChildChunk Document 添加 source_id 元数据
+func WrapDocuments(docs []*schema.Document, sourceID uint) []*schema.Document {
+	for _, doc := range docs {
+		doc.MetaData["source_id"] = sourceID
+	}
+	return docs
 }

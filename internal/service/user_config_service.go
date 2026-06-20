@@ -43,10 +43,11 @@ func (s *userConfigService) ListLLMConfigs(userID uint) ([]*entity.UserLLMConfig
 		if config.APIKey != "" {
 			decrypted, err := utils.Decrypt(config.APIKey, s.encryptionKey)
 			if err != nil {
-				logger.Error("解密 LLM API Key 失败", zap.Uint("config_id", config.ID), zap.Error(err))
-				continue
+				// 解密失败，可能数据未加密或使用了不同的密钥，保留原值
+				logger.Debug("解密 LLM API Key 失败（可能未加密）", zap.Uint("config_id", config.ID), zap.Error(err))
+			} else {
+				config.APIKey = decrypted
 			}
-			config.APIKey = decrypted
 		}
 	}
 	return configs, nil
@@ -123,7 +124,7 @@ func (s *userConfigService) ListSearchConfigs(userID uint) ([]*entity.UserConfig
 	if config.APIKey != "" {
 		decrypted, err := utils.Decrypt(config.APIKey, s.encryptionKey)
 		if err != nil {
-			logger.Error("解密 Search API Key 失败", zap.Uint("config_id", config.ID), zap.Error(err))
+			logger.Debug("解密 Search API Key 失败（可能未加密）", zap.Uint("config_id", config.ID), zap.Error(err))
 		} else {
 			config.APIKey = decrypted
 		}
@@ -227,7 +228,7 @@ func (s *userConfigService) ListASRConfigs(userID uint) ([]*entity.UserConfig, e
 	if config.APIKey != "" {
 		decrypted, err := utils.Decrypt(config.APIKey, s.encryptionKey)
 		if err != nil {
-			logger.Error("解密 ASR API Key 失败", zap.Uint("config_id", config.ID), zap.Error(err))
+			logger.Debug("解密 ASR API Key 失败（可能未加密）", zap.Uint("config_id", config.ID), zap.Error(err))
 		} else {
 			config.APIKey = decrypted
 		}
@@ -331,7 +332,7 @@ func (s *userConfigService) ListEmbeddingConfigs(userID uint) ([]*entity.UserCon
 	if config.APIKey != "" {
 		decrypted, err := utils.Decrypt(config.APIKey, s.encryptionKey)
 		if err != nil {
-			logger.Error("解密 Embedding API Key 失败", zap.Uint("config_id", config.ID), zap.Error(err))
+			logger.Debug("解密 Embedding API Key 失败（可能未加密）", zap.Uint("config_id", config.ID), zap.Error(err))
 		} else {
 			config.APIKey = decrypted
 		}
@@ -423,6 +424,11 @@ func (s *userConfigService) DeleteEmbeddingConfig(id uint) error {
 
 // GetActiveConfig 获取当前生效的配置（用户配置 > 系统配置）
 func (s *userConfigService) GetActiveConfig(userID uint, configType string) (*entity.UserConfig, error) {
+	// LLM 配置存储在独立的 user_llm_config 表，需要特殊处理
+	if configType == "llm" {
+		return s.getActiveLLMConfig(userID)
+	}
+
 	// 1. 优先返回用户配置（必须启用）
 	userCfg, err := s.configRepo.FindByUserAndType(userID, configType)
 	if err == nil && userCfg != nil && userCfg.Enabled {
@@ -431,7 +437,7 @@ func (s *userConfigService) GetActiveConfig(userID uint, configType string) (*en
 		if userCfg.APIKey != "" {
 			decrypted, err := utils.Decrypt(userCfg.APIKey, s.encryptionKey)
 			if err != nil {
-				logger.Error("解密用户配置 API Key 失败", zap.Uint("user_id", userID), zap.Error(err))
+				logger.Debug("解密用户配置 API Key 失败（可能未加密）", zap.Uint("user_id", userID), zap.Error(err))
 			} else {
 				userCfg.APIKey = decrypted
 			}
@@ -467,6 +473,68 @@ func (s *userConfigService) GetActiveConfig(userID uint, configType string) (*en
 		// 如果解析失败，尝试作为纯 URL 处理
 		return &entity.UserConfig{
 			ConfigType: configType,
+			Name:       sysCfg.ConfigKey,
+			Provider:   sysCfg.ConfigKey,
+			APIURL:     sysCfg.ConfigValue,
+			Enabled:    sysCfg.Enabled,
+			Source:     "system",
+		}, nil
+	}
+
+	// 3. 没有配置
+	return nil, nil
+}
+
+// getActiveLLMConfig 获取当前生效的 LLM 配置（LLM 存储在 user_llm_config 表）
+func (s *userConfigService) getActiveLLMConfig(userID uint) (*entity.UserConfig, error) {
+	// 1. 优先返回用户 LLM 配置（第一个启用的）
+	llmCfg, err := s.llmConfigRepo.FindDefaultByUserID(userID)
+	if err == nil && llmCfg != nil && llmCfg.Enabled {
+		apiKey := llmCfg.APIKey
+		if apiKey != "" {
+			decrypted, err := utils.Decrypt(apiKey, s.encryptionKey)
+			if err != nil {
+				logger.Debug("解密 LLM API Key 失败（可能未加密）", zap.Uint("user_id", userID), zap.Error(err))
+			} else {
+				apiKey = decrypted
+			}
+		}
+		return &entity.UserConfig{
+			ConfigType: "llm",
+			Name:       llmCfg.Name,
+			Provider:   llmCfg.Provider,
+			APIURL:     llmCfg.APIURL,
+			APIKey:     apiKey,
+			Model:      llmCfg.Model,
+			Enabled:    llmCfg.Enabled,
+			Source:     "user",
+		}, nil
+	}
+
+	// 2. 降级到系统配置
+	sysCfg, err := s.configSvc.GetSysConfig("llm")
+	if err == nil && sysCfg != nil {
+		var params map[string]interface{}
+		if jsonErr := json.Unmarshal([]byte(sysCfg.ConfigValue), &params); jsonErr == nil {
+			getStr := func(key string) string {
+				if v, ok := params[key].(string); ok {
+					return v
+				}
+				return ""
+			}
+			return &entity.UserConfig{
+				ConfigType: "llm",
+				Name:       getStr("name"),
+				Provider:   getStr("provider"),
+				APIURL:     getStr("api_url"),
+				APIKey:     getStr("api_key"),
+				Model:      getStr("model"),
+				Enabled:    sysCfg.Enabled,
+				Source:     "system",
+			}, nil
+		}
+		return &entity.UserConfig{
+			ConfigType: "llm",
 			Name:       sysCfg.ConfigKey,
 			Provider:   sysCfg.ConfigKey,
 			APIURL:     sysCfg.ConfigValue,

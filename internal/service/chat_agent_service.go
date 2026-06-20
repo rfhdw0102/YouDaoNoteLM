@@ -197,12 +197,25 @@ func (s *chatAgentService) getLLMConfig(userID, llmConfigID uint) (*entity.UserL
 
 // createChatAgent 创建 ChatAgent
 func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entity.UserLLMConfig, userID uint, sourceIDs []uint) (*chat.ChatAgent, error) {
+	logger.Info("[Agent] 创建 ChatAgent",
+		zap.Uint("userID", userID),
+		zap.Uints("sourceIDs", sourceIDs),
+		zap.String("llmProvider", llmConfig.Provider),
+		zap.String("llmModel", llmConfig.Model),
+	)
+
 	chatModel, err := llm.NewToolCallingChatModel(ctx, llmConfig)
 	if err != nil {
-		return nil, fmt.Errorf("创建 AI 模型失败")
+		logger.Error("[Agent] 创建 AI 模型失败",
+			zap.String("provider", llmConfig.Provider),
+			zap.String("model", llmConfig.Model),
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf("创建 AI 模型失败: %w", err)
 	}
 
-	return chat.NewChatAgent(
+	logger.Debug("[Agent] AI 模型创建成功，开始创建 ChatAgent")
+	agent, err := chat.NewChatAgent(
 		ctx,
 		chatModel,
 		s.conversationRepo,
@@ -212,6 +225,13 @@ func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entit
 		userID,
 		sourceIDs,
 	)
+	if err != nil {
+		logger.Error("[Agent] 创建 ChatAgent 失败", zap.Error(err))
+		return nil, err
+	}
+
+	logger.Info("[Agent] ChatAgent 创建成功")
+	return agent, nil
 }
 
 // processAndForward 调用 Process 并转发事件，返回完整内容

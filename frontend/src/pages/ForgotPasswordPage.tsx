@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Mail, Lock, Shield } from 'lucide-react';
 import { useAuthStore } from '../stores/useAuthStore';
+import { getErrorMessage } from '../utils/error';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 
@@ -34,7 +35,7 @@ export default function ForgotPasswordPage() {
         });
       }, 1000);
     } catch (err: any) {
-      setError(err.message || '发送验证码失败');
+      setError(getErrorMessage(err, '发送验证码失败'));
     } finally {
       setSendingCode(false);
     }
@@ -60,7 +61,7 @@ export default function ForgotPasswordPage() {
       await resetPassword(email, code, password, confirmPassword);
       setStep('done');
     } catch (err: any) {
-      setError(err.message || '重置失败，请重试');
+      setError(getErrorMessage(err, '重置失败，请重试'));
     } finally {
       setLoading(false);
     }

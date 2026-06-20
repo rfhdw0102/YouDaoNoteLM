@@ -339,6 +339,11 @@ func (s *configService) ClearSysConfigCache(group string) {
 func (s *configService) GetUserConfig(userID uint, configType string) (*entity.UserConfig, error) {
 	ctx := context.Background()
 
+	// LLM 配置存储在独立的 user_llm_config 表
+	if configType == "llm" {
+		return s.getUserLLMConfigAsUserConfig(userID)
+	}
+
 	// 先查缓存
 	cacheKey := userConfigCacheKey(userID, configType)
 	var userCfg entity.UserConfig
@@ -359,6 +364,44 @@ func (s *configService) GetUserConfig(userID uint, configType string) (*entity.U
 		userCfgPtr.APIKey = s.decryptAPIKey(userCfgPtr.APIKey)
 	}
 	return userCfgPtr, nil
+}
+
+// getUserLLMConfigAsUserConfig 从 user_llm_config 表获取配置并转换为 UserConfig
+func (s *configService) getUserLLMConfigAsUserConfig(userID uint) (*entity.UserConfig, error) {
+	ctx := context.Background()
+
+	// 先查缓存
+	cacheKey := userConfigCacheKey(userID, "llm")
+	var userCfg entity.UserConfig
+	if err := s.cache.Get(ctx, cacheKey, &userCfg); err == nil {
+		userCfg.APIKey = s.decryptAPIKey(userCfg.APIKey)
+		return &userCfg, nil
+	}
+
+	// 查 user_llm_config 表
+	llmCfg, err := s.llmConfigRepo.FindDefaultByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if llmCfg == nil || !llmCfg.Enabled {
+		return nil, nil
+	}
+
+	result := &entity.UserConfig{
+		ConfigType: "llm",
+		Name:       llmCfg.Name,
+		Provider:   llmCfg.Provider,
+		APIURL:     llmCfg.APIURL,
+		APIKey:     llmCfg.APIKey,
+		Model:      llmCfg.Model,
+		Enabled:    llmCfg.Enabled,
+	}
+
+	if cacheErr := s.cache.Set(ctx, cacheKey, result, userConfigTTL); cacheErr != nil {
+		logger.Warn("缓存用户LLM配置失败", zap.String("key", cacheKey), zap.Error(cacheErr))
+	}
+	result.APIKey = s.decryptAPIKey(result.APIKey)
+	return result, nil
 }
 
 // GetSysConfig 获取系统配置（返回第一个启用的配置）

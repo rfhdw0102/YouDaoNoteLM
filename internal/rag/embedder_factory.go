@@ -7,10 +7,12 @@ import (
 	"strings"
 
 	"YoudaoNoteLm/internal/model/entity"
+	"YoudaoNoteLm/pkg/logger"
 
 	einoArk "github.com/cloudwego/eino-ext/components/embedding/ark"
 	einoOpenai "github.com/cloudwego/eino-ext/components/embedding/openai"
 	"github.com/cloudwego/eino/components/embedding"
+	"go.uber.org/zap"
 )
 
 // EmbeddingProvider 定义支持的 embedding 提供商类型
@@ -36,8 +38,15 @@ type EmbeddingConfig struct {
 // 支持所有 eino-ext 集成的 embedding 模型
 func NewEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Embedder, error) {
 	if cfg == nil {
+		logger.Error("[EmbedderFactory] embedding 配置为空")
 		return nil, fmt.Errorf("embedding 配置不能为空")
 	}
+
+	logger.Info("[EmbedderFactory] 创建 Embedder",
+		zap.String("provider", string(cfg.Provider)),
+		zap.String("model", cfg.Model),
+		zap.String("baseURL", cfg.BaseURL),
+	)
 
 	switch cfg.Provider {
 	case ProviderArk, ProviderVolcengine, ProviderDoubao:
@@ -45,6 +54,7 @@ func NewEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Embedder,
 	case ProviderOpenAI:
 		return createOpenAIEmbedder(ctx, cfg)
 	default:
+		logger.Error("[EmbedderFactory] 不支持的 embedding 提供商", zap.String("provider", string(cfg.Provider)))
 		return nil, fmt.Errorf("不支持的 embedding 提供商: %s", cfg.Provider)
 	}
 }
@@ -52,7 +62,10 @@ func NewEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Embedder,
 // createArkEmbedder 创建火山引擎 Ark Embedder
 // 火山引擎统一使用 multi_modal_api 类型
 func createArkEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Embedder, error) {
+	logger.Debug("[EmbedderFactory] 创建 Ark Embedder", zap.String("model", cfg.Model))
+
 	if cfg.Model == "" {
+		logger.Error("[EmbedderFactory] Ark embedding 模型名称或接入点 ID 未配置")
 		return nil, fmt.Errorf("Ark embedding 模型名称或接入点 ID 未配置")
 	}
 
@@ -71,14 +84,23 @@ func createArkEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Emb
 
 	embedder, err := einoArk.NewEmbedder(ctx, conf)
 	if err != nil {
+		logger.Error("[EmbedderFactory] 创建 Ark Embedder 失败",
+			zap.String("model", cfg.Model),
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("创建 Ark Embedder 失败: %w", err)
 	}
+
+	logger.Info("[EmbedderFactory] Ark Embedder 创建成功", zap.String("model", cfg.Model))
 	return embedder, nil
 }
 
 // createOpenAIEmbedder 创建 OpenAI Embedder
 func createOpenAIEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Embedder, error) {
+	logger.Debug("[EmbedderFactory] 创建 OpenAI Embedder", zap.String("model", cfg.Model))
+
 	if cfg.Model == "" {
+		logger.Error("[EmbedderFactory] OpenAI embedding 模型名称未配置")
 		return nil, fmt.Errorf("OpenAI embedding 模型名称未配置")
 	}
 
@@ -95,8 +117,18 @@ func createOpenAIEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.
 
 	embedder, err := einoOpenai.NewEmbedder(ctx, conf)
 	if err != nil {
+		logger.Error("[EmbedderFactory] 创建 OpenAI Embedder 失败",
+			zap.String("model", cfg.Model),
+			zap.String("baseURL", cfg.BaseURL),
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("创建 OpenAI Embedder 失败: %w", err)
 	}
+
+	logger.Info("[EmbedderFactory] OpenAI Embedder 创建成功",
+		zap.String("model", cfg.Model),
+		zap.String("baseURL", cfg.BaseURL),
+	)
 	return embedder, nil
 }
 

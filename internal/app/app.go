@@ -214,22 +214,20 @@ func (a *App) initDependencies() {
 		return rag.NewEmbedderFromConfig(ctx, cfg)
 	}
 
-	// 创建独立的 MilvusWriter 用于检索
-	milvusCtx, milvusCancel := milvusInitContext()
-	milvusWriter, err := rag.NewMilvusWriter(milvusCtx, rag.MilvusIndexerConfig{
-		Address: a.cfg.Milvus.GetAddress(),
-	})
-	milvusCancel()
-	if err != nil {
-		logger.Fatal("Milvus Writer 初始化失败", zap.Error(err))
-	}
-	ragRetriever := rag.NewRAGRetriever(
-		milvusWriter,
+	// 创建 EinoRetrieverWrapper 用于检索
+	retrieverCtx, retrieverCancel := milvusInitContext()
+	defer retrieverCancel()
+	ragRetriever, err := rag.NewEinoRetrieverWrapper(
+		retrieverCtx,
+		a.cfg.Milvus.GetAddress(),
 		parentBlockRepo,
 		sourceRepo,
 		retrieverEmbedderProvider,
 		5, // defaultTopK
 	)
+	if err != nil {
+		logger.Fatal("EinoRetrieverWrapper 初始化失败", zap.Error(err))
+	}
 	a.ragRetriever = ragRetriever
 	logger.Info("RAGRetriever 初始化成功")
 
@@ -283,17 +281,15 @@ func (a *App) initDependencies() {
 }
 
 // initIngestionService 初始化入库服务
-// 从数据库读取用户的 Embedding 配置，创建 EmbedderProvider 和 MilvusWriter
+// 从数据库读取用户的 Embedding 配置，创建 EmbedderProvider 和 EinoIndexerWrapper
 func (a *App) initIngestionService(sourceRepo repository.SourceRepository, configSvc service.ConfigService) rag.IngestionService {
 	ctx, cancel := milvusInitContext()
 	defer cancel()
 
-	// 创建 Milvus Writer
-	milvusWriter, err := rag.NewMilvusWriter(ctx, rag.MilvusIndexerConfig{
-		Address: a.cfg.Milvus.GetAddress(),
-	})
+	// 创建 EinoIndexerWrapper
+	einoIndexer, err := rag.NewEinoIndexerWrapper(ctx, a.cfg.Milvus.GetAddress())
 	if err != nil {
-		logger.Warn("init milvus writer failed", zap.Error(err))
+		logger.Warn("init eino indexer failed", zap.Error(err))
 		return nil
 	}
 
@@ -319,7 +315,7 @@ func (a *App) initIngestionService(sourceRepo repository.SourceRepository, confi
 	}
 
 	parentRepo := repository.NewParentBlockRepository(a.mysqlDB)
-	ingestionSvc := rag.NewIngestionService(sourceRepo, parentRepo, embedderProvider, milvusWriter)
+	ingestionSvc := rag.NewIngestionService(sourceRepo, parentRepo, embedderProvider, einoIndexer)
 	logger.Info("IngestionService 初始化成功")
 	return ingestionSvc
 }
