@@ -2,15 +2,19 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
 	"sync"
 
-	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 
 	"YoudaoNoteLm/internal/agent/chat"
-	agentPrompts "YoudaoNoteLm/internal/agent/chat/prompts"
-	chatTools "YoudaoNoteLm/internal/agent/chat/tools"
 	"YoudaoNoteLm/internal/llm"
 	"YoudaoNoteLm/internal/model/dto/request"
+	"YoudaoNoteLm/internal/model/dto/response"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/repository"
@@ -30,7 +34,7 @@ type chatAgentService struct {
 	messageRepo      repository.MessageRepository
 	cache            *cache.ChatCache
 	cancelFuncs      sync.Map
-	encryptionKey    []byte // API Key 加密密钥
+	encryptionKey    []byte
 }
 
 // NewChatAgentService 创建 Agent 对话服务
@@ -53,45 +57,17 @@ func NewChatAgentService(
 }
 
 // ProcessMessageWithAgent 使用 Agent 处理消息
-func (s *chatAgentService) ProcessMessageWithAgent(ctx context.Context, req *request.ProcessMessageRequest) (<-chan AgentStreamEvent, error) {
-	// 1. 准备/校验对话：必须先得到一个属于该用户的真实 conversationID，
-	//    再用它去加并发锁，避免多个用户的"新建对话首条消息"全部抢同一把 chat:0:lock 的全局锁。
-	conversationID := req.ConversationID
-	isNewConversation := false
-
-	if conversationID == 0 {
-		// 新建对话场景
-		if req.NotebookID == 0 {
-			return nil, bizerrors.New(bizerrors.CodeBadRequest, "新建对话需要传入 notebook_id")
-		}
-		conv := &entity.Conversation{
-			NotebookID: req.NotebookID,
-			UserID:     req.UserID,
-			Title:      "新对话",
-		}
-		if err := s.conversationRepo.Create(conv); err != nil {
-			return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "创建对话失败", err)
-		}
-		conversationID = conv.ID
-		isNewConversation = true
-	} else {
-		// 已有对话场景：校验归属
-		conv, err := s.conversationRepo.FindByIDAndUserID(conversationID, req.UserID)
-		if err != nil {
-			return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询对话失败", err)
-		}
-		if conv == nil {
-			return nil, bizerrors.ErrNotFound
-		}
-	}
-
-	// 2. 获取该对话的并发锁
-	lockValue, acquired, err := s.cache.AcquireLock(ctx, conversationID)
+func (s *chatAgentService) ProcessMessageWithAgent(ctx context.Context, req *request.ProcessMessageRequest) (<-chan chat.StreamEvent, error) {
+	// 1. 准备/校验对话
+	conversationID, err := s.prepareConversation(ctx, req)
 	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取并发锁失败", err)
+		return nil, err
 	}
-	if !acquired {
-		return nil, bizerrors.New(bizerrors.CodeConflict, "该对话正在处理中，请稍后再试")
+
+	// 2. 获取并发锁
+	lockValue, err := s.acquireLock(ctx, conversationID)
+	if err != nil {
+		return nil, err
 	}
 
 	// 3. 创建可取消的 context
@@ -99,7 +75,7 @@ func (s *chatAgentService) ProcessMessageWithAgent(ctx context.Context, req *req
 	s.cancelFuncs.Store(conversationID, cancel)
 
 	// 4. 启动 goroutine 处理
-	eventCh := make(chan AgentStreamEvent, 64)
+	eventCh := make(chan chat.StreamEvent, 64)
 
 	go func() {
 		defer func() {
@@ -108,159 +84,394 @@ func (s *chatAgentService) ProcessMessageWithAgent(ctx context.Context, req *req
 			close(eventCh)
 		}()
 
-		s.processWithAgentAsync(processCtx, conversationID, isNewConversation, req, eventCh)
+		s.processWithAgentAsync(processCtx, conversationID, req, eventCh)
 	}()
 
 	return eventCh, nil
 }
 
+// prepareConversation 准备对话（创建或校验）
+func (s *chatAgentService) prepareConversation(ctx context.Context, req *request.ProcessMessageRequest) (uint, error) {
+	if req.ConversationID == 0 {
+		if req.NotebookID == 0 {
+			return 0, bizerrors.New(bizerrors.CodeBadRequest, "新建对话需要传入 notebook_id")
+		}
+		conv := &entity.Conversation{
+			NotebookID: req.NotebookID,
+			UserID:     req.UserID,
+			Title:      "新对话",
+		}
+		if err := s.conversationRepo.Create(conv); err != nil {
+			return 0, bizerrors.NewWithErr(bizerrors.CodeInternalError, "创建对话失败", err)
+		}
+		return conv.ID, nil
+	}
+
+	conv, err := s.conversationRepo.FindByIDAndUserID(req.ConversationID, req.UserID)
+	if err != nil {
+		return 0, bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询对话失败", err)
+	}
+	if conv == nil {
+		return 0, bizerrors.ErrNotFound
+	}
+
+	return req.ConversationID, nil
+}
+
+// acquireLock 获取并发锁
+func (s *chatAgentService) acquireLock(ctx context.Context, conversationID uint) (string, error) {
+	lockValue, acquired, err := s.cache.AcquireLock(ctx, conversationID)
+	if err != nil {
+		return "", bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取并发锁失败", err)
+	}
+	if !acquired {
+		return "", bizerrors.New(bizerrors.CodeConflict, "该对话正在处理中，请稍后再试")
+	}
+	return lockValue, nil
+}
+
 // processWithAgentAsync 异步处理 Agent 消息
-func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversationID uint, isNewConversation bool, req *request.ProcessMessageRequest, eventCh chan<- AgentStreamEvent) {
+func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversationID uint, req *request.ProcessMessageRequest, eventCh chan<- chat.StreamEvent) {
 	logger.Info("[Agent] ====== 开始处理消息 ======",
 		zap.Uint("conversationID", conversationID),
 		zap.Uint("userID", req.UserID),
-		zap.Bool("isNewConversation", isNewConversation),
 		zap.String("content", req.Content),
 	)
 
-	// 1. 检查是否选中资料来源
+	// 1. 校验资料来源
 	if len(req.SourceIDs) == 0 {
-		logger.Info("[Agent] 未选中资料，提示用户")
-		eventCh <- AgentStreamEvent{Type: AgentEventToken, Content: "请先选中资料再进行提问"}
-		eventCh <- AgentStreamEvent{Type: AgentEventDone}
+		eventCh <- chat.StreamEvent{Type: chat.EventToken, Content: "请先选中资料再进行提问"}
+		eventCh <- chat.StreamEvent{Type: chat.EventDone}
 		return
 	}
 
-	// 2. 获取用户的 LLM 配置
-	logger.Info("[Agent] 步骤1: 获取用户 LLM 配置")
-	var llmConfig *entity.UserLLMConfig
-	var err error
-	if req.LLMConfigID > 0 {
-		llmConfig, err = s.llmConfigRepo.FindByIDAndUserID(req.LLMConfigID, req.UserID)
-	} else {
-		llmConfig, err = s.llmConfigRepo.FindDefaultByUserID(req.UserID)
-	}
-	if err != nil || llmConfig == nil {
+	// 2. 获取 LLM 配置
+	llmConfig, err := s.getLLMConfig(req.UserID, req.LLMConfigID)
+	if err != nil {
 		logger.Error("[Agent] 获取 LLM 配置失败", zap.Error(err))
 		s.sendAgentError(eventCh, "获取 AI 配置失败，请先在设置中配置 LLM 服务")
 		return
 	}
 
-	// 解密 API Key
-	if llmConfig.APIKey != "" && len(s.encryptionKey) > 0 {
-		decrypted, decErr := utils.Decrypt(llmConfig.APIKey, s.encryptionKey)
-		if decErr != nil {
-			logger.Debug("[Agent] 解密 API Key 失败（可能未加密）", zap.Error(decErr))
-		} else {
-			llmConfig.APIKey = decrypted
-		}
+	// 3. 创建 ChatAgent
+	chatAgent, err := s.createChatAgent(ctx, llmConfig, req.UserID, req.SourceIDs)
+	if err != nil {
+		logger.Error("[Agent] 创建 ChatAgent 失败", zap.Error(err))
+		s.sendAgentError(eventCh, err.Error())
+		return
 	}
 
-	// 3. 创建 ToolCallingChatModel
-	logger.Info("[Agent] 步骤2: 创建 ToolCallingChatModel")
+	// 4. 调用 Process，直接转发事件
+	fullContent := s.processAndForward(ctx, chatAgent, conversationID, req.Content, eventCh)
+
+	// 5. 保存结果
+	s.saveResults(ctx, conversationID, req.UserID, req.Content, fullContent, chatAgent.GetReferences())
+
+	// 6. 生成标题并发送给前端
+	if title := s.maybeGenerateTitle(ctx, conversationID, req.UserID, req.Content, fullContent); title != "" {
+		eventCh <- chat.StreamEvent{
+			Type:    chat.EventTitle,
+			Content: title,
+			Data:    conversationID,
+		}
+	}
+}
+
+// getLLMConfig 获取用户的 LLM 配置
+func (s *chatAgentService) getLLMConfig(userID, llmConfigID uint) (*entity.UserLLMConfig, error) {
+	var llmConfig *entity.UserLLMConfig
+	var err error
+
+	if llmConfigID > 0 {
+		llmConfig, err = s.llmConfigRepo.FindByIDAndUserID(llmConfigID, userID)
+	} else {
+		llmConfig, err = s.llmConfigRepo.FindDefaultByUserID(userID)
+	}
+	if err != nil || llmConfig == nil {
+		return nil, bizerrors.New(bizerrors.CodeBadRequest, "未找到 LLM 配置")
+	}
+
+	llmConfig.APIKey = utils.DecryptAPIKey(llmConfig.APIKey, s.encryptionKey)
+	return llmConfig, nil
+}
+
+// createChatAgent 创建 ChatAgent
+func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entity.UserLLMConfig, userID uint, sourceIDs []uint) (*chat.ChatAgent, error) {
 	chatModel, err := llm.NewToolCallingChatModel(ctx, llmConfig)
 	if err != nil {
-		logger.Error("[Agent] 创建模型失败", zap.Error(err))
-		s.sendAgentError(eventCh, "创建 AI 模型失败")
-		return
+		return nil, fmt.Errorf("创建 AI 模型失败")
 	}
 
-	// 4. 准备工具集
-	logger.Info("[Agent] 步骤3: 准备工具集")
-	tools, refCollector := s.buildTools(req.UserID, req.SourceIDs)
+	return chat.NewChatAgent(
+		ctx,
+		chatModel,
+		s.conversationRepo,
+		s.messageRepo,
+		s.cache,
+		s.retriever,
+		userID,
+		sourceIDs,
+	)
+}
 
-	// 5. 创建 Agent
-	logger.Info("[Agent] 步骤4: 创建 ChatAgent")
-	chatAgent, err := chat.NewChatAgent(ctx, &chat.ChatAgentConfig{
-		Model:        chatModel,
-		Tools:        tools,
-		MaxSteps:     10,
-		SystemPrompt: agentPrompts.ChatAgentSystemPrompt,
-	})
-	if err != nil {
-		logger.Error("[Agent] 创建 Agent 失败", zap.Error(err))
-		s.sendAgentError(eventCh, "创建 Agent 失败")
-		return
-	}
+// processAndForward 调用 Process 并转发事件，返回完整内容
+func (s *chatAgentService) processAndForward(ctx context.Context, chatAgent *chat.ChatAgent, conversationID uint, content string, eventCh chan<- chat.StreamEvent) string {
+	agentEventCh := chatAgent.Process(ctx, conversationID, content)
 
-	// 6. 构建消息（包含历史）
-	logger.Info("[Agent] 步骤5: 构建消息")
-	messages, err := s.buildAgentMessages(ctx, req.UserID, conversationID, req.Content)
-	if err != nil {
-		logger.Error("[Agent] 构建消息失败", zap.Error(err))
-		s.sendAgentError(eventCh, "加载对话历史失败")
-		return
-	}
-
-	// 7. 运行 Agent
-	logger.Info("[Agent] 步骤6: 运行 Agent")
-	iter := chatAgent.Run(ctx, messages)
-
-	// 8. 转发流式事件
-	fullContent := s.forwardAgentEvents(ctx, eventCh, iter)
-
-	// 9. 发送引用事件，跨多次 search_knowledge 调用累积，编号与 LLM 看到的一致
-	references := refCollector.All()
-	if len(references) > 0 {
-		eventCh <- AgentStreamEvent{
-			Type:    AgentEventReference,
-			Content: "",
-			Data:    references,
+	var fullContent string
+	for event := range agentEventCh {
+		eventCh <- event // 直接转发，不需要转换
+		if event.Type == chat.EventToken {
+			fullContent += event.Content
 		}
 	}
 
-	// 10. 保存消息、即使取消也保存用户消息，保留对话完整性
-	//     这里用 background ctx，避免请求 ctx 被取消导致 DB/Redis 写入失败
-	logger.Info("[Agent] 步骤7: 保存消息", zap.Int("contentLen", len(fullContent)))
+	return fullContent
+}
+
+// saveResults 保存结果
+func (s *chatAgentService) saveResults(ctx context.Context, conversationID, userID uint, userContent, fullContent string, references []response.Reference) {
 	saveCtx := context.Background()
-	evictedPair, err := s.saveAgentMessages(saveCtx, conversationID, req.Content, fullContent, references)
+
+	// 保存消息
+	evictedPair, err := s.saveMessages(saveCtx, conversationID, userContent, fullContent, references)
 	if err != nil {
 		logger.Error("[Agent] 保存消息失败", zap.Error(err))
+		return
 	}
 
-	// 11. 异步更新摘要：仅在生成正常完成且确实有消息被淘汰时才做
+	// 异步更新摘要
 	if ctx.Err() == nil && len(fullContent) > 0 && evictedPair != nil {
-		go func(ep *cache.MessagePair) {
-			if err := s.updateSummary(context.Background(), conversationID, req.UserID, ep); err != nil {
+		go func() {
+			if err := s.updateSummary(context.Background(), conversationID, userID, evictedPair); err != nil {
 				logger.Warn("[Agent] 更新摘要失败", zap.Error(err))
 			}
-		}(evictedPair)
+		}()
+	}
+}
+
+// saveMessages 保存消息
+func (s *chatAgentService) saveMessages(ctx context.Context, conversationID uint, userContent, assistantContent string, references []response.Reference) (*cache.MessagePair, error) {
+	msgs := []*entity.Message{
+		{ConversationID: conversationID, Role: "user", Content: userContent, Metadata: "{}"},
 	}
 
-	// 12. 检查是否需要生成标题（仅在有回答内容、且当前为初始 "新对话" 标题时）
-	if len(fullContent) > 0 {
-		conv, findErr := s.conversationRepo.FindByID(conversationID)
-		if findErr != nil {
-			logger.Warn("[Agent] 查询对话失败，跳过标题生成", zap.Error(findErr))
-		} else if conv != nil && conv.Title == "新对话" {
-			title := s.generateAndUpdateTitle(ctx, conversationID, req.UserID, req.Content)
-			if title != "" {
-				eventCh <- AgentStreamEvent{
-					Type:    AgentEventTitle,
-					Content: title,
-					Data:    conversationID,
-				}
+	if len(assistantContent) > 0 {
+		assistantMetadata := "{}"
+		if len(references) > 0 {
+			meta := response.MessageMetadata{References: references}
+			if data, err := json.Marshal(meta); err == nil {
+				assistantMetadata = string(data)
 			}
 		}
+		msgs = append(msgs, &entity.Message{
+			ConversationID: conversationID,
+			Role:           "assistant",
+			Content:        assistantContent,
+			Metadata:       assistantMetadata,
+		})
 	}
 
-	// 13. 发送完成事件
-	eventCh <- AgentStreamEvent{Type: AgentEventDone}
-	logger.Info("[Agent] 处理完成")
+	if err := s.messageRepo.CreateBatch(msgs); err != nil {
+		return nil, fmt.Errorf("批量保存消息失败: %w", err)
+	}
+
+	if len(assistantContent) == 0 {
+		return nil, nil
+	}
+
+	var evictedPair *cache.MessagePair
+	recentMessages, err := s.cache.GetRecentMessages(ctx, conversationID)
+	if err == nil && len(recentMessages) >= chat.RecentRoundsLimit {
+		evicted := recentMessages[0]
+		evictedPair = &evicted
+	}
+
+	if err := s.cache.AddMessage(ctx, conversationID, userContent, assistantContent); err != nil {
+		logger.Warn("[Agent] 更新消息缓存失败", zap.Error(err))
+	}
+
+	return evictedPair, nil
 }
 
-// buildTools 构建工具集，同时返回引用收集器
-func (s *chatAgentService) buildTools(userID uint, sourceIDs []uint) ([]tool.BaseTool, *chatTools.ReferenceCollector) {
-	collector := chatTools.NewReferenceCollector()
-	ragTool := chatTools.NewRAGRetrieverTool(s.retriever, userID, sourceIDs, collector)
-	historyTool := chatTools.NewChatHistoryTool(s.messageRepo, s.conversationRepo, s.cache)
+// updateSummary 更新对话摘要
+func (s *chatAgentService) updateSummary(ctx context.Context, conversationID, userID uint, evictedPair *cache.MessagePair) error {
+	existingSummary := s.getSummaryFromDB(ctx, conversationID)
+	newMessagesText := fmt.Sprintf("用户: %s\n助手: %s", evictedPair.User, evictedPair.Assistant)
+	summaryPrompt := buildIncrementalSummaryPrompt(existingSummary, newMessagesText)
 
-	return []tool.BaseTool{ragTool, historyTool}, collector
+	llmModel, err := s.getChatModel(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("获取 LLM 失败: %w", err)
+	}
+
+	stream, err := llmModel.Stream(ctx, []*schema.Message{{Role: schema.User, Content: summaryPrompt}})
+	if err != nil {
+		return fmt.Errorf("调用 LLM 生成摘要失败: %w", err)
+	}
+	defer stream.Close()
+
+	var summary string
+	for {
+		chunk, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("读取摘要结果失败: %w", err)
+		}
+		summary += chunk.Content
+	}
+
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return nil
+	}
+
+	if err := s.cache.SetSummary(ctx, conversationID, summary); err != nil {
+		logger.Warn("[Agent] 保存摘要到 Redis 失败", zap.Error(err))
+	}
+	if err := s.conversationRepo.UpdateSummary(conversationID, summary); err != nil {
+		logger.Warn("[Agent] 保存摘要到数据库失败", zap.Error(err))
+	}
+
+	return nil
 }
 
-// StopGeneration 终止 Agent 生成（校验对话归属后再取消）
+// getSummaryFromDB 从数据库获取摘要
+func (s *chatAgentService) getSummaryFromDB(ctx context.Context, conversationID uint) string {
+	conv, err := s.conversationRepo.FindByID(conversationID)
+	if err != nil || conv == nil {
+		return ""
+	}
+	return conv.Summary
+}
+
+// getChatModel 获取用户的 ChatModel（用于标题/摘要生成）
+func (s *chatAgentService) getChatModel(ctx context.Context, userID uint) (model.ToolCallingChatModel, error) {
+	cfg, err := s.llmConfigRepo.FindDefaultByUserID(userID)
+	if err != nil {
+		return nil, fmt.Errorf("获取用户 LLM 配置失败: %w", err)
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("用户 %d 未配置 LLM", userID)
+	}
+
+	cfg.APIKey = utils.DecryptAPIKey(cfg.APIKey, s.encryptionKey)
+	return llm.NewChatModel(ctx, cfg)
+}
+
+// maybeGenerateTitle 生成标题（仅在新对话时），返回生成的标题
+func (s *chatAgentService) maybeGenerateTitle(ctx context.Context, conversationID, userID uint, userContent, fullContent string) string {
+	if len(fullContent) == 0 {
+		return ""
+	}
+
+	conv, err := s.conversationRepo.FindByID(conversationID)
+	if err != nil || conv == nil || conv.Title != "新对话" {
+		return ""
+	}
+
+	title := s.generateTitle(ctx, userID, userContent)
+	if title == "" {
+		return ""
+	}
+
+	if err := s.conversationRepo.UpdateTitle(conversationID, title); err != nil {
+		logger.Warn("[Agent] 更新对话标题失败", zap.Error(err))
+		return ""
+	}
+
+	logger.Info("[Agent] 会话标题生成成功", zap.String("title", title))
+	return title
+}
+
+// generateTitle 生成标题
+func (s *chatAgentService) generateTitle(ctx context.Context, userID uint, userQuestion string) string {
+	titlePrompt := fmt.Sprintf(`请根据以下用户问题，生成一个简短的会话标题（不超过20个字符）。
+
+要求：
+1. 标题要简洁明了，概括问题主题
+2. 不要使用引号或特殊符号
+3. 只输出标题，不要其他内容
+
+用户问题：%s
+
+标题：`, userQuestion)
+
+	llmModel, err := s.getChatModel(ctx, userID)
+	if err != nil {
+		return ""
+	}
+
+	stream, err := llmModel.Stream(ctx, []*schema.Message{{Role: schema.User, Content: titlePrompt}})
+	if err != nil {
+		return ""
+	}
+	defer stream.Close()
+
+	var title string
+	for {
+		chunk, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return ""
+		}
+		title += chunk.Content
+	}
+
+	return cleanTitle(title)
+}
+
+// buildIncrementalSummaryPrompt 构建增量摘要更新的 prompt
+func buildIncrementalSummaryPrompt(existingSummary, newMessagesText string) string {
+	if existingSummary != "" {
+		return fmt.Sprintf(`请将以下新对话内容合并到现有摘要中，保持简洁。
+
+要求：
+1. 摘要不超过 500 字
+2. 保留重要的问题、结论和决策
+3. 使用中文
+4. 只输出更新后的摘要内容
+
+现有摘要：
+%s
+
+新对话内容：
+%s
+
+更新后的摘要：`, existingSummary, newMessagesText)
+	}
+
+	return fmt.Sprintf(`请将以下对话内容压缩为简洁的摘要，保留关键信息。
+
+要求：
+1. 摘要不超过 500 字
+2. 保留重要的问题、结论和决策
+3. 使用中文
+4. 只输出摘要内容
+
+对话内容：
+%s
+
+摘要：`, newMessagesText)
+}
+
+// cleanTitle 清理标题
+func cleanTitle(title string) string {
+	title = strings.TrimSpace(title)
+	title = strings.Trim(title, "\"'")
+	runes := []rune(title)
+	if len(runes) > 20 {
+		title = string(runes[:20])
+	}
+	return title
+}
+
+// StopGeneration 终止 Agent 生成
 func (s *chatAgentService) StopGeneration(ctx context.Context, userID, conversationID uint) error {
-	// 校验对话归属：避免任意登录用户随意中断别人的会话
 	conv, err := s.conversationRepo.FindByIDAndUserID(conversationID, userID)
 	if err != nil {
 		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询对话失败", err)
@@ -280,7 +491,14 @@ func (s *chatAgentService) StopGeneration(ctx context.Context, userID, conversat
 	}
 
 	cancel()
-	// 主动从 map 中删除，避免下一次请求被复用到已取消的 cancel
 	s.cancelFuncs.Delete(conversationID)
 	return nil
+}
+
+// sendAgentError 发送错误事件
+func (s *chatAgentService) sendAgentError(eventCh chan<- chat.StreamEvent, msg string) {
+	eventCh <- chat.StreamEvent{
+		Type:    chat.EventError,
+		Content: msg,
+	}
 }

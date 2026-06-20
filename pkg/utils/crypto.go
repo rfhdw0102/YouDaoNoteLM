@@ -34,6 +34,18 @@ func Encrypt(plaintext string, key []byte) (string, error) {
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
+// DecryptAPIKey 解密 API Key，失败时返回原值
+func DecryptAPIKey(apiKey string, encryptionKey []byte) string {
+	if apiKey == "" || len(encryptionKey) == 0 {
+		return apiKey
+	}
+	decrypted, err := Decrypt(apiKey, encryptionKey)
+	if err != nil {
+		return apiKey // 解密失败返回原值
+	}
+	return decrypted
+}
+
 // Decrypt 使用 AES-GCM 解密数据
 func Decrypt(ciphertext string, key []byte) (string, error) {
 	if ciphertext == "" {

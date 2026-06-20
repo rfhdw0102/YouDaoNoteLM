@@ -29,16 +29,7 @@ func NewChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCal
 // NewToolCallingChatModel 创建支持 Tool Calling 的 ChatModel
 // 返回的 ToolCallingChatModel 并发安全，推荐在 Agent 场景使用
 func NewToolCallingChatModel(ctx context.Context, cfg *entity.UserLLMConfig) (model.ToolCallingChatModel, error) {
-	chatModel, err := NewChatModel(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	tccm, ok := chatModel.(model.ToolCallingChatModel)
-	if !ok {
-		return nil, fmt.Errorf("模型提供商 '%s' 不支持 ToolCallingChatModel 接口", cfg.Provider)
-	}
-	return tccm, nil
+	return NewChatModel(ctx, cfg)
 }
 
 // newOpenAIChatModel 创建 OpenAI ChatModel
