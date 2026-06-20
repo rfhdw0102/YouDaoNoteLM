@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, Edit3, Loader2 } from 'lucide-react';
 import { useNotebookStore } from '../stores/useNotebookStore';
+import { getErrorMessage } from '../utils/error';
 import SourcesPanel from '../components/notebook/SourcesPanel';
 import ChatPanel from '../components/notebook/ChatPanel';
 import NotesPanel from '../components/notebook/NotesPanel';
@@ -63,7 +64,7 @@ export default function NotebookPage() {
         await renameNotebook(id, notebookName.trim());
         setRenameError('');
       } catch (err: any) {
-        setRenameError(err.message || '重命名失败');
+        setRenameError(getErrorMessage(err, '重命名失败'));
         setNotebookName(notebook.name);
         return;
       }

@@ -92,7 +92,7 @@ export async function exportGenerationFile(req: GenerationExportRequest): Promis
   return {
     blob: res.data,
     filename: parseAttachmentFilename(res.headers['content-disposition']) || `${req.title || 'generation-export'}.pptx`,
-    contentType: res.headers['content-type'] || 'application/octet-stream',
+    contentType: String(res.headers['content-type'] || 'application/octet-stream'),
   };
 }
 

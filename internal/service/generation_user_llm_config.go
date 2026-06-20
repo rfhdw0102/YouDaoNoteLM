@@ -6,8 +6,11 @@ import (
 	"YoudaoNoteLm/internal/llm"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/rag"
+	"YoudaoNoteLm/pkg/logger"
+	"YoudaoNoteLm/pkg/utils"
 
 	"github.com/cloudwego/eino/components/model"
+	"go.uber.org/zap"
 )
 
 type userLLMConfigReader interface {
@@ -17,28 +20,30 @@ type userLLMConfigReader interface {
 type chatModelFactory func(ctx context.Context, cfg *entity.UserLLMConfig) (model.BaseChatModel, error)
 
 type userLLMConfigGenerationService struct {
-	repo    userLLMConfigReader
-	factory chatModelFactory
-	base    func(model GenerationModel) GenerationService
+	repo          userLLMConfigReader
+	factory       chatModelFactory
+	base          func(model GenerationModel) GenerationService
+	encryptionKey []byte // API Key 加密密钥
 }
 
-func NewGenerationServiceWithUserLLMConfig(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader) GenerationService {
-	return NewGenerationServiceWithUserLLMConfigAndMemory(retriever, search, repo, nil)
+func NewGenerationServiceWithUserLLMConfig(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, encryptionKey string) GenerationService {
+	return NewGenerationServiceWithUserLLMConfigAndMemory(retriever, search, repo, nil, encryptionKey)
 }
 
-func NewGenerationServiceWithUserLLMConfigAndMemory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memory GenerationMemoryStore) GenerationService {
+func NewGenerationServiceWithUserLLMConfigAndMemory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memory GenerationMemoryStore, encryptionKey string) GenerationService {
 	return newGenerationServiceWithUserLLMChatModelFactory(retriever, search, repo, memory, func(ctx context.Context, cfg *entity.UserLLMConfig) (model.BaseChatModel, error) {
 		return llm.NewChatModel(ctx, cfg)
-	})
+	}, encryptionKey)
 }
 
-func newGenerationServiceWithUserLLMChatModelFactory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memory GenerationMemoryStore, factory chatModelFactory) GenerationService {
+func newGenerationServiceWithUserLLMChatModelFactory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memory GenerationMemoryStore, factory chatModelFactory, encryptionKey string) GenerationService {
 	return &userLLMConfigGenerationService{
 		repo:    repo,
 		factory: factory,
 		base: func(model GenerationModel) GenerationService {
 			return NewGenerationServiceWithMemory(retriever, search, model, memory)
 		},
+		encryptionKey: []byte(encryptionKey),
 	}
 }
 
@@ -62,6 +67,17 @@ func (s *userLLMConfigGenerationService) resolveModel(ctx context.Context, req *
 	if err != nil || cfg == nil {
 		return nil, err
 	}
+
+	// 解密 API Key
+	if cfg.APIKey != "" && len(s.encryptionKey) > 0 {
+		decrypted, decErr := utils.Decrypt(cfg.APIKey, s.encryptionKey)
+		if decErr != nil {
+			logger.Debug("解密 API Key 失败（可能未加密）", zap.Error(decErr))
+		} else {
+			cfg.APIKey = decrypted
+		}
+	}
+
 	chatModel, err := s.factory(ctx, cfg)
 	if err != nil {
 		return nil, err

@@ -266,10 +266,13 @@ export default function SettingsPage() {
           break;
       }
       if (res && res.code === 0) {
-        setConfigs(res.data);
-        // 如果当前是 LLM 标签页，同步更新 llmConfigs
         if (activeTab === 'llm') {
-          setLlmConfigs(res.data);
+          // LLM 配置有专门的类型，需要单独处理
+          setLlmConfigs(res.data as UserLLMConfig[]);
+          // 同步设置 configs，确保列表渲染正常
+          setConfigs(res.data as unknown as UserConfig[]);
+        } else {
+          setConfigs(res.data as UserConfig[]);
         }
       }
     } catch (error) {

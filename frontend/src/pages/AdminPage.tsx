@@ -338,13 +338,6 @@ function ConfigManagement() {
     }
   };
 
-  // 检查字段是否为必填
-  const isFieldRequired = (providerName: string, fieldName: string): boolean => {
-    const providerInfo = getProviderInfo(providerName);
-    if (!providerInfo || !providerInfo.required_keys) return false;
-    return providerInfo.required_keys.includes(fieldName);
-  };
-
   // 校验必填字段
   const validateRequiredFields = (providerName: string, fields: Record<string, string>): string | null => {
     const providerInfo = getProviderInfo(providerName);

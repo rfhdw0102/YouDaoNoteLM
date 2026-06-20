@@ -101,12 +101,18 @@ type Config struct {
 	Email    EmailConfig    `mapstructure:"email"`
 	External ExternalConfig `mapstructure:"external"`
 	Milvus   MilvusConfig   `mapstructure:"milvus"`
+	Security SecurityConfig `mapstructure:"security"`
 }
 
 // MilvusConfig Milvus 向量数据库配置
 type MilvusConfig struct {
 	Host string `mapstructure:"host"`
 	Port int    `mapstructure:"port"`
+}
+
+// SecurityConfig 安全配置
+type SecurityConfig struct {
+	EncryptionKey string `mapstructure:"encryption_key"` // API Key 加密密钥，32字节
 }
 
 // GetAddress 返回 host:port 格式的地址

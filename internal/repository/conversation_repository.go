@@ -35,6 +35,19 @@ func (r *conversationRepository) FindByID(id uint) (*entity.Conversation, error)
 	return &conv, nil
 }
 
+// FindByIDAndUserID 根据 ID + UserID 查找对话（权限校验场景使用）
+func (r *conversationRepository) FindByIDAndUserID(id, userID uint) (*entity.Conversation, error) {
+	var conv entity.Conversation
+	err := r.db.Where("id = ? AND user_id = ?", id, userID).First(&conv).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &conv, nil
+}
+
 // FindByNotebookID 查找笔记本下的所有对话
 func (r *conversationRepository) FindByNotebookID(notebookID uint) ([]*entity.Conversation, error) {
 	var convs []*entity.Conversation
@@ -42,9 +55,31 @@ func (r *conversationRepository) FindByNotebookID(notebookID uint) ([]*entity.Co
 	return convs, err
 }
 
-// Update 更新对话
+// FindByNotebookIDAndUserID 查找笔记本下属于指定用户的对话
+func (r *conversationRepository) FindByNotebookIDAndUserID(notebookID, userID uint) ([]*entity.Conversation, error) {
+	var convs []*entity.Conversation
+	err := r.db.Where("notebook_id = ? AND user_id = ?", notebookID, userID).
+		Order("updated_at DESC").Find(&convs).Error
+	return convs, err
+}
+
+// Update 更新对话（使用 Save，会覆盖所有字段；只在结构体字段全部加载完成时使用）
 func (r *conversationRepository) Update(conv *entity.Conversation) error {
 	return r.db.Save(conv).Error
+}
+
+// UpdateTitle 仅更新标题字段
+func (r *conversationRepository) UpdateTitle(id uint, title string) error {
+	return r.db.Model(&entity.Conversation{}).
+		Where("id = ?", id).
+		Update("title", title).Error
+}
+
+// UpdateSummary 仅更新摘要字段
+func (r *conversationRepository) UpdateSummary(id uint, summary string) error {
+	return r.db.Model(&entity.Conversation{}).
+		Where("id = ?", id).
+		Update("summary", summary).Error
 }
 
 // Delete 删除对话（软删除）

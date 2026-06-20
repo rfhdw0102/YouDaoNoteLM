@@ -45,7 +45,7 @@ function parseSearchContent(content: string): { results: SearchResultItem[]; sum
 export default function SourcesPanel() {
   const {
     currentNotebookId, getCurrentNotebook, toggleSourceSelection,
-    removeSource, batchRemoveSources, deleteFailedSources, renameSource, selectAllSources, deselectAllSources,
+    removeSource, batchRemoveSources, deleteFailedSources, renameSource,
     importFile, previewAudio, confirmAudio, searchSourcesStream, importFromURL, importSearchResults, fetchSourceContent, getSourceDownloadURL, fetchSources,
     reimportSelected
   } = useNotebookStore();
@@ -74,7 +74,6 @@ export default function SourcesPanel() {
   // Audio preview state
   const [audioPreview, setAudioPreview] = useState<{ previewId: string; content: string; fileName: string } | null>(null);
   const [audioPreviewContent, setAudioPreviewContent] = useState('');
-  const [audioConfirming, setAudioConfirming] = useState(false);
   const [audioTranscribing, setAudioTranscribing] = useState(false);
   // 已确认但 API 未完成的 previewId 集合（用于立即阻止点击和隐藏通知）
   const [confirmedPreviewIds, setConfirmedPreviewIds] = useState<Set<string>>(new Set());
@@ -108,12 +107,6 @@ export default function SourcesPanel() {
 
   // 计算失效来源数量
   const failedCount = notebook.sources.filter(s => s.status === 'error').length;
-  // 未确认的音频源（转写完成但用户未确认导入，排除已确认但 API 未完成的）
-  const unconfirmedAudioIds = new Set(
-    notebook.sources
-      .filter(s => s.type === 'audio' && s.previewId != null && !confirmedPreviewIds.has(s.previewId))
-      .map(s => s.id)
-  );
 
   // 分别统计已入库和未入库的选中数量
   const vectorizedSources = notebook.sources.filter(s => s.vectorized);
@@ -381,7 +374,7 @@ export default function SourcesPanel() {
       const content = source.content || '';
       setAudioPreview({ previewId: source.previewId, content, fileName: source.name });
       setAudioPreviewContent(content);
-      setAudioTranscribing(source.status === 'loading');
+      setAudioTranscribing(false);
       return;
     }
     // 已确认的音频源（previewId 在 confirmedPreviewIds 中）不允许点击

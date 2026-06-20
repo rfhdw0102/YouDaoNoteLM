@@ -70,7 +70,8 @@ func (c *ChatCache) AddMessage(ctx context.Context, conversationID uint, userMsg
 
 	pipe := c.rdb.Pipeline()
 	pipe.RPush(ctx, key, string(data))
-	pipe.LTrim(ctx, key, -20, -1) // 保留最近 10 轮（20 条）
+	// 每个 list 元素就是一个 MessagePair（一轮对话），保留最近 10 轮
+	pipe.LTrim(ctx, key, -10, -1)
 	pipe.Expire(ctx, key, messagesTTL)
 	_, err = pipe.Exec(ctx)
 	return err

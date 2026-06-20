@@ -175,7 +175,7 @@ func (a *App) initDependencies() {
 	audioPreviewCache := cache.NewAudioPreviewCache(redisCache)
 
 	// 创建 ConfigService（配置路由降级，管理 ASR/Search/LLM/Embedding 等动态服务）
-	configSvc := service.NewConfigService(sysConfigRepo, userConfigRepo, llmConfigRepo, redisCache, minioStorage)
+	configSvc := service.NewConfigService(sysConfigRepo, userConfigRepo, llmConfigRepo, redisCache, minioStorage, a.cfg.Security.EncryptionKey)
 
 	// 创建 AdminService（依赖 configSvc 用于清除配置缓存，必须在 configSvc 之后创建）
 	adminSvc := service.NewAdminService(userRepo, sysConfigRepo, configSvc)
@@ -214,27 +214,25 @@ func (a *App) initDependencies() {
 		return rag.NewEmbedderFromConfig(ctx, cfg)
 	}
 
-	// 创建独立的 MilvusWriter 用于检索
-	milvusCtx, milvusCancel := milvusInitContext()
-	milvusWriter, err := rag.NewMilvusWriter(milvusCtx, rag.MilvusIndexerConfig{
-		Address: a.cfg.Milvus.GetAddress(),
-	})
-	milvusCancel()
-	if err != nil {
-		logger.Fatal("Milvus Writer 初始化失败", zap.Error(err))
-	}
-	ragRetriever := rag.NewRAGRetriever(
-		milvusWriter,
+	// 创建 EinoRetrieverWrapper 用于检索
+	retrieverCtx, retrieverCancel := milvusInitContext()
+	defer retrieverCancel()
+	ragRetriever, err := rag.NewEinoRetrieverWrapper(
+		retrieverCtx,
+		a.cfg.Milvus.GetAddress(),
 		parentBlockRepo,
 		sourceRepo,
 		retrieverEmbedderProvider,
 		5, // defaultTopK
 	)
+	if err != nil {
+		logger.Fatal("EinoRetrieverWrapper 初始化失败", zap.Error(err))
+	}
 	a.ragRetriever = ragRetriever
 	logger.Info("RAGRetriever 初始化成功")
 
 	// 创建用户配置服务
-	userCfgSvc := service.NewUserConfigService(userConfigRepo, llmConfigRepo, configSvc)
+	userCfgSvc := service.NewUserConfigService(userConfigRepo, llmConfigRepo, configSvc, a.cfg.Security.EncryptionKey)
 
 	// 创建有道云笔记服务（CLI 不可用时仅打 warning，不影响启动）
 	youdaoCLI := externalYoudao.NewCLI(a.cfg.External.Youdao.CLIPath, a.cfg.External.Youdao.ConverterScriptPath)
@@ -253,10 +251,10 @@ func (a *App) initDependencies() {
 	if a.redis != nil {
 		generationMemory = service.NewGenerationMemoryCacheStore(cache.NewGenerationMemoryCache(a.redis))
 	}
-	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory)
+	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory, a.cfg.Security.EncryptionKey)
 
 	// 创建 ChatAgentService 和 ConversationService
-	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache)
+	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache, a.cfg.Security.EncryptionKey)
 	convSvc := service.NewConversationService(conversationRepo, messageRepo, chatCache)
 	logger.Info("ChatAgentService 初始化成功")
 	logger.Info("ConversationService 初始化成功")
@@ -283,43 +281,40 @@ func (a *App) initDependencies() {
 }
 
 // initIngestionService 初始化入库服务
-// 从数据库读取用户的 Embedding 配置，创建 EmbedderProvider 和 MilvusWriter
+// 从数据库读取用户的 Embedding 配置，创建 EmbedderProvider 和 EinoIndexerWrapper
 func (a *App) initIngestionService(sourceRepo repository.SourceRepository, configSvc service.ConfigService) rag.IngestionService {
 	ctx, cancel := milvusInitContext()
 	defer cancel()
 
-	// 创建 Milvus Writer
-	milvusWriter, err := rag.NewMilvusWriter(ctx, rag.MilvusIndexerConfig{
-		Address: a.cfg.Milvus.GetAddress(),
-	})
+	// 创建 EinoIndexerWrapper
+	einoIndexer, err := rag.NewEinoIndexerWrapper(ctx, a.cfg.Milvus.GetAddress())
 	if err != nil {
-		logger.Warn("init milvus writer failed", zap.Error(err))
+		logger.Warn("init eino indexer failed", zap.Error(err))
 		return nil
 	}
 
 	// 创建 EmbedderProvider：通过 ConfigService 创建
-	embedderProvider := func(ctx context.Context, userID uint) (embedding.Embedder, int, int, error) {
+	embedderProvider := func(ctx context.Context, userID uint) (embedding.Embedder, int, error) {
 		cfg, err := configSvc.GetUserConfig(userID, "embedding")
 		if err != nil {
-			return nil, 0, 0, fmt.Errorf("获取 Embedding 配置失败: %w", err)
+			return nil, 0, fmt.Errorf("获取 Embedding 配置失败: %w", err)
 		}
 		if cfg == nil {
-			return nil, 0, 0, fmt.Errorf("请先在设置中配置 Embedding 服务")
+			return nil, 0, fmt.Errorf("请先在设置中配置 Embedding 服务")
 		}
 		embedder, err := rag.NewEmbedderFromConfig(ctx, cfg)
 		if err != nil {
-			return nil, 0, 0, err
+			return nil, 0, err
 		}
-		batchSize := rag.GetBatchSizeByProvider(cfg.Provider, cfg.APIURL)
 		vectorDim := 0
 		if cfg.Dimensions != nil {
 			vectorDim = *cfg.Dimensions
 		}
-		return embedder, batchSize, vectorDim, nil
+		return embedder, vectorDim, nil
 	}
 
 	parentRepo := repository.NewParentBlockRepository(a.mysqlDB)
-	ingestionSvc := rag.NewIngestionService(sourceRepo, parentRepo, embedderProvider, milvusWriter)
+	ingestionSvc := rag.NewIngestionService(sourceRepo, parentRepo, embedderProvider, einoIndexer)
 	logger.Info("IngestionService 初始化成功")
 	return ingestionSvc
 }

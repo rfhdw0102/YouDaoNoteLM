@@ -3,45 +3,45 @@ package rag
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"YoudaoNoteLm/internal/model/entity"
+	"YoudaoNoteLm/pkg/logger"
 
 	einoArk "github.com/cloudwego/eino-ext/components/embedding/ark"
 	einoOpenai "github.com/cloudwego/eino-ext/components/embedding/openai"
 	"github.com/cloudwego/eino/components/embedding"
+	"go.uber.org/zap"
 )
 
-// EmbeddingProvider 定义支持的 embedding 提供商类型
-type EmbeddingProvider string
+// embeddingProvider 定义支持的 embedding 提供商类型
+type embeddingProvider string
 
 const (
-	ProviderArk        EmbeddingProvider = "ark"        // 火山引擎（豆包）
-	ProviderVolcengine EmbeddingProvider = "volcengine" // 火山引擎（豆包）- 另一个名称
-	ProviderDoubao     EmbeddingProvider = "doubao"
-	ProviderOpenAI     EmbeddingProvider = "openai" // OpenAI
+	providerArk        embeddingProvider = "ark"        // 火山引擎（豆包）
+	providerVolcengine embeddingProvider = "volcengine" // 火山引擎 - 另一个名称
+	providerDoubao     embeddingProvider = "doubao"
+	providerOpenAI     embeddingProvider = "openai" // OpenAI 兼容
 )
 
-// EmbeddingConfig embedding 模型配置
-type EmbeddingConfig struct {
-	Provider   EmbeddingProvider `json:"provider"`             // 提供商
-	APIKey     string            `json:"api_key"`              // API Key
-	Model      string            `json:"model"`                // 模型名称或接入点 ID
-	BaseURL    string            `json:"base_url,omitempty"`   // 自定义 API 地址（可选）
-	Dimensions *int              `json:"dimensions,omitempty"` // 向量维度（可选，部分模型支持）
+// embeddingConfig embedding 模型配置
+type embeddingConfig struct {
+	Provider   embeddingProvider `json:"provider"`
+	APIKey     string            `json:"api_key"`
+	Model      string            `json:"model"`
+	BaseURL    string            `json:"base_url,omitempty"`
+	Dimensions *int              `json:"dimensions,omitempty"`
 }
 
-// NewEmbedder 根据配置创建 eino Embedder
-// 支持所有 eino-ext 集成的 embedding 模型
-func NewEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Embedder, error) {
+// newEmbedder 根据配置创建 eino Embedder
+func newEmbedder(ctx context.Context, cfg *embeddingConfig) (embedding.Embedder, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("embedding 配置不能为空")
 	}
 
 	switch cfg.Provider {
-	case ProviderArk, ProviderVolcengine, ProviderDoubao:
+	case providerArk, providerVolcengine, providerDoubao:
 		return createArkEmbedder(ctx, cfg)
-	case ProviderOpenAI:
+	case providerOpenAI:
 		return createOpenAIEmbedder(ctx, cfg)
 	default:
 		return nil, fmt.Errorf("不支持的 embedding 提供商: %s", cfg.Provider)
@@ -49,8 +49,7 @@ func NewEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Embedder,
 }
 
 // createArkEmbedder 创建火山引擎 Ark Embedder
-// 火山引擎统一使用 multi_modal_api 类型
-func createArkEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Embedder, error) {
+func createArkEmbedder(ctx context.Context, cfg *embeddingConfig) (embedding.Embedder, error) {
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("Ark embedding 模型名称或接入点 ID 未配置")
 	}
@@ -70,13 +69,17 @@ func createArkEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Emb
 
 	embedder, err := einoArk.NewEmbedder(ctx, conf)
 	if err != nil {
+		logger.Error("[EmbedderFactory] 创建 Ark Embedder 失败",
+			zap.String("model", cfg.Model),
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("创建 Ark Embedder 失败: %w", err)
 	}
 	return embedder, nil
 }
 
-// createOpenAIEmbedder 创建 OpenAI Embedder
-func createOpenAIEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.Embedder, error) {
+// createOpenAIEmbedder 创建 OpenAI 兼容 Embedder
+func createOpenAIEmbedder(ctx context.Context, cfg *embeddingConfig) (embedding.Embedder, error) {
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("OpenAI embedding 模型名称未配置")
 	}
@@ -94,44 +97,28 @@ func createOpenAIEmbedder(ctx context.Context, cfg *EmbeddingConfig) (embedding.
 
 	embedder, err := einoOpenai.NewEmbedder(ctx, conf)
 	if err != nil {
+		logger.Error("[EmbedderFactory] 创建 OpenAI Embedder 失败",
+			zap.String("model", cfg.Model),
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("创建 OpenAI Embedder 失败: %w", err)
 	}
 	return embedder, nil
 }
 
 // NewEmbedderFromConfig 从 entity.UserConfig 创建 eino Embedder
-// 这是一个便捷函数，自动将 UserConfig 转换为 EmbeddingConfig
 func NewEmbedderFromConfig(ctx context.Context, cfg *entity.UserConfig) (embedding.Embedder, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("embedding 配置不能为空")
 	}
 
-	embeddingCfg := &EmbeddingConfig{
-		Provider:   EmbeddingProvider(cfg.Provider),
+	embeddingCfg := &embeddingConfig{
+		Provider:   embeddingProvider(cfg.Provider),
 		APIKey:     cfg.APIKey,
 		Model:      cfg.Model,
 		BaseURL:    cfg.APIURL,
 		Dimensions: cfg.Dimensions,
 	}
 
-	return NewEmbedder(ctx, embeddingCfg)
-}
-
-// GetBatchSizeByProvider 根据 provider 和 baseURL 返回对应的批量限制
-func GetBatchSizeByProvider(provider, baseURL string) int {
-	switch EmbeddingProvider(provider) {
-	case ProviderArk, ProviderVolcengine:
-		// 火山引擎/豆包
-		return 256
-	case ProviderOpenAI:
-		// 检查是否是通义千问
-		if strings.Contains(baseURL, "dashscope.aliyuncs.com") {
-			return 10
-		}
-		// OpenAI
-		return 2048
-	default:
-		// 未知厂商，使用保守值
-		return 10
-	}
+	return newEmbedder(ctx, embeddingCfg)
 }

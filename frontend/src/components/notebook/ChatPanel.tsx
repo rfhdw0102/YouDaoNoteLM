@@ -126,7 +126,8 @@ function ReferencePopover({ references, startIndex = 1 }: { references: Referenc
 // Remark plugin to extract reference markers [1], [2], etc.
 function remarkExtractReferences(references: Reference[]) {
   return (tree: Root) => {
-    visit(tree, 'text', (node: Text, index: number | undefined, parent: Root | undefined) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    visit(tree, 'text', ((node: Text, index: number | undefined, parent: any) => {
       if (!parent || index === undefined) return;
 
       const refRegex = /\[(\d+)\]/g;
@@ -178,7 +179,7 @@ function remarkExtractReferences(references: Reference[]) {
         parent.children.splice(index, 1, ...parts as any);
         return index + parts.length;
       }
-    });
+    }) as any);
   };
 }
 
@@ -522,23 +523,12 @@ export default function ChatPanel() {
             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent/20 to-teal/20 flex items-center justify-center mb-4">
               <Sparkles size={28} className="text-accent" />
             </div>
-            <h3 className="text-base font-semibold text-text-primary mb-2">开始对话</h3>
-            <p className="text-sm text-text-secondary max-w-xs">
-              {selectedSources.length > 0
-                ? `已选中 ${selectedSources.length} 份资料，输入问题开始对话`
-                : '输入问题开始对话，或在左侧选择资料来源获得更精准的回答'}
+            <p className="text-sm text-text-secondary max-w-xs whitespace-pre-line">
+              你好！我是你的知识库助手，可以帮你阅读资料、回答问题、总结内容。
             </p>
-            <div className="flex flex-wrap gap-2 mt-4 justify-center">
-              {['帮我总结核心观点', '生成思维导图', '出 10 道测验题'].map((q) => (
-                <button
-                  key={q}
-                  onClick={() => setInput(q)}
-                  className="px-3 py-1.5 rounded-full text-xs bg-bg-card border border-border-light text-text-secondary hover:text-accent hover:border-accent/30 transition-all cursor-pointer"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
+            <p className="text-xs text-text-muted max-w-xs mt-2">
+              💡 在左侧「资料来源」中选择文档，对话时我会基于所选资料为你精准解答
+            </p>
           </motion.div>
         )}
 
@@ -612,7 +602,7 @@ export default function ChatPanel() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isStreaming ? 'AI 正在生成中...' : '输入问题，或说"帮我生成思维导图"...'}
+            placeholder={isStreaming ? 'AI 正在生成中...' : '请输入问题'}
             rows={2}
             disabled={isStreaming}
             className={cn(

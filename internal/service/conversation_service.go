@@ -55,8 +55,8 @@ func (s *conversationService) CreateConversation(ctx context.Context, userID, no
 }
 
 // GetConversation 获取对话详情
-func (s *conversationService) GetConversation(ctx context.Context, conversationID uint) (*response.ConversationResponse, error) {
-	conv, err := s.conversationRepo.FindByID(conversationID)
+func (s *conversationService) GetConversation(ctx context.Context, userID, conversationID uint) (*response.ConversationResponse, error) {
+	conv, err := s.conversationRepo.FindByIDAndUserID(conversationID, userID)
 	if err != nil {
 		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询对话失败", err)
 	}
@@ -73,9 +73,9 @@ func (s *conversationService) GetConversation(ctx context.Context, conversationI
 	}, nil
 }
 
-// ListConversations 获取对话列表
-func (s *conversationService) ListConversations(ctx context.Context, notebookID uint) ([]*response.ConversationResponse, error) {
-	convs, err := s.conversationRepo.FindByNotebookID(notebookID)
+// ListConversations 获取笔记本下当前用户的对话列表
+func (s *conversationService) ListConversations(ctx context.Context, userID, notebookID uint) ([]*response.ConversationResponse, error) {
+	convs, err := s.conversationRepo.FindByNotebookIDAndUserID(notebookID, userID)
 	if err != nil {
 		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询对话列表失败", err)
 	}
@@ -94,8 +94,8 @@ func (s *conversationService) ListConversations(ctx context.Context, notebookID 
 }
 
 // UpdateConversation 更新对话标题
-func (s *conversationService) UpdateConversation(ctx context.Context, conversationID uint, title string) error {
-	conv, err := s.conversationRepo.FindByID(conversationID)
+func (s *conversationService) UpdateConversation(ctx context.Context, userID, conversationID uint, title string) error {
+	conv, err := s.conversationRepo.FindByIDAndUserID(conversationID, userID)
 	if err != nil {
 		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询对话失败", err)
 	}
@@ -103,16 +103,15 @@ func (s *conversationService) UpdateConversation(ctx context.Context, conversati
 		return bizerrors.ErrNotFound
 	}
 
-	conv.Title = title
-	if err := s.conversationRepo.Update(conv); err != nil {
+	if err := s.conversationRepo.UpdateTitle(conversationID, title); err != nil {
 		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "更新对话失败", err)
 	}
 	return nil
 }
 
 // DeleteConversation 删除对话
-func (s *conversationService) DeleteConversation(ctx context.Context, conversationID uint) error {
-	conv, err := s.conversationRepo.FindByID(conversationID)
+func (s *conversationService) DeleteConversation(ctx context.Context, userID, conversationID uint) error {
+	conv, err := s.conversationRepo.FindByIDAndUserID(conversationID, userID)
 	if err != nil {
 		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询对话失败", err)
 	}
@@ -139,7 +138,16 @@ func (s *conversationService) DeleteConversation(ctx context.Context, conversati
 }
 
 // GetMessages 获取消息历史
-func (s *conversationService) GetMessages(ctx context.Context, conversationID uint) ([]*response.MessageResponse, error) {
+func (s *conversationService) GetMessages(ctx context.Context, userID, conversationID uint) ([]*response.MessageResponse, error) {
+	// 校验对话归属
+	conv, err := s.conversationRepo.FindByIDAndUserID(conversationID, userID)
+	if err != nil {
+		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询对话失败", err)
+	}
+	if conv == nil {
+		return nil, bizerrors.ErrNotFound
+	}
+
 	msgs, err := s.messageRepo.FindByConversationID(conversationID)
 	if err != nil {
 		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询消息失败", err)

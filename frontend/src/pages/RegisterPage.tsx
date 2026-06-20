@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Mail, Lock, Shield } from 'lucide-react';
 import { useAuthStore } from '../stores/useAuthStore';
+import { getErrorMessage } from '../utils/error';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 
@@ -33,7 +34,7 @@ export default function RegisterPage() {
         });
       }, 1000);
     } catch (err: any) {
-      setError(err.message || '发送验证码失败');
+      setError(getErrorMessage(err, '发送验证码失败'));
     } finally {
       setSendingCode(false);
     }
@@ -60,7 +61,7 @@ export default function RegisterPage() {
       setSuccess('注册成功，即将跳转登录页...');
       setTimeout(() => navigate('/login'), 1500);
     } catch (err: any) {
-      setError(err.message || '注册失败，请重试');
+      setError(getErrorMessage(err, '注册失败，请重试'));
     } finally {
       setLoading(false);
     }

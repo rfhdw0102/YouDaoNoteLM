@@ -2,7 +2,7 @@ package rag
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"strings"
 
 	"YoudaoNoteLm/internal/model/entity"
@@ -179,15 +179,25 @@ func estimateTokens(text string) int {
 	return chars + words
 }
 
-// ToParentBlocks 将 eino 文档列表转换为 ParentBlock 实体列表
-// 供 IngestionService 写入 MySQL
-func ToParentBlocks(docs []*schema.Document, sourceID uint) []entity.ParentBlock {
+// toParentBlocks 将 eino 文档列表转换为 ParentBlock 实体列表
+func toParentBlocks(docs []*schema.Document, sourceID uint) []entity.ParentBlock {
 	var blocks []entity.ParentBlock
 	for _, doc := range docs {
 		level, _ := doc.MetaData["level"].(int)
 		chapterPath, _ := doc.MetaData["chapter_path"].(string)
 		parentIndex, _ := doc.MetaData["parent_index"].(int)
 		heading, _ := doc.MetaData["heading"].(string)
+
+		// 使用 json.Marshal 确保特殊字符正确转义
+		metadataMap := map[string]any{
+			"chapter_path": chapterPath,
+			"level":        level,
+		}
+		metadataBytes, err := json.Marshal(metadataMap)
+		if err != nil {
+			// 如果序列化失败，使用空 JSON 对象
+			metadataBytes = []byte("{}")
+		}
 
 		blocks = append(blocks, entity.ParentBlock{
 			SourceID:    sourceID,
@@ -196,7 +206,7 @@ func ToParentBlocks(docs []*schema.Document, sourceID uint) []entity.ParentBlock
 			ChapterPath: chapterPath,
 			Content:     doc.Content,
 			ChunkIndex:  parentIndex,
-			Metadata:    fmt.Sprintf(`{"chapter_path":"%s","level":%d}`, chapterPath, level),
+			Metadata:    string(metadataBytes),
 		})
 	}
 	return blocks
