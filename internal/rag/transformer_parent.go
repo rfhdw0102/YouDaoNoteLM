@@ -111,9 +111,8 @@ func estimateTokens(text string) int {
 	return chars + words
 }
 
-// ToParentBlocks 将 eino 文档列表转换为 ParentBlock 实体列表
-// 供 IngestionService 写入 MySQL
-func ToParentBlocks(docs []*schema.Document, sourceID uint) []entity.ParentBlock {
+// toParentBlocks 将 eino 文档列表转换为 ParentBlock 实体列表
+func toParentBlocks(docs []*schema.Document, sourceID uint) []entity.ParentBlock {
 	var blocks []entity.ParentBlock
 	for _, doc := range docs {
 		level, _ := doc.MetaData["level"].(int)

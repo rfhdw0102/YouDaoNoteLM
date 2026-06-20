@@ -9,26 +9,25 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// EinoRerankerConfig Score Reranker 配置
-type EinoRerankerConfig struct {
-	// ScoreFieldKey 指定从 metadata 中获取 score 的 key
-	// 如果为空，则使用 schema.Document.Score() 方法
+// einoRerankerConfig Score Reranker 配置
+type einoRerankerConfig struct {
+	// ScoreFieldKey 指定从 metadata 中获取 score 的 key，为空则使用 schema.Document.Score()
 	ScoreFieldKey string
 }
 
-// EinoReranker 基于 eino-ext score 包的 Reranker
+// einoReranker 基于 eino-ext score 包的 Reranker
 // 利用 LLM 的首因效应和近因效应，将高分文档放在开头和结尾
-type EinoReranker struct {
+type einoReranker struct {
 	transformer document.Transformer
-	config      *EinoRerankerConfig
+	config      *einoRerankerConfig
 }
 
-// NewEinoReranker 创建 Score Reranker
+// newEinoReranker 创建 Score Reranker
 // 基于论文 https://arxiv.org/abs/2307.03172 的发现：
 // LLM 对输入上下文开头和结尾的信息处理效果更好
-func NewEinoReranker(ctx context.Context, config *EinoRerankerConfig) (*EinoReranker, error) {
+func newEinoReranker(ctx context.Context, config *einoRerankerConfig) (*einoReranker, error) {
 	if config == nil {
-		config = &EinoRerankerConfig{}
+		config = &einoRerankerConfig{}
 	}
 
 	rerankerConfig := &score.Config{}
@@ -41,30 +40,23 @@ func NewEinoReranker(ctx context.Context, config *EinoRerankerConfig) (*EinoRera
 		return nil, fmt.Errorf("创建 score reranker 失败: %w", err)
 	}
 
-	return &EinoReranker{
+	return &einoReranker{
 		transformer: transformer,
 		config:      config,
 	}, nil
 }
 
-// Rerank 对文档进行重排序
-// 将高分文档放在数组的开头和结尾，低分文档放在中间
-func (r *EinoReranker) Rerank(ctx context.Context, docs []*schema.Document) ([]*schema.Document, error) {
+// rerank 对文档进行重排序，将高分文档放在数组的开头和结尾
+func (r *einoReranker) rerank(ctx context.Context, docs []*schema.Document) ([]*schema.Document, error) {
 	if len(docs) == 0 {
 		return docs, nil
 	}
-
-	result, err := r.transformer.Transform(ctx, docs)
-	if err != nil {
-		return nil, fmt.Errorf("rerank 失败: %w", err)
-	}
-
-	return result, nil
+	return r.transformer.Transform(ctx, docs)
 }
 
-// RerankWithScore 对 RetrieveResult 进行重排序
+// rerankWithScore 对 RetrieveResult 进行重排序
 // 先转换为 schema.Document，执行 rerank，再转换回 RetrieveResult
-func (r *EinoReranker) RerankWithScore(ctx context.Context, results []*RetrieveResult) ([]*RetrieveResult, error) {
+func (r *einoReranker) rerankWithScore(ctx context.Context, results []*RetrieveResult) ([]*RetrieveResult, error) {
 	if len(results) == 0 {
 		return results, nil
 	}
@@ -84,13 +76,12 @@ func (r *EinoReranker) RerankWithScore(ctx context.Context, results []*RetrieveR
 				"chunk_type":      result.ChunkType,
 			},
 		}
-		// 设置 score
 		doc.WithScore(float64(result.Score))
 		docs[i] = doc
 	}
 
 	// 执行 rerank
-	rerankedDocs, err := r.Rerank(ctx, docs)
+	rerankedDocs, err := r.rerank(ctx, docs)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +93,6 @@ func (r *EinoReranker) RerankWithScore(ctx context.Context, results []*RetrieveR
 			Content: doc.Content,
 			Score:   float32(doc.Score()),
 		}
-
 		if sourceID, ok := doc.MetaData["source_id"].(uint); ok {
 			result.SourceID = sourceID
 		}
@@ -124,7 +114,6 @@ func (r *EinoReranker) RerankWithScore(ctx context.Context, results []*RetrieveR
 		if chunkType, ok := doc.MetaData["chunk_type"].(string); ok {
 			result.ChunkType = chunkType
 		}
-
 		rerankedResults[i] = result
 	}
 

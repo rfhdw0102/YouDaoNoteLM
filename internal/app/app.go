@@ -294,24 +294,23 @@ func (a *App) initIngestionService(sourceRepo repository.SourceRepository, confi
 	}
 
 	// 创建 EmbedderProvider：通过 ConfigService 创建
-	embedderProvider := func(ctx context.Context, userID uint) (embedding.Embedder, int, int, error) {
+	embedderProvider := func(ctx context.Context, userID uint) (embedding.Embedder, int, error) {
 		cfg, err := configSvc.GetUserConfig(userID, "embedding")
 		if err != nil {
-			return nil, 0, 0, fmt.Errorf("获取 Embedding 配置失败: %w", err)
+			return nil, 0, fmt.Errorf("获取 Embedding 配置失败: %w", err)
 		}
 		if cfg == nil {
-			return nil, 0, 0, fmt.Errorf("请先在设置中配置 Embedding 服务")
+			return nil, 0, fmt.Errorf("请先在设置中配置 Embedding 服务")
 		}
 		embedder, err := rag.NewEmbedderFromConfig(ctx, cfg)
 		if err != nil {
-			return nil, 0, 0, err
+			return nil, 0, err
 		}
-		batchSize := rag.GetBatchSize(cfg.Provider, cfg.APIURL)
 		vectorDim := 0
 		if cfg.Dimensions != nil {
 			vectorDim = *cfg.Dimensions
 		}
-		return embedder, batchSize, vectorDim, nil
+		return embedder, vectorDim, nil
 	}
 
 	parentRepo := repository.NewParentBlockRepository(a.mysqlDB)

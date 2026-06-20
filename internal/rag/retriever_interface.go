@@ -2,8 +2,6 @@ package rag
 
 import (
 	"context"
-
-	"github.com/cloudwego/eino/components/embedding"
 )
 
 // RAGRetriever RAG 检索接口
@@ -37,6 +35,3 @@ type RetrieveResult struct {
 const (
 	defaultTopK = 8
 )
-
-// RetrieverEmbedderProvider 根据 userID 获取 Embedder
-type RetrieverEmbedderProvider func(ctx context.Context, userID uint) (embedding.Embedder, error)
