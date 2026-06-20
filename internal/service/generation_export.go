@@ -45,7 +45,7 @@ func (s *generationService) Export(ctx context.Context, req *GenerationExportReq
 			Data:        data,
 		}, nil
 	case GenerationTypePPT:
-		return exportPPT(content, req.Title, req.Template)
+		return exportPPT(ctx, content, req.Title, req.Template)
 	default:
 		return nil, bizerrors.New(bizerrors.CodeInvalidParam, "unsupported export type")
 	}

@@ -3,6 +3,7 @@ package service
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"fmt"
 	"html"
 	"io"
@@ -54,70 +55,73 @@ var pptExportTemplates = map[string]pptExportTemplate{
 		ID:   "classic",
 		Name: "Classic",
 		Theme: pptExportTheme{
-			Background: pptx.Color{R: 255, G: 247, B: 237},
-			Surface:    pptx.Color{R: 255, G: 251, B: 245},
-			SurfaceAlt: pptx.Color{R: 255, G: 237, B: 213},
-			Accent:     pptx.Color{R: 234, G: 88, B: 12},
-			AccentDark: pptx.Color{R: 194, G: 65, B: 12},
-			AccentSoft: pptx.Color{R: 255, G: 237, B: 213},
-			Border:     pptx.Color{R: 253, G: 186, B: 116},
-			Title:      pptx.Color{R: 67, G: 20, B: 7},
-			Text:       pptx.Color{R: 41, G: 37, B: 36},
-			Muted:      pptx.Color{R: 120, G: 113, B: 108},
+			// 暖橙色系：温暖、学术
+			Background: pptx.Color{R: 255, G: 248, B: 240},
+			Surface:    pptx.Color{R: 255, G: 252, B: 247},
+			SurfaceAlt: pptx.Color{R: 255, G: 240, B: 220},
+			Accent:     pptx.Color{R: 220, G: 78, B: 10},
+			AccentDark: pptx.Color{R: 178, G: 55, B: 8},
+			AccentSoft: pptx.Color{R: 255, G: 232, B: 208},
+			Border:     pptx.Color{R: 248, G: 176, B: 104},
+			Title:      pptx.Color{R: 60, G: 16, B: 4},
+			Text:       pptx.Color{R: 38, G: 34, B: 32},
+			Muted:      pptx.Color{R: 115, G: 108, B: 103},
 			White:      pptx.White,
 		},
 		Kicker:      "LEARNING DECK",
 		TitleFont:   "Microsoft YaHei UI",
 		BodyFont:    "Microsoft YaHei",
-		FooterLabel: "YoudaoNoteLM / Classic",
-		TitleSize:   36,
-		BodySize:    18,
+		FooterLabel: "YoudaoNoteLM · Classic",
+		TitleSize:   34,
+		BodySize:    17,
 	},
 	"clean": {
 		ID:   "clean",
 		Name: "Clean",
 		Theme: pptExportTheme{
-			Background: pptx.Color{R: 248, G: 250, B: 252},
+			// 蓝灰极简：干净、现代
+			Background: pptx.Color{R: 246, G: 248, B: 252},
 			Surface:    pptx.Color{R: 255, G: 255, B: 255},
-			SurfaceAlt: pptx.Color{R: 248, G: 250, B: 252},
-			Accent:     pptx.Color{R: 156, G: 163, B: 175},
-			AccentDark: pptx.Color{R: 107, G: 114, B: 128},
-			AccentSoft: pptx.Color{R: 229, G: 231, B: 235},
-			Border:     pptx.Color{R: 229, G: 231, B: 235},
-			Title:      pptx.Color{R: 31, G: 41, B: 55},
-			Text:       pptx.Color{R: 30, G: 41, B: 59},
-			Muted:      pptx.Color{R: 100, G: 116, B: 139},
+			SurfaceAlt: pptx.Color{R: 243, G: 246, B: 251},
+			Accent:     pptx.Color{R: 79, G: 120, B: 200},
+			AccentDark: pptx.Color{R: 52, G: 88, B: 168},
+			AccentSoft: pptx.Color{R: 224, G: 232, B: 248},
+			Border:     pptx.Color{R: 210, G: 220, B: 238},
+			Title:      pptx.Color{R: 18, G: 32, B: 62},
+			Text:       pptx.Color{R: 28, G: 40, B: 60},
+			Muted:      pptx.Color{R: 96, G: 112, B: 140},
 			White:      pptx.White,
 		},
 		Kicker:      "FOCUS NOTES",
 		TitleFont:   "Microsoft YaHei UI",
 		BodyFont:    "Microsoft YaHei",
-		FooterLabel: "YoudaoNoteLM / Clean",
+		FooterLabel: "YoudaoNoteLM · Clean",
 		TitleSize:   34,
-		BodySize:    18,
+		BodySize:    17,
 	},
 	"business": {
 		ID:   "business",
 		Name: "Business",
 		Theme: pptExportTheme{
-			Background: pptx.Color{R: 247, G: 248, B: 245},
+			// 深绿商务：专业、沉稳
+			Background: pptx.Color{R: 245, G: 248, B: 245},
 			Surface:    pptx.Color{R: 255, G: 255, B: 255},
-			SurfaceAlt: pptx.Color{R: 229, G: 241, B: 239},
-			Accent:     pptx.Color{R: 63, G: 125, B: 122},
-			AccentDark: pptx.Color{R: 61, G: 102, B: 99},
-			AccentSoft: pptx.Color{R: 229, G: 241, B: 239},
-			Border:     pptx.Color{R: 184, G: 216, B: 213},
-			Title:      pptx.Color{R: 31, G: 41, B: 55},
-			Text:       pptx.Color{R: 55, G: 65, B: 81},
-			Muted:      pptx.Color{R: 91, G: 101, B: 112},
+			SurfaceAlt: pptx.Color{R: 230, G: 242, B: 238},
+			Accent:     pptx.Color{R: 34, G: 110, B: 90},
+			AccentDark: pptx.Color{R: 22, G: 82, B: 66},
+			AccentSoft: pptx.Color{R: 216, G: 238, B: 232},
+			Border:     pptx.Color{R: 170, G: 212, B: 200},
+			Title:      pptx.Color{R: 16, G: 46, B: 38},
+			Text:       pptx.Color{R: 42, G: 58, B: 54},
+			Muted:      pptx.Color{R: 82, G: 102, B: 96},
 			White:      pptx.White,
 		},
 		Kicker:      "EXECUTIVE BRIEF",
 		TitleFont:   "Microsoft YaHei UI",
 		BodyFont:    "Microsoft YaHei",
-		FooterLabel: "YoudaoNoteLM / Business",
+		FooterLabel: "YoudaoNoteLM · Business",
 		TitleSize:   34,
-		BodySize:    18,
+		BodySize:    17,
 	},
 }
 
@@ -128,7 +132,7 @@ var (
 	pptBulletPattern  = regexp.MustCompile(`(?is)<li\b[^>]*>(.*?)</li>`)
 )
 
-func exportPPT(content, title, templateID string) (*GenerationExportResult, error) {
+func exportPPT(ctx context.Context, content, title, templateID string) (*GenerationExportResult, error) {
 	filename := resolveExportFilename(title, content, "ppt-export", ".pptx")
 
 	trimmedTemplateID := strings.TrimSpace(templateID)
@@ -138,7 +142,7 @@ func exportPPT(content, title, templateID string) (*GenerationExportResult, erro
 	)
 
 	if trimmedTemplateID == "" {
-		data, err = buildDynamicHTMLPPTX(content, strings.TrimSuffix(filename, ".pptx"))
+		data, err = exportPPTWithDefaultEngine(ctx, content, strings.TrimSuffix(filename, ".pptx"))
 		if err != nil {
 			return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "build ppt export failed", err)
 		}
@@ -226,7 +230,7 @@ func normalizePPTExportText(value string) string {
 	value = stripSimpleHTML(value)
 	value = html.UnescapeString(value)
 	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
-	return value
+	return cleanPPTVisibleText(value)
 }
 
 func buildPPTXBytes(slides []pptExportSlide, deckTitle string, template pptExportTemplate) ([]byte, error) {
@@ -245,11 +249,9 @@ func buildPPTXBytes(slides []pptExportSlide, deckTitle string, template pptExpor
 
 		startY := 2.14
 		if slideData.Title == "" {
-			startY = 1.24
+			startY = 1.28
 		}
-		for i, bullet := range slideData.Bullets {
-			addPPTBulletCard(slide, i, bullet, startY, template)
-		}
+		addPPTBulletCards(slide, slideData.Bullets, startY, template)
 	}
 
 	presentation, err := builder.Build()
@@ -275,30 +277,34 @@ func buildPPTXBytes(slides []pptExportSlide, deckTitle string, template pptExpor
 }
 
 func addPPTThemeFrame(slide *pptx.SlideBuilder, slideNumber int, template pptExportTemplate) {
+	// 主内容卡片
 	slide.AddShape(pptx.ShapeRoundedRectangle).
-		SetPosition(pptx.Inches(0.74), pptx.Inches(0.5)).
-		SetSize(pptx.Inches(11.88), pptx.Inches(6.22)).
+		SetPosition(pptx.Inches(0.72), pptx.Inches(0.46)).
+		SetSize(pptx.Inches(11.92), pptx.Inches(6.28)).
 		SetFillColor(template.Theme.Surface).
 		SetLine(template.Theme.Border, 1).
 		End()
 
+	// 顶部强调色条（稍厚一点，更有视觉分量）
 	slide.AddShape(pptx.ShapeRectangle).
 		SetPosition(pptx.Inches(0), pptx.Inches(0)).
-		SetSize(pptx.Inches(13.333), pptx.Inches(0.22)).
+		SetSize(pptx.Inches(13.333), pptx.Inches(0.28)).
 		SetFillColor(template.Theme.Accent).
 		SetNoLine().
 		End()
 
+	// 左侧强调竖条（稍宽，视觉锚点更清晰）
 	slide.AddShape(pptx.ShapeRectangle).
-		SetPosition(pptx.Inches(0.74), pptx.Inches(0.5)).
-		SetSize(pptx.Inches(0.08), pptx.Inches(6.22)).
+		SetPosition(pptx.Inches(0.72), pptx.Inches(0.46)).
+		SetSize(pptx.Inches(0.10), pptx.Inches(6.28)).
 		SetFillColor(template.Theme.AccentDark).
 		SetNoLine().
 		End()
 
+	// Kicker 徽标
 	slide.AddShape(pptx.ShapeRoundedRectangle).
-		SetPosition(pptx.Inches(0.98), pptx.Inches(0.78)).
-		SetSize(pptx.Inches(1.54), pptx.Inches(0.34)).
+		SetPosition(pptx.Inches(0.96), pptx.Inches(0.76)).
+		SetSize(pptx.Inches(1.60), pptx.Inches(0.34)).
 		SetFillColor(template.Theme.Accent).
 		SetNoLine().
 		End()
@@ -309,31 +315,33 @@ func addPPTThemeFrame(slide *pptx.SlideBuilder, slideNumber int, template pptExp
 		SetFontFamily(template.BodyFont).
 		SetAlignment(pptx.AlignmentCenter).
 		SetColor(template.Theme.White).
-		SetPosition(pptx.Inches(1.03), pptx.Inches(0.85)).
-		SetSize(pptx.Inches(1.44), pptx.Inches(0.14)).
+		SetPosition(pptx.Inches(1.01), pptx.Inches(0.84)).
+		SetSize(pptx.Inches(1.50), pptx.Inches(0.14)).
 		End()
 
+	// 页码徽标（圆角矩形，更宽一点显得不局促）
 	slide.AddShape(pptx.ShapeRoundedRectangle).
-		SetPosition(pptx.Inches(11.54), pptx.Inches(0.73)).
-		SetSize(pptx.Inches(0.82), pptx.Inches(0.46)).
+		SetPosition(pptx.Inches(11.50), pptx.Inches(0.70)).
+		SetSize(pptx.Inches(0.96), pptx.Inches(0.46)).
 		SetFillColor(template.Theme.AccentDark).
 		SetNoLine().
 		End()
 
 	slide.AddText(fmt.Sprintf("%02d", slideNumber)).
 		SetBold(true).
-		SetFontSize(13).
+		SetFontSize(14).
 		SetFontFamily(template.BodyFont).
 		SetAlignment(pptx.AlignmentCenter).
 		SetColor(template.Theme.White).
-		SetPosition(pptx.Inches(11.65), pptx.Inches(0.84)).
-		SetSize(pptx.Inches(0.6), pptx.Inches(0.16)).
+		SetPosition(pptx.Inches(11.58), pptx.Inches(0.82)).
+		SetSize(pptx.Inches(0.80), pptx.Inches(0.18)).
 		End()
 
+	// 页脚分隔线（使用 Border 色，更精致）
 	slide.AddShape(pptx.ShapeRectangle).
-		SetPosition(pptx.Inches(0.98), pptx.Inches(6.55)).
-		SetSize(pptx.Inches(11.18), pptx.Inches(0.02)).
-		SetFillColor(template.Theme.AccentSoft).
+		SetPosition(pptx.Inches(0.96), pptx.Inches(6.52)).
+		SetSize(pptx.Inches(11.42), pptx.Inches(0.022)).
+		SetFillColor(template.Theme.Border).
 		SetNoLine().
 		End()
 
@@ -341,8 +349,8 @@ func addPPTThemeFrame(slide *pptx.SlideBuilder, slideNumber int, template pptExp
 		SetFontSize(10).
 		SetFontFamily(template.BodyFont).
 		SetColor(template.Theme.Muted).
-		SetPosition(pptx.Inches(0.98), pptx.Inches(6.68)).
-		SetSize(pptx.Inches(3.2), pptx.Inches(0.18)).
+		SetPosition(pptx.Inches(0.96), pptx.Inches(6.64)).
+		SetSize(pptx.Inches(3.4), pptx.Inches(0.20)).
 		End()
 }
 
@@ -352,29 +360,87 @@ func addPPTSlideTitle(slide *pptx.SlideBuilder, title string, template pptExport
 		SetFontSize(template.TitleSize).
 		SetFontFamily(template.TitleFont).
 		SetColor(template.Theme.Title).
-		SetPosition(pptx.Inches(0.98), pptx.Inches(1.18)).
-		SetSize(pptx.Inches(10.65), pptx.Inches(0.72)).
+		SetPosition(pptx.Inches(0.96), pptx.Inches(1.16)).
+		SetSize(pptx.Inches(10.82), pptx.Inches(0.80)).
 		End()
 
+	// 标题下方装饰线（稍长，与内容宽度协调）
 	slide.AddShape(pptx.ShapeRoundedRectangle).
-		SetPosition(pptx.Inches(0.98), pptx.Inches(1.9)).
-		SetSize(pptx.Inches(1.08), pptx.Inches(0.07)).
+		SetPosition(pptx.Inches(0.96), pptx.Inches(1.96)).
+		SetSize(pptx.Inches(1.40), pptx.Inches(0.06)).
 		SetFillColor(template.Theme.Accent).
 		SetNoLine().
 		End()
 }
 
-func addPPTBulletCard(slide *pptx.SlideBuilder, index int, bullet string, startY float64, template pptExportTemplate) {
-	y := startY + float64(index)*0.96
+func calcBulletCardHeight(bullet string, baseSize int) float64 {
+	length := len([]rune(strings.TrimSpace(bullet)))
+	fs := pptBulletFontSize(bullet, baseSize)
+	// 文字区宽度约 9.7 英寸，按每英寸约 6 个字符（中英混排保守估算）
+	charsPerLine := 58
+	if fs < baseSize-1 {
+		charsPerLine = 65
+	}
+	if charsPerLine < 10 {
+		charsPerLine = 10
+	}
+	lines := (length + charsPerLine - 1) / charsPerLine
+	if lines < 1 {
+		lines = 1
+	}
+	// 每行约 0.26 英寸，加上上下内边距 0.44 英寸
+	h := float64(lines)*0.26 + 0.44
+	if h < 0.74 {
+		h = 0.74
+	}
+	return h
+}
+
+func addPPTBulletCards(slide *pptx.SlideBuilder, bullets []string, startY float64, template pptExportTemplate) {
+	if len(bullets) == 0 {
+		return
+	}
+	const cardGap = 0.10
+	const maxBottom = 6.44
+
+	heights := make([]float64, len(bullets))
+	total := 0.0
+	for i, b := range bullets {
+		heights[i] = calcBulletCardHeight(b, template.BodySize)
+		total += heights[i]
+		if i > 0 {
+			total += cardGap
+		}
+	}
+
+	// 超出可用高度时等比缩小
+	available := maxBottom - startY
+	if total > available {
+		scale := available / total
+		for i := range heights {
+			heights[i] *= scale
+		}
+	}
+
+	y := startY
+	for i, bullet := range bullets {
+		addPPTBulletCard(slide, i, bullet, y, heights[i], template)
+		y += heights[i] + cardGap
+	}
+}
+
+func addPPTBulletCard(slide *pptx.SlideBuilder, index int, bullet string, y float64, height float64, template pptExportTemplate) {
 	slide.AddShape(pptx.ShapeRoundedRectangle).
 		SetPosition(pptx.Inches(1.04), pptx.Inches(y)).
-		SetSize(pptx.Inches(11.08), pptx.Inches(0.78)).
+		SetSize(pptx.Inches(11.08), pptx.Inches(height)).
 		SetFillColor(template.Theme.SurfaceAlt).
 		SetLine(template.Theme.Border, 1).
 		End()
 
+	// 圆形编号指示器，垂直居中于卡片
+	circleY := y + (height-0.36)/2
 	slide.AddShape(pptx.ShapeEllipse).
-		SetPosition(pptx.Inches(1.28), pptx.Inches(y+0.21)).
+		SetPosition(pptx.Inches(1.26), pptx.Inches(circleY)).
 		SetSize(pptx.Inches(0.36), pptx.Inches(0.36)).
 		SetFillColor(template.Theme.Accent).
 		SetNoLine().
@@ -386,16 +452,20 @@ func addPPTBulletCard(slide *pptx.SlideBuilder, index int, bullet string, startY
 		SetFontFamily(template.BodyFont).
 		SetAlignment(pptx.AlignmentCenter).
 		SetColor(template.Theme.White).
-		SetPosition(pptx.Inches(1.31), pptx.Inches(y+0.29)).
-		SetSize(pptx.Inches(0.3), pptx.Inches(0.13)).
+		SetPosition(pptx.Inches(1.29), pptx.Inches(circleY+0.12)).
+		SetSize(pptx.Inches(0.30), pptx.Inches(0.14)).
 		End()
 
+	textHeight := height - 0.30
+	if textHeight < 0.22 {
+		textHeight = 0.22
+	}
 	slide.AddText(bullet).
 		SetFontSize(pptBulletFontSize(bullet, template.BodySize)).
 		SetFontFamily(template.BodyFont).
 		SetColor(template.Theme.Text).
-		SetPosition(pptx.Inches(1.86), pptx.Inches(y+0.22)).
-		SetSize(pptx.Inches(9.7), pptx.Inches(0.36)).
+		SetPosition(pptx.Inches(1.84), pptx.Inches(y+0.15)).
+		SetSize(pptx.Inches(9.80), pptx.Inches(textHeight)).
 		End()
 }
 

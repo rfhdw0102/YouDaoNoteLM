@@ -71,6 +71,7 @@ desktop.ini
 
 # Dependencies
 frontend/node_modules/
+ppt_exporter/node_modules/
 
 # Build output
 frontend/dist/

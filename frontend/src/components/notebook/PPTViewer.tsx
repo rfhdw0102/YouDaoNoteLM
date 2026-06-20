@@ -32,7 +32,7 @@ export default function PPTViewer({ content }: PPTViewerProps) {
   };
 
   return (
-    <div className="p-6">
+    <div className="p-4">
       <div className="flex items-center gap-2 mb-3">
         <Button variant="ghost" size="sm" onClick={handleFullscreen}>
           {isFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
@@ -43,12 +43,12 @@ export default function PPTViewer({ content }: PPTViewerProps) {
         </Button>
       </div>
 
-      <div className="rounded-xl overflow-hidden border border-border-light bg-bg-card">
+      <div className="rounded-2xl overflow-hidden border border-border-light bg-bg-subtle shadow-sm">
         <iframe
           ref={iframeRef}
           srcDoc={content}
-          className="w-full border-0"
-          style={{ height: '500px' }}
+          className="w-full border-0 block"
+          style={{ height: '580px' }}
           title="PPT 预览"
           sandbox="allow-same-origin"
         />

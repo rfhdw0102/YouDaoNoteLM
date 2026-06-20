@@ -185,7 +185,19 @@ func (s *generationService) retrieve(ctx context.Context, req *GenerationRequest
 		TopK:      optionInt(req.Options, "top_k", 5),
 	})
 	if err != nil {
-		return generationReferenceSelection{}, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "retrieve generation context failed", err)
+		logger.Warn("retrieve generation context failed, fallback to inline markdown",
+			zap.Uint("user_id", req.UserID),
+			zap.Uint("notebook_id", req.NotebookID),
+			zap.String("type", string(req.Type)),
+			zap.String("query", plan.LocalQuery),
+			zap.Uints("source_ids", req.SourceIDs),
+			zap.Error(err),
+		)
+		return generationReferenceSelection{
+			References:          inlineRefs,
+			NeedsWebSupplement:  req.UseWeb,
+			WebSupplementReason: "local_retriever_unavailable",
+		}, nil
 	}
 
 	ragRefs := make([]GenerationReference, 0, len(results))
@@ -280,9 +292,13 @@ func generationOrchestrationSteps() []string {
 		"context_prepare",
 		"content_analyze",
 		"outline_plan",
+		"outline_review",
 		"content_expand",
-		"draft_generate",
+		"style_design",
+		"css_generate",
+		"html_generate",
 		"structure_check",
+		"html_polish",
 		"structure_repair",
 		"fact_enhance",
 		"format_validate",

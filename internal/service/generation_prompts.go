@@ -6,17 +6,166 @@ type generationPromptStrategy struct {
 }
 
 func promptStrategyFor(typ GenerationType) generationPromptStrategy {
-	common := "以本地笔记为主要依据，联网搜索只作为补充背景。保持不同来源的边界，不编造缺乏依据的结论。参考资料会由系统在响应元数据中单独展示，不要在生成正文中添加参考资料、References、来源列表或引用附录。"
+	common := "以本地笔记为主要依据，联网搜索只作为补充背景。保持不同来源的边界，不编造缺乏依据的结论。参考资料会由系统在响应元数据中单独展示，不要在生成正文中添加参考资料、References、来源列表或引用附录。上下文中的 Local References、Web Results 是供你参考的素材，你应该将其中的内容融入幻灯片正文，而不是把参考资料标签、文档名、章节路径（如'文档列表'、'文档介绍'、'专题五'、'第一章'、'【重点知识联系与剖析】'等）作为可见文字输出到幻灯片上。如果参考资料中有有用的内容，直接将其融入幻灯片的正文叙述中，不要保留参考资料的元信息标签。"
 	switch typ {
 	case GenerationTypeMindmap:
 		return generationPromptStrategy{
 			System:       common + " 生成学习资料型思维导图。先分析概念、关系、过程和例子，再规划核心概念、原理机制、过程步骤、应用场景、易错点和总结等稳定分支；保留证据边界，不要把原文段落简单改写成列表。",
-			OutputFormat: "仅返回 Markmap 兼容的 Markdown。以一个 # 标题开头，优先使用 ## 核心概念、## 原理机制、## 过程步骤、## 应用场景、## 易错点、## 总结 等稳定分支，并在分支下补入 ### 节点和必要的 #### 解释形成清晰层级；不要加入参考资料或 References 分支。",
+			OutputFormat: "仅返回 Markmap 兼容的 Markdown。以一个 # 标题开头，优先使用 ## 核心概念、## 原理机制、## 过程步骤、## 应用场景、## 易错点、## 总结 等稳定分支，并在分支下补充 ### 节点和必要的 #### 解释形成清晰层级；不要加入参考资料或 References 分支。",
 		}
 	case GenerationTypePPT:
 		return generationPromptStrategy{
-			System:       common + " 根据内部演示大纲生成学习课件型演示文稿 HTML。遵循 content_analyze -> outline_plan -> content_expand 的计划结果组织内容；补充性 bullet 必须明确标记为解释或补充，不得当作已有来源事实。",
-			OutputFormat: "仅返回 HTML 片段。每页使用一个 <section>，内部使用 h1/h2 和项目符号列表。不要包含 html/body 外层标签。每页聚焦一个学习主题，并用证据支撑；不要返回 Markdown 大纲。",
+			System: common + " 你是基于 Go Gin 与 Eino 框架的 PPT 生成子 Agent，负责把用户内容和风格需求组织成可预览、可导出 .pptx 的高质量 HTML 演示文稿。优先解析 <PPT_CONTENT> 中的标题、副标题、正文、列表、图片描述和证据；其次解析 <PPT_STYLE> 中的风格、色彩、字体、版式和屏幕适配要求。若用户没有显式提供 <PPT_STYLE>，默认采用简约商务风格。若用户没有显式标签，则把 Markdown 和用户提示分别视为 PPT_CONTENT 与 PPT_STYLE 的来源。必须严格读取上下文中的 STRUCTURED_PPT_PLAN，并按该计划一页一 section 生成 HTML：页面标题必须对应计划里的每一个 Slide，不得省略计划页，不得把多个计划页合并成一页，不得只输出摘要版。必须先完成内容结构分析，再完成风格设计方案，并把结果落实到最终 HTML 结构和 CSS 中；不要把分析报告作为可见页面输出。生成内容必须包含封面页、目录页、内容页、结束页，页面数量要匹配材料规模，不要把长笔记压缩成少量页面。单页避免拥挤，文字与图片比例合理。严格按用户风格排版，保证字体、颜色、布局一致且现代美观。禁止使用侵权字体或图片素材；图片只能使用用户提供、引用来源允许使用的素材描述，或用合法的占位图片区块表达。预览与 .pptx 文件导出由后端导出接口完成，你只负责输出可被预览器和导出器稳定解析的 HTML。绝对禁止把内部规划标签（如 Purpose、页面目的、Slide purpose、writing brief、source-topic、核心论点、可用证据等）作为可见文字输出到幻灯片上，这些只是内部规划提示。你是内容创作者，不是大纲搬运工：STRUCTURED_PPT_PLAN 中的 source-topic 是写作主题提示，不是最终幻灯片文字。你必须根据这些主题，结合原始材料，生成完整的、有解释深度的演示内容。每个 source-topic 至少展开为一个完整的句子（30字以上），包含概念解释、背景上下文或具体例子。每个内容页必须有充实的正文：至少 3-5 个要点，每个要点展开为完整的句子或段落，而不是孤立的短语。",
+			OutputFormat: `仅返回 HTML 片段，不要返回 Markdown 大纲，不要输出 <PPT_FILE>，不要输出 <PREVIEW_LINK>，不要伪造下载链接或预览链接。
+
+必须逐项覆盖 STRUCTURED_PPT_PLAN：计划里有多少个 Slide，最终就必须输出多少个 <section>；每个计划页都要有同名或明显对应的 h1/h2 标题。
+
+== 画布与字号规范 ==
+每个 <section> 必须按固定 PPT 画布设计：width: 1920px; height: 1080px; box-sizing: border-box; overflow: hidden; 推荐 section padding: 80-120px。
+必须使用适合 16:9 PPT 导出的显式 font-size：封面 h1: 76-96px，页面标题 h2: 48-64px，小标题 h3: 34-44px，正文 p/li: 30-38px，注释和脚注不低于 24px。
+不要使用网页卡片式 max-width: 1100px 或 1rem 级小字号作为主版式。
+
+== CSS 复用规则 ==
+如果上下文中已有 PPT_CSS_BLOCK，必须直接复用其中的 CSS 类名，不要重新定义 <style>。
+只有当上下文中没有 PPT_CSS_BLOCK 时，才在输出开头包含一个 <style> 块。
+
+== 严格 HTML 结构模板 ==
+每页必须严格按照以下模板之一生成 HTML 结构。不要自由发挥结构，不要混用不同模板的元素。
+
+【封面页 - 第1页】
+<section class="ppt-slide ppt-cover" data-ppt-slide="true">
+  <h1>主标题</h1>
+  <p class="cover-subtitle">副标题或一句话简介</p>
+  <div class="cover-tags">
+    <span class="cover-tag">标签1</span>
+    <span class="cover-tag">标签2</span>
+  </div>
+  <div class="slide-progress"><span style="width: 5%"></span></div>
+</section>
+
+【目录页 - 第2页】
+<section class="ppt-slide ppt-agenda" data-ppt-slide="true">
+  <div class="slide-title-wrap">
+    <span class="section-number">02</span>
+    <h2>目录</h2>
+  </div>
+  <div class="dir-list">
+    <div class="dir-item">章节1标题</div>
+    <div class="dir-item">章节2标题</div>
+    <div class="dir-item">章节3标题</div>
+  </div>
+  <div class="slide-progress"><span style="width: 10%"></span></div>
+</section>
+
+【内容页 - 双栏布局】（左侧要点列表 + 右侧洞察面板）
+<section class="ppt-slide" data-ppt-slide="true">
+  <div class="slide-title-wrap">
+    <span class="section-number">03</span>
+    <h2>页面标题</h2>
+  </div>
+  <div class="content-grid">
+    <ul class="main-points">
+      <li>第一个要点的完整内容，必须是完整句子</li>
+      <li>第二个要点的完整内容</li>
+      <li>第三个要点的完整内容</li>
+    </ul>
+    <div class="insight-panel">
+      <div class="insight-token">关键洞察1</div>
+      <div class="insight-token">关键洞察2</div>
+    </div>
+  </div>
+  <div class="slide-progress"><span style="width: 30%"></span></div>
+</section>
+
+【内容页 - 卡片网格布局】（每张卡片有独立标题和正文）
+<section class="ppt-slide" data-ppt-slide="true">
+  <div class="slide-title-wrap">
+    <span class="section-number">04</span>
+    <h2>页面标题</h2>
+  </div>
+  <div class="card-grid">
+    <div class="content-card">
+      <div class="card-title">卡片1的具体主题</div>
+      <div class="card-body">卡片1的正文内容，必须是完整句子</div>
+    </div>
+    <div class="content-card">
+      <div class="card-title">卡片2的具体主题</div>
+      <div class="card-body">卡片2的正文内容</div>
+    </div>
+  </div>
+  <div class="slide-progress"><span style="width: 40%"></span></div>
+</section>
+
+【内容页 - 全宽列表布局】
+<section class="ppt-slide" data-ppt-slide="true">
+  <div class="slide-title-wrap">
+    <span class="section-number">05</span>
+    <h2>页面标题</h2>
+  </div>
+  <div class="full-width-list">
+    <ul>
+      <li>第一个要点的完整内容</li>
+      <li>第二个要点的完整内容</li>
+    </ul>
+  </div>
+  <div class="slide-progress"><span style="width: 50%"></span></div>
+</section>
+
+【内容页 - 对比布局】
+<section class="ppt-slide" data-ppt-slide="true">
+  <div class="slide-title-wrap">
+    <span class="section-number">06</span>
+    <h2>页面标题</h2>
+  </div>
+  <div class="comparison-layout">
+    <div class="comparison-col left">
+      <h3>左侧主题</h3>
+      <p>左侧内容</p>
+    </div>
+    <div class="comparison-col right">
+      <h3>右侧主题</h3>
+      <p>右侧内容</p>
+    </div>
+  </div>
+  <div class="slide-progress"><span style="width: 60%"></span></div>
+</section>
+
+【结束页 - 最后1页】
+<section class="ppt-slide" data-ppt-slide="true">
+  <div class="slide-title-wrap">
+    <span class="section-number">NN</span>
+    <h2>总结与展望</h2>
+  </div>
+  <div class="summary-layout">
+    <div class="summary-card">
+      <h3>核心要点回顾</h3>
+      <p>总结内容</p>
+    </div>
+    <div class="summary-actions">
+      <h3>下一步建议</h3>
+      <p>建议内容</p>
+    </div>
+  </div>
+  <div class="slide-progress"><span style="width: 100%"></span></div>
+</section>
+
+== 结构一致性要求 ==
+1. 每个页面的主标题（h2）只出现一次，不要在卡片标题（card-title）或小标题中重复页面主标题。
+2. 卡片标题（card-title）和小标题（h3）必须是具体的内容主题，不是页面标题的重复。例如页面标题是'感谢观看'，卡片标题应该是'核心要点回顾'、'下一步学习建议'等具体内容。
+3. 如果一个页面有多个卡片，每个卡片的标题必须不同，反映该卡片的具体内容。
+4. card-title 必须和它下方 card-body 的内容逻辑一致：card-title 是该卡片内容的概括主题，card-body 是对该主题的详细展开。
+5. comparison-col 的 h3 必须反映该列的实际内容主题，不要用'左栏'、'右栏'等无意义标题。
+6. 每页底部必须有 slide-progress 进度条。
+
+== 内容要求 ==
+1. 每个 source-topic 必须展开为至少一个完整句子（30字以上），包含概念解释、背景上下文或具体例子。
+2. 每个内容页必须有充实的正文：至少 3-5 个要点，每个要点展开为完整的句子或段落。
+3. 不得输出任何内部规划标签（Purpose、页面目的、Slide purpose 等）作为可见文字。
+4. 不得输出参考资料元信息（文档列表、文档介绍、专题N、第N章、第N节、【重点知识...】等）作为可见文字。
+5. 必要补充必须明确标记为解释或补充，不得当作已有来源事实。
+
+== 布局轮换要求 ==
+不要让每页布局都一样！内容页至少使用 3 种不同布局模式轮换（双栏、卡片网格、全宽列表、对比、引用）。`,
 		}
 	case GenerationTypeQuiz:
 		return generationPromptStrategy{
@@ -38,7 +187,148 @@ func promptStrategyFor(typ GenerationType) generationPromptStrategy {
 
 func pptOutlinePromptStrategy() generationPromptStrategy {
 	return generationPromptStrategy{
-		System:       "先执行 content_analyze，再执行 outline_plan 和 content_expand，生成内部学习课件大纲。以用户 Markdown 为主，检索和联网内容只作支持；稀疏输入可以补充学习解释，但必须标记为解释补充，不能伪装成来源事实。",
-		OutputFormat: "仅返回 Markdown。包含标题，并包含封面、目录、背景与目标、概念框架、机制与流程、案例与应用、易错辨析、总结复盘等页面；每页 2-4 个要点。不要返回 HTML，不要输出参考资料或 References 页面。",
+		System: "你是 PPT 大纲规划专家。你的工作分两步：第一步，阅读用户 Markdown 材料，按内容逻辑将其划分为若干主题部分（如概念、原理、流程、应用等），每个部分对应一个独立的幻灯片主题；第二步，基于划分的部分生成 PPT 大纲。\n\n" +
+			"== 大纲生成规范 ==\n" +
+			"你必须严格遵循以下规范生成大纲：\n" +
+			pptOutlineSpecification + "\n\n" +
+			"== 基本要求 ==\n" +
+			"标题必须简洁（2-8 个字），是名词或名词短语，不要用问句或冒号式标题。" +
+			"每个页面只写标题和 3-5 个内容要点，不要写'页面目的'、'核心论点'、'可用证据'等元信息。" +
+			"要点必须是实际的内容主题，不是规划性描述。不同页面的要点不得重复。" +
+			"以用户 Markdown 或 <PPT_CONTENT> 为主，完整提取标题层级、正文段落、列表和用户意图。" +
+			"必须根据材料规模动态决定页数：短材料生成 8-10 页，中等材料生成 10-14 页，长材料生成 14-20 页。" +
+			"不要把多个二级标题强行合并到同一页。" +
+			"检索和联网内容只作支持；稀疏输入可以补充学习解释，但必须标记为解释补充，不能伪装成来源事实。",
+		OutputFormat: "仅返回 Markdown 大纲，不要返回 HTML。格式要求：\n" +
+			"1. 第一行是 # 总标题\n" +
+			"2. 每个幻灯片用一级列表项表示，标题简洁（2-8字名词短语）\n" +
+			"3. 每个幻灯片下 3-5 个二级列表项，是实际的内容要点\n" +
+			"4. 不要输出'页面目的'、'核心论点'、'可用证据'等元信息行\n" +
+			"5. 不要输出问句式或冒号式标题\n" +
+			"6. 不同页面的要点不得重复\n\n" +
+			"示例格式：\n" +
+			"# 光合作用原理\n" +
+			"- 光合作用概述\n" +
+			"  - 光合作用的定义与意义\n" +
+			"  - 光反应与暗反应的关系\n" +
+			"  - 光合作用的总方程式\n" +
+			"- 光反应阶段\n" +
+			"  - 类囊体膜上的色素系统\n" +
+			"  - 水的光解与氧气释放\n" +
+			"  - ATP 和 NADPH 的生成\n" +
+			"- 暗反应阶段\n" +
+			"  - CO2 固定与 C3 化合物\n" +
+			"  - C3 还原与碳水化合物合成\n" +
+			"  - ATP 和 NADPH 的消耗\n\n" +
+			"必须包含封面页、目录页、内容页、结束页。内容页优先按 Markdown 的二级/三级标题组织；如果一个章节内容很多，可以拆成多页。不要输出参考资料或 References 页面。",
+	}
+}
+
+// pptCSSPromptStrategy returns the prompt strategy for the CSS-only LLM call.
+// This call focuses exclusively on visual design: color palette, typography,
+// layout classes, and slide canvas dimensions.
+func pptCSSPromptStrategy() generationPromptStrategy {
+	return generationPromptStrategy{
+		System:       "你是 PPT 视觉设计专家，只负责生成 <style> 块，不负责生成 HTML 结构。读取上下文中的 PPT_STYLE_THEME，使用其中的 CSS 变量作为设计基础。你的任务是设计一套完整、现代、美观的 CSS，覆盖封面页、目录页、内容页（至少 3 种不同布局）、结束页的样式。设计要点：使用 :root 定义 CSS 自定义属性统一管理颜色；每页画布固定 1920x1080px；使用适合 PPT 的大字号（h1: 76-96px, h2: 48-64px, 正文: 30-38px）；使用渐变、阴影、圆角等现代视觉元素；为不同布局准备不同的 CSS 类名。",
+		OutputFormat: "仅返回一个 <style>...</style> 块，不要返回任何 HTML section 或其他内容。必须包含：1) :root 中的 CSS 变量定义；2) .ppt-slide 基础类（width:1920px; height:1080px; overflow:hidden; position:relative; box-sizing:border-box）；3) 封面页样式 .ppt-cover；4) 目录页样式 .ppt-agenda / .dir-list / .dir-item；5) 至少 3 种内容页布局样式（如 .content-grid / .main-points / .insight-panel, .card-grid / .content-card, .full-width-list, .comparison-layout, .quote-block）；6) 结束页样式 .summary-layout / .summary-card；7) 进度条样式 .slide-progress；8) data-ppt-slide 属性选择器样式。不要包含 html/body 外层标签。",
+	}
+}
+
+// pptOutlineReviewPromptStrategy returns the prompt strategy for the
+// outline review LLM call. This call examines the generated outline against
+// the source material and fixes structural issues: missing topics, redundant
+// slides, question-style titles, planning label leakage, and sparse content.
+func pptOutlineReviewPromptStrategy() generationPromptStrategy {
+	return generationPromptStrategy{
+		System: "你是 PPT 大纲审查专家。你会收到一份已生成的 PPT 大纲和原始 Markdown 材料。你的任务是审查大纲并返回修正后的大纲。\n\n" +
+			"== 大纲生成规范 ==\n" +
+			"你必须严格遵循以下规范审查和修正大纲：\n" +
+			pptOutlineSpecification + "\n\n" +
+			"== 审查要点 ==\n" +
+			"1. 覆盖性：大纲是否遗漏了原始材料中的重要主题？如果有遗漏，补充对应的幻灯片。\n" +
+			"2. 冗余性：不同幻灯片的要点是否重复？如果重复，合并或删除重复项。\n" +
+			"3. 标题规范：标题是否简洁（2-8字名词短语）？是否有问句或冒号式标题？如果有，改为简洁的名词短语。\n" +
+			"4. 规划标签泄漏：大纲中是否包含'页面目的'、'核心论点'、'可用证据'、'source-topic'等内部规划标签？如果有，删除这些行。\n" +
+			"5. 内容充实度：每个内容页是否有 3-5 个实际内容要点（不是规划性描述）？如果不足，从原始材料中补充。\n" +
+			"6. 逻辑顺序：幻灯片的排列是否符合逻辑（如：概念→原理→流程→应用→总结）？如果不符合，调整顺序。\n" +
+			"7. 页面数量：是否匹配材料规模（短材料 8-10 页，中等 10-14 页，长材料 14-20 页）？\n" +
+			"8. 结构完整性：是否包含五大核心模块（开篇导入、核心主体、落地执行、总结规划、收尾结束）？如果缺失，补充对应页面。\n\n" +
+			"== 修正原则 ==\n" +
+			"- 只做必要的修正，不要大幅重写大纲\n" +
+			"- 保持原有大纲的整体结构\n" +
+			"- 修正后的大纲必须只包含标题和内容要点，不包含任何元信息\n" +
+			"- 所有标题必须是简洁的名词短语\n" +
+			"- 确保大纲符合规范中的层级格式和内容要求",
+		OutputFormat: "仅返回修正后的 Markdown 大纲，格式与输入相同：\n" +
+			"# 总标题\n" +
+			"- 幻灯片标题（简洁名词短语）\n" +
+			"  - 内容要点1\n" +
+			"  - 内容要点2\n" +
+			"  - 内容要点3\n\n" +
+			"不要输出审查分析过程，不要输出'页面目的'等元信息，直接返回修正后的大纲。",
+	}
+}
+
+// pptContentEnrichPromptStrategy returns the prompt strategy for enriching
+// PPT content. This LLM call takes the outline and source material, and
+// expands short bullet points into full paragraphs suitable for presentation.
+func pptContentEnrichPromptStrategy() generationPromptStrategy {
+	return generationPromptStrategy{
+		System: `你是 PPT 内容充实专家。你的任务是将 PPT 大纲中的简短要点扩展为充实、完整的演示文稿内容。
+
+输入：
+- 原始 Markdown 材料（作为内容依据）
+- PPT 大纲（包含每页的标题和要点）
+
+你的工作：
+1. 对于每一页幻灯片，根据标题和要点，结合原始材料，生成完整的演示内容
+2. 将简短的要点扩展为 1-3 个完整段落，每个段落 50-150 字
+3. 段落应该包含：概念解释、背景上下文、具体例子或数据支撑
+4. 保持不同来源的边界，不编造缺乏依据的结论
+5. 不要输出参考资料、References、来源列表或引用附录
+6. 不要输出内部规划标签（如 Purpose、页面目的等）
+
+内容要求：
+- 每个内容页必须有 3-5 个段落，每个段落都是完整的叙述
+- 段落应该读起来像演讲稿，而不是要点列表
+- 使用原始材料中的具体事实、数据和例子
+- 如果材料稀疏，可以补充必要的解释，但必须标记为解释补充
+- 封面页只需要标题和副标题
+- 目录页只需要章节标题列表
+- 结束页需要总结要点和下一步建议
+
+输出格式：
+返回 JSON 对象，结构如下：
+{
+  "slides": [
+    {
+      "title": "页面标题",
+      "subtitle": "副标题（仅封面页需要）",
+      "paragraphs": ["段落1", "段落2", "段落3"],
+      "bullets": ["要点1", "要点2"],
+      "insights": ["洞察1", "洞察2"]
+    }
+  ]
+}
+
+注意：
+- paragraphs 是主要正文内容，必须有
+- bullets 和 insights 是可选的，用于丰富页面元素
+- 每个段落必须是完整句子，50-150 字
+- 不要输出任何 HTML 标签，只输出纯文本内容`,
+		OutputFormat: `仅返回 JSON 对象，不要返回其他内容。格式必须严格遵循：
+{
+  "slides": [
+    {
+      "title": "页面标题",
+      "subtitle": "副标题（可选）",
+      "paragraphs": ["段落1", "段落2", "段落3"],
+      "bullets": ["要点1", "要点2"],
+      "insights": ["洞察1", "洞察2"]
+    }
+  ]
+}
+
+不要输出 Markdown 代码块标记，不要输出解释文字，只输出 JSON。`,
 	}
 }

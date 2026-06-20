@@ -86,3 +86,7 @@ func openaiEmbeddingFactory(cfg *external.ServiceConfig) (interface{}, error) {
 
 	return NewOpenAIEmbeddingService(cfg.APIKey, model, apiURL, dimensions)
 }
+
+func init() {
+	external.GetGlobalRegistry().RegisterAlias(ServiceType, "doubao", "volcengine")
+}
