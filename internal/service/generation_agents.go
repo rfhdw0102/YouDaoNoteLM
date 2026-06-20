@@ -1737,12 +1737,21 @@ func extractPPTSourceSections(markdown string, maxSections int) []pptSourceSecti
 		current = nil
 	}
 
-	for _, line := range strings.Split(markdown, "\n") {
+	// Pre-process: merge fenced code blocks into single lines so they survive
+	// the line-by-line extraction below. A code block like:
+	//   ```go
+	//   func main() { ... }
+	//   ```
+	// becomes a single point: "```go\nfunc main() { ... }\n```"
+	lines := strings.Split(markdown, "\n")
+	mergedLines := mergeCodeBlockLines(lines)
+
+	for _, line := range mergedLines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "#") {
+		if strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "```") {
 			level := 0
 			for level < len(line) && line[level] == '#' {
 				level++
@@ -1763,6 +1772,7 @@ func extractPPTSourceSections(markdown string, maxSections int) []pptSourceSecti
 				continue
 			}
 		}
+		// Code blocks are already merged into single lines starting with ```
 		point := strings.TrimSpace(strings.TrimLeft(line, "-*0123456789. "))
 		if len([]rune(point)) < 4 {
 			continue
@@ -1781,6 +1791,64 @@ func extractPPTSourceSections(markdown string, maxSections int) []pptSourceSecti
 		}}, sections...)
 	}
 	return sections
+}
+
+// mergeCodeBlockLines merges fenced code block lines (```...```) into single
+// logical lines so that downstream line-by-line extractors treat each code
+// block as an atomic unit. Lines outside code blocks are passed through
+// unchanged. The opening ``` line (with optional language tag) and closing ```
+// are preserved in the merged line, separated by \n.
+func mergeCodeBlockLines(lines []string) []string {
+	var result []string
+	var codeBuf strings.Builder
+	inCode := false
+	var codeLang string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inCode {
+			// Detect opening fence: line starts with ``` (possibly followed by language)
+			if strings.HasPrefix(trimmed, "```") {
+				inCode = true
+				codeLang = strings.TrimSpace(strings.TrimPrefix(trimmed, "```"))
+				codeBuf.Reset()
+				codeBuf.WriteString(trimmed) // opening ``` with language
+				codeBuf.WriteByte('\n')
+				continue
+			}
+			result = append(result, line)
+		} else {
+			// Inside a code block: detect closing ```
+			if trimmed == "```" || trimmed == "```{" {
+				codeBuf.WriteString(trimmed) // closing ```
+				merged := codeBuf.String()
+				// Only keep if the merged block has meaningful content
+				// (at least 4 runes after stripping the fences)
+				inner := strings.TrimPrefix(merged, "```"+codeLang+"\n")
+				inner = strings.TrimSuffix(inner, "```")
+				inner = strings.TrimSpace(inner)
+				if len([]rune(inner)) >= 4 {
+					result = append(result, merged)
+				}
+				inCode = false
+				codeLang = ""
+				continue
+			}
+			// Code content line
+			codeBuf.WriteString(line)
+			codeBuf.WriteByte('\n')
+		}
+	}
+	// Handle unclosed code block: emit what we have
+	if inCode {
+		merged := codeBuf.String()
+		inner := strings.TrimPrefix(merged, "```"+codeLang+"\n")
+		inner = strings.TrimSpace(inner)
+		if len([]rune(inner)) >= 4 {
+			result = append(result, merged)
+		}
+	}
+	return result
 }
 
 func requiredPPTSlideTitles() []string {
@@ -5132,7 +5200,12 @@ func extractTitle(markdown, fallback string) string {
 
 func extractKeyPoints(markdown string, limit int) []string {
 	var points []string
-	for _, line := range strings.Split(markdown, "\n") {
+	// Pre-process: merge fenced code blocks into single lines so they are
+	// extracted as atomic units instead of being scattered as individual lines.
+	lines := strings.Split(markdown, "\n")
+	mergedLines := mergeCodeBlockLines(lines)
+
+	for _, line := range mergedLines {
 		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "-*#0123456789. "))
 		if len([]rune(line)) < 4 {
 			continue

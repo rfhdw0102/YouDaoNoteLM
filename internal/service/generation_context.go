@@ -96,7 +96,7 @@ func scoreInlineReference(content, heading string, plan generationQueryPlan) flo
 	if heading != "" && strings.Contains(query, strings.ToLower(strings.TrimSpace(heading))) {
 		score += 2.0
 	}
-	if looksDefinitionLike(content) || looksListRich(content) {
+	if looksDefinitionLike(content) || looksListRich(content) || looksCodeBlock(content) {
 		score += 1.0
 	}
 	if len([]rune(strings.TrimSpace(content))) < 20 {
@@ -129,6 +129,23 @@ func looksListRich(content string) bool {
 		}
 	}
 	return count >= 2
+}
+
+// looksCodeBlock returns true if the content contains a fenced code block
+// (```...```), indicating it carries code that should be preserved as-is
+// in generation references.
+func looksCodeBlock(content string) bool {
+	return strings.Contains(content, "```")
+}
+
+// refContentLimit returns the character limit for summarizing a reference's
+// content. Code blocks need more space to remain meaningful, so they get a
+// larger limit than regular text.
+func refContentLimit(ref GenerationReference) int {
+	if strings.Contains(ref.Content, "```") {
+		return 500
+	}
+	return 120
 }
 
 func mergeGenerationReferences(inlineRefs, ragRefs []GenerationReference, limit int) []GenerationReference {
@@ -370,7 +387,7 @@ func buildGenerationContext(req *GenerationRequest, refs []GenerationReference, 
 	if len(refs) > 0 {
 		b.WriteString("\n\nLocal References:\n")
 		for i, ref := range refs {
-			b.WriteString(fmt.Sprintf("[%d] %s %s\n%s\n", i+1, generationReferenceLabel(ref), ref.ChapterPath, summarizeLine(ref.Content, 120)))
+			b.WriteString(fmt.Sprintf("[%d] %s %s\n%s\n", i+1, generationReferenceLabel(ref), ref.ChapterPath, summarizeLine(ref.Content, refContentLimit(ref))))
 		}
 	}
 	if strings.TrimSpace(searchSummary) != "" {

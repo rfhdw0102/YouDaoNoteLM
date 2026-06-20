@@ -60,8 +60,14 @@ func (t *ParentTransformer) Transform(ctx context.Context, src []*schema.Documen
 }
 
 // 按 token 上限切分文本，尽量保持段落完整
+// 代码块（```...```）作为不可分割的原子单元，不会被切断
 func (t *ParentTransformer) splitByTokens(content string, maxTokens int) []string {
 	paragraphs := strings.Split(content, "\n\n") // 按空行分成段落
+	// Merge code blocks that were split across paragraphs.
+	// A code block like ```go\n...\n``` may contain \n\n inside it,
+	// causing Split to break it. We reassemble them here.
+	paragraphs = reassembleCodeBlockParagraphs(paragraphs)
+
 	var chunks []string
 	var current []string // 当前块包含的段落
 	currentTokens := 0
@@ -69,14 +75,32 @@ func (t *ParentTransformer) splitByTokens(content string, maxTokens int) []strin
 	for _, p := range paragraphs {
 		tokens := estimateTokens(p) // 估算当前段落 token 数
 
-		// 如果加上当前段落会超限，且当前块非空 → 结束当前块
-		if currentTokens+tokens > maxTokens && len(current) > 0 {
-			chunks = append(chunks, strings.Join(current, "\n\n"))
-			current = []string{p} // 新块从当前段落开始
-			currentTokens = tokens
-		} else {
+		// If the paragraph is a code block (starts with ```), always keep
+		// it as an atomic unit — never split a code block across chunks.
+		isCodeBlock := strings.HasPrefix(strings.TrimSpace(p), "```")
+
+		if isCodeBlock {
+			// If the current chunk is non-empty and adding the code block
+			// would exceed the limit, flush the current chunk first.
+			if currentTokens+tokens > maxTokens && len(current) > 0 {
+				chunks = append(chunks, strings.Join(current, "\n\n"))
+				current = nil
+				currentTokens = 0
+			}
+			// If the code block alone exceeds maxTokens, we still add it
+			// as its own chunk to avoid splitting it.
 			current = append(current, p)
 			currentTokens += tokens
+		} else {
+			// 如果加上当前段落会超限，且当前块非空 → 结束当前块
+			if currentTokens+tokens > maxTokens && len(current) > 0 {
+				chunks = append(chunks, strings.Join(current, "\n\n"))
+				current = []string{p} // 新块从当前段落开始
+				currentTokens = tokens
+			} else {
+				current = append(current, p)
+				currentTokens += tokens
+			}
 		}
 	}
 	// 最后一块
@@ -84,6 +108,50 @@ func (t *ParentTransformer) splitByTokens(content string, maxTokens int) []strin
 		chunks = append(chunks, strings.Join(current, "\n\n"))
 	}
 	return chunks
+}
+
+// reassembleCodeBlockParagraphs merges paragraphs that belong to the same
+// fenced code block. When content contains ```...``` with blank lines inside,
+// strings.Split("\n\n") will break the code block into separate paragraphs.
+// This function reassembles them back into a single paragraph.
+func reassembleCodeBlockParagraphs(paragraphs []string) []string {
+	var result []string
+	var codeBuf strings.Builder
+	inCode := false
+
+	for _, p := range paragraphs {
+		trimmed := strings.TrimSpace(p)
+		if !inCode {
+			if strings.HasPrefix(trimmed, "```") && !strings.HasSuffix(trimmed, "```") {
+				// Opening a code block that doesn't close on the same line
+				inCode = true
+				codeBuf.Reset()
+				codeBuf.WriteString(p)
+			} else {
+				result = append(result, p)
+			}
+		} else {
+			codeBuf.WriteString("\n\n")
+			codeBuf.WriteString(p)
+			// Check if this paragraph closes the code block
+			// A closing ``` appears on its own line at the end
+			lines := strings.Split(trimmed, "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "```" {
+					inCode = false
+					result = append(result, codeBuf.String())
+					codeBuf.Reset()
+					break
+				}
+			}
+		}
+	}
+	// Handle unclosed code block
+	if inCode {
+		result = append(result, codeBuf.String())
+	}
+	return result
 }
 
 // 估算 token 数：中文每字1 token，英文每单词1 token

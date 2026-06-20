@@ -1,10 +1,11 @@
 import { create } from 'zustand';
-import type { Notebook, Source, Conversation, Note, ChatMessage, Reference } from '../types';
+import type { Notebook, Source, Conversation, Note, NoteType, ChatMessage, Reference } from '../types';
 import * as notebookApi from '../api/notebook';
 import * as sourceApi from '../api/source';
 import * as importApi from '../api/import';
 import * as searchApi from '../api/search';
 import * as chatApi from '../api/chat';
+import * as generationApi from '../api/generation';
 import { getErrorMessage, getChatErrorMessage } from '../utils/error';
 
 // Store the abort controller for the current streaming request
@@ -16,6 +17,9 @@ interface NotebookState {
   currentConversationId: string | null;
   loading: boolean;
   streamingContent: string;  // For real-time display
+  // Generation state
+  generatingType: NoteType | null;
+  generationError: string | null;
   // sourceID → taskID 映射，用于取消正在运行的导入任务
   taskIdBySourceId: Record<string, string>;
 
@@ -88,6 +92,10 @@ interface NotebookState {
   updateNoteContent: (notebookId: string, noteId: string, content: string) => void;
   toggleNoteSource: (notebookId: string, noteId: string) => void;
 
+  // Generation actions
+  generateNote: (notebookId: string, type: NoteType, opts?: { prompt?: string; useWeb?: boolean; allowDegrade?: boolean }) => Promise<void>;
+  clearGenerationError: () => void;
+
   // Reimport actions
   reimportAll: () => Promise<number>;
   reimportSelected: (sourceIds: string[]) => Promise<number>;
@@ -127,6 +135,8 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   taskIdBySourceId: {},
   loading: false,
   streamingContent: '',
+  generatingType: null,
+  generationError: null,
 
   fetchNotebooks: async () => {
     set({ loading: true });
@@ -1364,6 +1374,95 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           : n
       ),
     }));
+  },
+
+  // ---- Generation actions ----
+
+  clearGenerationError: () => set({ generationError: null }),
+
+  generateNote: async (notebookId, type, opts) => {
+    const state = get();
+    if (state.generatingType) return; // 防止重复生成
+
+    const notebook = state.notebooks.find((n) => n.id === notebookId);
+    if (!notebook) return;
+
+    // 获取选中的已入库资料来源
+    const selectedSources = notebook.sources.filter((s) => s.selected && s.vectorized && s.status !== 'error');
+    if (selectedSources.length === 0) {
+      set({ generationError: '请先在左侧资料来源中选中至少一份资料' });
+      return;
+    }
+
+    // 并发获取所有 source 的 markdown 内容
+    set({ generatingType: type, generationError: null });
+    try {
+      const sourceResults = await Promise.all(
+        selectedSources.map(async (s) => {
+          try {
+            const res = await sourceApi.getSourceContent(Number(notebookId), Number(s.id));
+            if (res.code === 0 && res.data?.content) {
+              return { name: s.name, content: res.data.content };
+            }
+          } catch {
+            // 单个 source fetch 失败不中断整体流程
+          }
+          return null;
+        })
+      );
+
+      const validResults = sourceResults.filter((r): r is { name: string; content: string } => r !== null);
+      if (validResults.length === 0) {
+        set({ generationError: '无法获取资料内容，请检查资料来源状态', generatingType: null });
+        return;
+      }
+
+      // 拼接 markdown
+      const markdown = validResults
+        .map(({ name, content }) => `# ${name}\n\n${content}`)
+        .join('\n\n---\n\n');
+
+      const sourceIds = selectedSources.map((s) => Number(s.id));
+
+      const resp = await generationApi.generateFromMarkdown({
+        notebook_id: Number(notebookId),
+        markdown,
+        type,
+        prompt: opts?.prompt,
+        source_ids: sourceIds,
+        use_web: opts?.useWeb ?? true,
+        allow_degrade: opts?.allowDegrade ?? true,
+      });
+
+      const typeLabel: Record<NoteType, string> = {
+        mindmap: '思维导图',
+        ppt: '演示文稿',
+        quiz: '测验',
+        note: '笔记',
+      };
+
+      // 从 markdown 第一行提取标题
+      const firstLine = resp.content?.split('\n')[0] || '';
+      const autoTitle = firstLine.replace(/^#+\s*/, '').trim() || `新${typeLabel[type]}`;
+
+      const note: Note = {
+        id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        title: autoTitle.slice(0, 40),
+        type,
+        content: resp.content,
+        isSource: false,
+        notebookId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      get().addNote(notebookId, note);
+    } catch (err) {
+      const msg = (err instanceof Error && err.message) ? err.message : '生成失败，请重试';
+      set({ generationError: msg });
+    } finally {
+      set({ generatingType: null });
+    }
   },
 
   reimportAll: async () => {
