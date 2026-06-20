@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   FileText, Map, HelpCircle, Presentation, Search,
   MoreHorizontal, Trash2, Edit3, Download, ArrowLeft,
-  Copy, Eye, Code, BookOpen
+  Copy, Eye, Code, BookOpen, Loader2, X, AlertCircle, Globe, ShieldOff
 } from 'lucide-react';
 import { useNotebookStore } from '../../stores/useNotebookStore';
 import { cn } from '../../utils/cn';
 import { formatDate } from '../../utils/format';
 import type { Note, NoteType } from '../../types';
+import { exportGenerationFile, downloadBlob } from '../../api/generation';
 import MindmapViewer from './MindmapViewer';
 import QuizCard from './QuizCard';
 import PPTViewer from './PPTViewer';
@@ -36,7 +39,7 @@ const typeColors: Record<NoteType, string> = {
 };
 
 export default function NotesPanel() {
-  const { currentNotebookId, getCurrentNotebook, deleteNote, renameNote, toggleNoteSource, addNote } = useNotebookStore();
+  const { currentNotebookId, getCurrentNotebook, deleteNote, renameNote, toggleNoteSource, addNote, generateNote, generatingType, generationError, clearGenerationError } = useNotebookStore();
   const notebook = getCurrentNotebook();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -45,6 +48,9 @@ export default function NotesPanel() {
   const [contextMenuId, setContextMenuId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const [genPrompt, setGenPrompt] = useState('');
+  const [useWeb, setUseWeb] = useState(true);
+  const [allowDegrade, setAllowDegrade] = useState(true);
 
   if (!notebook || !currentNotebookId) return null;
 
@@ -69,7 +75,21 @@ export default function NotesPanel() {
     navigator.clipboard.writeText(content);
   };
 
-  const handleDownload = (note: Note) => {
+  const handleDownload = async (note: Note) => {
+    // PPT 类型调用后端导出 API 生成真正的 .pptx 文件
+    if (note.type === 'ppt') {
+      try {
+        const file = await exportGenerationFile({
+          type: note.type,
+          content: note.content,
+          title: note.title,
+        });
+        downloadBlob(file.blob, file.filename);
+      } catch (err) {
+        console.error('PPT export failed:', err);
+      }
+      return;
+    }
     const blob = new Blob([note.content], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -79,37 +99,14 @@ export default function NotesPanel() {
     URL.revokeObjectURL(url);
   };
 
-  // Quick generate a mock note
-  const handleGenerate = (type: NoteType) => {
-    const typeNames: Record<NoteType, string> = {
-      mindmap: '思维导图',
-      ppt: '演示文稿',
-      quiz: '测验',
-      note: '笔记',
-    };
-    const contents: Record<NoteType, string> = {
-      mindmap: `# 知识框架\n\n## 概念一\n- 子概念 A\n- 子概念 B\n\n## 概念二\n- 子概念 C\n- 子概念 D\n\n## 概念三\n- 子概念 E\n- 子概念 F`,
-      ppt: `<html><head><style>body{font-family:sans-serif;background:#0f1117;color:#E8E6E3;margin:0}.slide{width:100%;height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:60px;box-sizing:border-box}h1{font-size:48px;background:linear-gradient(135deg,#6C63FF,#4ECDC4);-webkit-background-clip:text;-webkit-text-fill-color:transparent}h2{font-size:36px;color:#6C63FF}p,li{font-size:20px;line-height:1.8}.slide{border-bottom:1px solid #1E2130}</style></head><body><div class="slide"><h1>演示文稿</h1><p>基于资料生成</p></div><div class="slide"><h2>要点一</h2><p>核心内容描述</p></div><div class="slide"><h2>要点二</h2><p>详细分析</p></div></body></html>`,
-      quiz: JSON.stringify({
-        questions: [
-          { id: 'q1', question: '示例问题 1？', options: ['选项 A', '选项 B', '选项 C', '选项 D'], correctIndex: 0, explanation: '这是解析。' },
-          { id: 'q2', question: '示例问题 2？', options: ['选项 A', '选项 B', '选项 C', '选项 D'], correctIndex: 2, explanation: '这是解析。' },
-        ],
-      }),
-      note: `# 结构化笔记\n\n## 核心要点\n\n1. 要点一：详细描述\n2. 要点二：详细描述\n3. 要点三：详细描述\n\n## 总结\n\n这是一份基于资料生成的结构化笔记。`,
-    };
-    const newNote: Note = {
-      id: `note-${Date.now()}`,
-      title: `新${typeNames[type]}`,
-      type,
-      content: contents[type],
-      isSource: false,
-      notebookId: currentNotebookId,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    addNote(currentNotebookId, newNote);
-    setSelectedNote(newNote);
+  // 调用后端生成 Agent
+  const handleGenerate = async (type: NoteType) => {
+    if (generatingType || !currentNotebookId) return;
+    await generateNote(currentNotebookId, type, {
+      prompt: genPrompt.trim() || undefined,
+      useWeb,
+      allowDegrade,
+    });
   };
 
   // ---- Note Viewer ----
@@ -127,7 +124,7 @@ export default function NotesPanel() {
             <span className="text-sm font-medium text-text-primary truncate max-w-[200px]">{selectedNote.title}</span>
           </div>
           <div className="flex items-center gap-1">
-            {(selectedNote.type === 'mindmap' || selectedNote.type === 'ppt') && (
+            {(selectedNote.type === 'mindmap' || selectedNote.type === 'note') && (
               <div className="flex items-center bg-bg-tertiary rounded-md p-0.5 mr-1">
                 <button onClick={() => setViewMode('visual')} className={cn('px-2 py-1 rounded text-xs transition-colors cursor-pointer', viewMode === 'visual' ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary')}>
                   <Eye size={11} className="inline mr-1" />可视化
@@ -142,12 +139,19 @@ export default function NotesPanel() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-auto">
           {selectedNote.type === 'mindmap' && viewMode === 'visual' && <MindmapViewer content={selectedNote.content} />}
           {selectedNote.type === 'quiz' && <QuizCard content={selectedNote.content} />}
-          {selectedNote.type === 'ppt' && viewMode === 'visual' && <PPTViewer content={selectedNote.content} />}
+          {selectedNote.type === 'ppt' && <PPTViewer content={selectedNote.content} />}
+          {selectedNote.type === 'note' && viewMode === 'visual' && (
+            <div className="p-6">
+              <div className="bg-bg-card rounded-xl border border-border-light p-6 prose prose-sm max-w-none">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedNote.content}</ReactMarkdown>
+              </div>
+            </div>
+          )}
           {(() => {
-            const showSource = selectedNote.type === 'note' || viewMode === 'source';
+            const showSource = selectedNote.type !== 'ppt' && selectedNote.type !== 'quiz' && viewMode === 'source';
             return showSource ? (
               <div className="p-6">
                 <div className="bg-bg-card rounded-xl border border-border-light p-6">
@@ -167,27 +171,125 @@ export default function NotesPanel() {
       {/* Generation buttons - top section */}
       <div className="px-4 pt-4 pb-3 border-b border-border flex-shrink-0">
         <p className="text-xs text-text-muted mb-2.5 font-medium">工作台</p>
+
+        {/* 错误提示 */}
+        <AnimatePresence>
+          {generationError && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="mb-2.5 flex items-start gap-2 rounded-lg border border-error/25 bg-error/8 px-3 py-2 text-xs text-error">
+                <AlertCircle size={14} className="flex-shrink-0 mt-px" />
+                <span className="flex-1 leading-relaxed">{generationError}</span>
+                <button
+                  onClick={clearGenerationError}
+                  className="flex-shrink-0 p-0.5 rounded hover:bg-error/15 transition-colors cursor-pointer text-error/60 hover:text-error"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div className="grid grid-cols-4 gap-2">
           {[
             { icon: Map, label: '思维导图', type: 'mindmap' as NoteType, color: 'from-teal to-emerald-400' },
             { icon: Presentation, label: 'PPT', type: 'ppt' as NoteType, color: 'from-purple-500 to-pink-400' },
             { icon: HelpCircle, label: '测验', type: 'quiz' as NoteType, color: 'from-orange-400 to-amber-400' },
             { icon: FileText, label: '笔记', type: 'note' as NoteType, color: 'from-blue-400 to-cyan-400' },
-          ].map(({ icon: Icon, label, type, color }) => (
-            <button
-              key={type}
-              onClick={() => handleGenerate(type)}
+          ].map(({ icon: Icon, label, type, color }) => {
+            const isActive = generatingType === type;
+            const isDisabled = generatingType !== null && generatingType !== type;
+            return (
+              <button
+                key={type}
+                onClick={() => handleGenerate(type)}
+                disabled={generatingType !== null}
+                className={cn(
+                  'flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-all group',
+                  isActive
+                    ? 'border-accent/40 bg-accent/10'
+                    : isDisabled
+                      ? 'border-border-light bg-bg-secondary/50 opacity-50 cursor-not-allowed'
+                      : 'border-border-light hover:border-accent/40 hover:bg-accent/5 cursor-pointer'
+                )}
+              >
+                <div className={cn('w-9 h-9 rounded-lg bg-gradient-to-br flex items-center justify-center', color)}>
+                  {isActive ? <Loader2 size={16} className="text-white animate-spin" /> : <Icon size={16} className="text-white" />}
+                </div>
+                <span className={cn(
+                  'text-xs transition-colors',
+                  isActive ? 'text-accent font-medium' : 'text-text-secondary group-hover:text-text-primary'
+                )}>
+                  {isActive ? '生成中...' : label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* 自定义提示词 + 选项开关 */}
+        <div className="mt-2.5 space-y-2">
+          <div className="relative">
+            <input
+              type="text"
+              value={genPrompt}
+              onChange={(e) => setGenPrompt(e.target.value)}
+              placeholder={'输入自定义提示词，如「聚焦第三章核心概念」...'}              disabled={generatingType !== null}
               className={cn(
-                'flex flex-col items-center gap-1.5 p-3 rounded-xl border border-border-light',
-                'hover:border-accent/40 hover:bg-accent/5 transition-all cursor-pointer group'
+                'w-full h-8 px-3 pr-8 rounded-lg border text-xs outline-none transition-colors',
+                'bg-bg-secondary border-border text-text-primary placeholder:text-text-muted',
+                'focus:border-accent/50 focus:bg-bg-card',
+                generatingType !== null && 'opacity-50 cursor-not-allowed'
+              )}
+            />
+            {genPrompt && !generatingType && (
+              <button
+                onClick={() => setGenPrompt('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-muted hover:text-text-primary cursor-pointer"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setUseWeb(!useWeb)}
+              disabled={generatingType !== null}
+              className={cn(
+                'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] border transition-all',
+                useWeb
+                  ? 'bg-accent/10 border-accent/30 text-accent'
+                  : 'bg-bg-tertiary border-border text-text-muted',
+                generatingType !== null && 'opacity-50 cursor-not-allowed',
+                generatingType === null && 'cursor-pointer hover:border-accent/30'
               )}
             >
-              <div className={cn('w-9 h-9 rounded-lg bg-gradient-to-br flex items-center justify-center', color)}>
-                <Icon size={16} className="text-white" />
-              </div>
-              <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors">{label}</span>
+              <Globe size={11} />
+              联网搜索
             </button>
-          ))}
+
+            <button
+              onClick={() => setAllowDegrade(!allowDegrade)}
+              disabled={generatingType !== null}
+              className={cn(
+                'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] border transition-all',
+                allowDegrade
+                  ? 'bg-accent/10 border-accent/30 text-accent'
+                  : 'bg-bg-tertiary border-border text-text-muted',
+                generatingType !== null && 'opacity-50 cursor-not-allowed',
+                generatingType === null && 'cursor-pointer hover:border-accent/30'
+              )}
+            >
+              <ShieldOff size={11} />
+              允许降级
+            </button>
+          </div>
         </div>
       </div>
 
@@ -264,7 +366,7 @@ export default function NotesPanel() {
                           <BookOpen size={11} /> {note.isSource ? '取消来源' : '设为来源'}
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); handleDownload(note); setContextMenuId(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-hover cursor-pointer">
-                          <Download size={11} /> 下载 .md
+                          <Download size={11} /> {note.type === 'ppt' ? '下载 .pptx' : '下载 .md'}
                         </button>
                         <div className="border-t border-border mt-1 pt-1">
                           <button onClick={(e) => { e.stopPropagation(); deleteNote(currentNotebookId, note.id); setContextMenuId(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-error hover:bg-error/5 cursor-pointer">

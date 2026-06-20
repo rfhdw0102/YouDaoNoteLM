@@ -9,10 +9,10 @@ interface QuizCardProps {
 }
 
 export default function QuizCard({ content }: QuizCardProps) {
-  let questions: QuizQuestion[] = [];
+  let rawQuestions: any[] = [];
   try {
     const parsed = JSON.parse(content);
-    questions = parsed.questions || [];
+    rawQuestions = parsed.questions || [];
   } catch {
     return (
       <div className="flex items-center justify-center h-64 text-text-muted text-sm">
@@ -20,6 +20,28 @@ export default function QuizCard({ content }: QuizCardProps) {
       </div>
     );
   }
+
+  // 适配后端数据格式：后端 answer 是字符串（正确选项文本），前端需要 correctIndex（数字索引）
+  // 同时生成缺失的 id 字段
+  const normalizeQuestion = (q: any, index: number): QuizQuestion => {
+    const options: string[] = q.options || [];
+    let correctIndex = q.correctIndex;
+    if (correctIndex === undefined && typeof q.answer === 'string') {
+      correctIndex = options.indexOf(q.answer);
+    }
+    if (correctIndex === undefined || correctIndex < 0) {
+      correctIndex = 0;
+    }
+    return {
+      id: q.id || `quiz-q-${index}`,
+      question: q.question || '',
+      options,
+      correctIndex,
+      explanation: q.explanation || '',
+    };
+  };
+
+  const questions: QuizQuestion[] = rawQuestions.map(normalizeQuestion);
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number | null>>({});
