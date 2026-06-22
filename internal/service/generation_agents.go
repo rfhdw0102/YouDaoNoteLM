@@ -1376,7 +1376,10 @@ func appendPPTPlansToContext(contextValue, outline string, plan pptOutlinePlan) 
 		b.WriteString("- For each source-topic, generate 1-3 sentences of actual presentation content that: explains the concept, provides context, gives a concrete example, or states a clear conclusion. The output should read like a real slide a presenter would show, not an outline.\n")
 		b.WriteString("- Keep every planned slide title visible as h1/h2/h3, then add 3-5 substantial content blocks for that page.\n")
 		b.WriteString("- CRITICAL: Never output internal plan labels or meta-text as visible slide content. Words like 'Purpose', '页面目的', 'Slide purpose', 'writing brief', 'source-topic', or any planning instruction must NOT appear on the slide. Only output real presentation content.\n")
-		b.WriteString("- CRITICAL: Every content slide MUST have substantial body text. Do not output slides with only a title and empty or near-empty content. Each content slide needs at least 3-5 concrete points, each expanded into a full sentence or paragraph.\n")
+		b.WriteString("- CRITICAL: Every content slide MUST have substantial body text. Do not output slides with only a title and empty or near-empty content. Each content slide needs at least 5-7 concrete points, each expanded into a full sentence or paragraph.\n")
+		b.WriteString("- CRITICAL: 去文字化——不要输出大段连续叙述文本。将内容拆解为：定义句→原理句→证据/数据句→应用/例子句。每个要点自成一体，读出来像一句完整的演讲词。\n")
+		b.WriteString("- CRITICAL: 每个内容页的信息密度要高。一个 slide 至少包含 5-7 个实质性的内容块（列表项、卡片、洞察标签等），不要让页面看起来只有标题和两行字。\n")
+		b.WriteString("- CRITICAL: 当 source-topic 看起来笼统（如'核心概念'、'基本原理'）时，你必须将其拆解为 3-5 个具体的子论点分别展开，而不是输出一个笼统的概括。\n")
 		b.WriteString("- The agenda slide must match the later content sections one-to-one; if the agenda lists a chapter, a later section with the same chapter title must exist.\n")
 		b.WriteString("- Design every section as a real 16:9 PPT canvas: width: 1920px; height: 1080px; overflow: hidden; use px font sizes, not web-card rem layouts.\n")
 		b.WriteString("- Make each HTML section production-ready as a standalone slide: include a clear visual hierarchy, title area, content grouping, and a small progress or section marker.\n")
@@ -1774,7 +1777,7 @@ func extractPPTSourceSections(markdown string, maxSections int) []pptSourceSecti
 		}
 		// Code blocks are already merged into single lines starting with ```
 		point := strings.TrimSpace(strings.TrimLeft(line, "-*0123456789. "))
-		if len([]rune(point)) < 4 {
+		if len([]rune(point)) < 3 {
 			continue
 		}
 		if current == nil {
@@ -2392,7 +2395,7 @@ func normalizePPTBullets(slide *pptSlidePlan) {
 	case "封面", "目录":
 		return
 	}
-	if len(slide.Bullets) > 7 {
+	if len(slide.Bullets) > 9 {
 		slide.Bullets = append([]string{}, slide.Bullets[:7]...)
 	}
 }
@@ -4847,11 +4850,15 @@ func supplementBullet(title string, detail int) string {
 	if title == "" {
 		return fmt.Sprintf("补充要点 %d：结合材料进一步分析该主题的关键内容。", detail)
 	}
+	// Generate concrete, knowledge-driven supplements rather than vague boilerplate.
+	// Each template provides a specific angle for expanding the topic with real content.
 	templates := []string{
-		fmt.Sprintf("关于%s，需要理解其核心定义和在实际场景中的应用方式。", title),
-		fmt.Sprintf("%s的关键在于把握其主要特征和与其他概念的关联关系。", title),
-		fmt.Sprintf("掌握%s需要从基本原理出发，理解其在整体知识体系中的位置和作用。", title),
-		fmt.Sprintf("在实际应用中，%s的表现形式和影响因素值得深入探讨。", title),
+		fmt.Sprintf("%s的核心定义：用一句话精确概括%s是什么，区分它与其他相近概念的本质差异。", title, title),
+		fmt.Sprintf("%s的运作原理：解释%s背后的因果机制或数学/逻辑基础，说明为什么它这样工作而非那样工作。", title, title),
+		fmt.Sprintf("%s的关键特征：列出%s的3个核心特征，每个特征给出一个具体例子或量化数据支撑。", title, title),
+		fmt.Sprintf("%s的应用场景：描述%s在真实场景中的典型用法，给出一个具体的操作步骤或数值案例。", title, title),
+		fmt.Sprintf("%s的常见误区：指出学习%s时最容易犯的2-3个错误，说明正确理解应该是什么。", title, title),
+		fmt.Sprintf("%s与其他概念的关系：说明%s在整体知识体系中的位置，它依赖什么前置知识，又是什么后续知识的基础。", title, title),
 	}
 	idx := (detail - 1) % len(templates)
 	return templates[idx]
