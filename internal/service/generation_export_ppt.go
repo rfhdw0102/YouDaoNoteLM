@@ -229,6 +229,13 @@ func normalizePPTExportText(value string) string {
 	value = strings.ReplaceAll(value, "&nbsp;", " ")
 	value = stripSimpleHTML(value)
 	value = html.UnescapeString(value)
+
+	// Preserve code blocks: if the value contains a fenced code block (```...```),
+	// strip the fences and keep the inner code with its original line structure.
+	if cleaned, ok := stripFencedCodeBlockForPPT(value); ok {
+		return cleaned
+	}
+
 	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 	return cleanPPTVisibleText(value)
 }

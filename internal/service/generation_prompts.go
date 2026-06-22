@@ -149,6 +149,17 @@ func promptStrategyFor(typ GenerationType) generationPromptStrategy {
   <div class="slide-progress"><span style="width: 100%"></span></div>
 </section>
 
+【内容页 - 代码展示布局】（当内容包含代码时使用）
+<section class="ppt-slide" data-ppt-slide="true">
+  <div class="slide-title-wrap">
+    <span class="section-number">07</span>
+    <h2>代码示例</h2>
+  </div>
+  <p>代码说明文字</p>
+  <pre class="ppt-code-block"><code>代码内容（保留缩进和换行）</code></pre>
+  <div class="slide-progress"><span style="width: 70%"></span></div>
+</section>
+
 == 结构一致性要求 ==
 1. 每个页面的主标题（h2）只出现一次，不要在卡片标题（card-title）或小标题中重复页面主标题。
 2. 卡片标题（card-title）和小标题（h3）必须是具体的内容主题，不是页面标题的重复。例如页面标题是'感谢观看'，卡片标题应该是'核心要点回顾'、'下一步学习建议'等具体内容。
@@ -163,9 +174,10 @@ func promptStrategyFor(typ GenerationType) generationPromptStrategy {
 3. 不得输出任何内部规划标签（Purpose、页面目的、Slide purpose 等）作为可见文字。
 4. 不得输出参考资料元信息（文档列表、文档介绍、专题N、第N章、第N节、【重点知识...】等）作为可见文字。
 5. 必要补充必须明确标记为解释或补充，不得当作已有来源事实。
+6. 当材料中包含代码块时，必须使用 <pre class="ppt-code-block"><code>...</code></pre> 展示代码，保留原始缩进和换行格式。不要把代码块当作普通列表项。
 
 == 布局轮换要求 ==
-不要让每页布局都一样！内容页至少使用 3 种不同布局模式轮换（双栏、卡片网格、全宽列表、对比、引用）。`,
+不要让每页布局都一样！内容页至少使用 3 种不同布局模式轮换（双栏、卡片网格、全宽列表、对比、引用、代码展示）。`,
 		}
 	case GenerationTypeQuiz:
 		return generationPromptStrategy{
@@ -198,7 +210,8 @@ func pptOutlinePromptStrategy() generationPromptStrategy {
 			"以用户 Markdown 或 <PPT_CONTENT> 为主，完整提取标题层级、正文段落、列表和用户意图。" +
 			"必须根据材料规模动态决定页数：短材料生成 8-10 页，中等材料生成 10-14 页，长材料生成 14-20 页。" +
 			"不要把多个二级标题强行合并到同一页。" +
-			"检索和联网内容只作支持；稀疏输入可以补充学习解释，但必须标记为解释补充，不能伪装成来源事实。",
+			"检索和联网内容只作支持；稀疏输入可以补充学习解释，但必须标记为解释补充，不能伪装成来源事实。" +
+			"当材料中包含代码块时，大纲要点中必须保留代码块内容，使用三个反引号围栏标记包裹（如三个反引号+语言名 换行 代码内容 换行 三个反引号），不要将代码改写为文字描述。",
 		OutputFormat: "仅返回 Markdown 大纲，不要返回 HTML。格式要求：\n" +
 			"1. 第一行是 # 总标题\n" +
 			"2. 每个幻灯片用一级列表项表示，标题简洁（2-8字名词短语）\n" +
@@ -287,6 +300,7 @@ func pptContentEnrichPromptStrategy() generationPromptStrategy {
 4. 保持不同来源的边界，不编造缺乏依据的结论
 5. 不要输出参考资料、References、来源列表或引用附录
 6. 不要输出内部规划标签（如 Purpose、页面目的等）
+7. 当源材料或大纲要点中包含代码块（三个反引号开头的围栏格式，如三个反引号+语言名 换行 代码内容 换行 三个反引号）时，必须在 bullets 数组中保留完整的代码块，包括围栏标记。不要将代码块展开为散文段落，不要移除围栏标记，保持代码的原始缩进和换行格式。每个代码块作为 bullets 数组中的一个独立条目。
 
 内容要求：
 - 每个内容页必须有 3-5 个段落，每个段落都是完整的叙述
@@ -296,6 +310,7 @@ func pptContentEnrichPromptStrategy() generationPromptStrategy {
 - 封面页只需要标题和副标题
 - 目录页只需要章节标题列表
 - 结束页需要总结要点和下一步建议
+- 代码块内容必须原样保留在 bullets 中，不做任何改写
 
 输出格式：
 返回 JSON 对象，结构如下：
@@ -315,7 +330,8 @@ func pptContentEnrichPromptStrategy() generationPromptStrategy {
 - paragraphs 是主要正文内容，必须有
 - bullets 和 insights 是可选的，用于丰富页面元素
 - 每个段落必须是完整句子，50-150 字
-- 不要输出任何 HTML 标签，只输出纯文本内容`,
+- 不要输出任何 HTML 标签，只输出纯文本内容
+- bullets 中的代码块必须保留三个反引号围栏标记（如三个反引号+go 换行 代码 换行 三个反引号），这是格式要求，不是 Markdown 输出`,
 		OutputFormat: `仅返回 JSON 对象，不要返回其他内容。格式必须严格遵循：
 {
   "slides": [
@@ -329,6 +345,6 @@ func pptContentEnrichPromptStrategy() generationPromptStrategy {
   ]
 }
 
-不要输出 Markdown 代码块标记，不要输出解释文字，只输出 JSON。`,
+不要输出 Markdown 代码块标记包裹 JSON（即不要用三个反引号+json 包裹整个输出），不要输出解释文字，只输出 JSON。但 bullets 数组内部的代码块内容必须保留三个反引号围栏标记。`,
 	}
 }

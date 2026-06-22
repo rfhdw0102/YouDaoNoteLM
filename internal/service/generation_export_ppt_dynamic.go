@@ -405,6 +405,28 @@ func parseHTMLBlocks(node *html.Node, doc *pptHTMLDocument, inheritedText pptSty
 			Style:   style,
 			Classes: classes,
 		}}
+	case "pre":
+		// Code blocks: extract text preserving line breaks and indentation
+		text := extractRawNodeText(node)
+		if strings.TrimSpace(text) == "" {
+			return nil
+		}
+		// If the first child is <code>, get its text instead
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			if child.Type == html.ElementNode && strings.EqualFold(child.Data, "code") {
+				text = extractRawNodeText(child)
+				break
+			}
+		}
+		if strings.TrimSpace(text) == "" {
+			return nil
+		}
+		return []pptHTMLBlock{{
+			Kind:    "pre",
+			Text:    text,
+			Style:   style,
+			Classes: classes,
+		}}
 	case "ul", "ol":
 		return parseHTMLList(node, doc, inheritTextStyle(style), tag == "ol")
 	case "li":
@@ -1957,6 +1979,8 @@ func defaultFontSizeForBlock(kind string) int {
 		return 19
 	case "section-number":
 		return 13
+	case "pre":
+		return 14
 	case "list-item":
 		return dynamicPPTDefaultBodyFont
 	default:
@@ -1968,6 +1992,8 @@ func defaultFontFamilyForBlock(kind string) string {
 	switch kind {
 	case "h1", "h2", "h3":
 		return dynamicPPTTitleFontFamily
+	case "pre":
+		return "Consolas"
 	default:
 		return dynamicPPTDefaultFontFamily
 	}
@@ -2037,6 +2063,22 @@ func estimateTextHeight(text string, fontSize int, width float64) float64 {
 
 func estimateTextHeightWithStyle(text string, style pptStyle, fontSize int, width float64) float64 {
 	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return 0.22
+	}
+
+	// For code blocks (text with explicit newlines), count actual lines
+	// rather than estimating from character density, to preserve formatting.
+	newlineCount := strings.Count(trimmed, "\n")
+	if newlineCount > 0 && fontSize <= 18 {
+		lines := newlineCount + 1
+		lineHeight := float64(fontSize) * 1.4 / 72.0
+		if style.LineHeight != nil && *style.LineHeight > 0 {
+			lineHeight = *style.LineHeight
+		}
+		return dynamicPPTMaxFloat(lineHeight*float64(lines)+0.1, 0.26)
+	}
+
 	runes := len([]rune(trimmed))
 	if runes == 0 {
 		return 0.22

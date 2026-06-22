@@ -2379,7 +2379,12 @@ func normalizePPTBullets(slide *pptSlidePlan) {
 	// dedup/truncation. The section extractor and the LLM frequently prefix
 	// every point with the page title (e.g. a slide titled "卡尔文循环" gets
 	// "卡尔文循环：场所：叶绿体基质"), which reads redundantly under the heading.
+	// Code blocks are skipped — stripping a title prefix from code would corrupt
+	// the code content.
 	for i, bullet := range slide.Bullets {
+		if isPPTCodeBlockBullet(bullet) {
+			continue
+		}
 		slide.Bullets[i] = stripPPTBulletSlideTitlePrefix(bullet, slide.Title)
 	}
 	slide.Bullets = uniqueNonEmpty(slide.Bullets)
@@ -2785,6 +2790,8 @@ ul { list-style: none; padding-left: 0; }
 .comparison-col.left { background: var(--accent-soft); border-left: 6px solid var(--accent); }
 .comparison-col.right { background: #fff7ed; border-left: 6px solid var(--accent-2); }
 .quote-block { background: linear-gradient(135deg, var(--accent-soft) 0%%, #fff7ed 100%%); border-left: 8px solid var(--accent); border-radius: 8px; padding: 48px 56px; min-height: 400px; }
+.ppt-code-block { background: #1e293b; color: #e2e8f0; border-radius: 8px; padding: 28px 32px; margin-top: 18px; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace; font-size: 24px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; overflow-x: auto; border-left: 6px solid var(--accent-2); }
+.ppt-code-block code { font-family: inherit; color: inherit; }
 .slide-progress { position: absolute; left: 112px; right: 112px; bottom: 58px; height: 10px; border-radius: 999px; background: #e5e7eb; overflow: hidden; }
 .slide-progress span { display: block; height: 100%%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 </style>`,
@@ -3129,6 +3136,24 @@ li:last-child { border-bottom: none; }
   color: var(--muted);
   font-weight: 600;
 }
+.ppt-code-block {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: 28px 32px;
+  margin-top: 18px;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+  font-size: 24px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+  border-left: 6px solid var(--accent-2);
+}
+.ppt-code-block code {
+  font-family: inherit;
+  color: inherit;
+}
 </style>`)
 	for i, slide := range plan.Slides {
 		className := "ppt-slide"
@@ -3189,6 +3214,8 @@ func writePPTContentSlideBody(b *strings.Builder, slide pptSlidePlan, index int)
 		writePPTComparisonSlide(b, slide)
 	case "quote":
 		writePPTQuoteSlide(b, slide)
+	case "code":
+		writePPTCodeSlide(b, slide)
 	default:
 		writePPTTwoColumnSlide(b, slide)
 	}
@@ -3198,6 +3225,10 @@ func writePPTContentSlideBody(b *strings.Builder, slide pptSlidePlan, index int)
 // It rotates through patterns to ensure visual variety.
 func pptSlideLayoutForIndex(index int, slide pptSlidePlan) string {
 	title := strings.ToLower(slide.Title)
+	// Code layout takes priority when bullets contain code blocks
+	if slideHasCodeBlock(slide) {
+		return "code"
+	}
 	if containsAnyFold(title, "对比", "比较", "vs", "compare", "区别", "差异") {
 		return "comparison"
 	}
@@ -3214,9 +3245,22 @@ func pptSlideLayoutForIndex(index int, slide pptSlidePlan) string {
 	return layouts[index%len(layouts)]
 }
 
+// slideHasCodeBlock returns true if any bullet in the slide is a fenced code block.
+func slideHasCodeBlock(slide pptSlidePlan) bool {
+	for _, bullet := range slide.Bullets {
+		if isPPTCodeBlockBullet(bullet) {
+			return true
+		}
+	}
+	return false
+}
+
 func writePPTTwoColumnSlide(b *strings.Builder, slide pptSlidePlan) {
 	b.WriteString(`<div class="content-grid"><ul class="main-points">`)
 	for _, bullet := range slide.Bullets {
+		if isPPTCodeBlockBullet(bullet) {
+			continue // code blocks rendered separately below
+		}
 		b.WriteString("<li>")
 		b.WriteString(htmlEscape(pptExpandBullet(bullet, slide.Title)))
 		b.WriteString("</li>")
@@ -3233,21 +3277,29 @@ func writePPTTwoColumnSlide(b *strings.Builder, slide pptSlidePlan) {
 		b.WriteString(`</div>`)
 	}
 	b.WriteString("</div>")
+	// Append code blocks as separate <pre> elements after the main content
+	writePPTCodeBlocks(b, slide.Bullets)
 }
 
 func writePPTCardGridSlide(b *strings.Builder, slide pptSlidePlan) {
 	b.WriteString(`<div class="card-grid">`)
-	for i, bullet := range slide.Bullets {
-		if i >= 4 {
+	cardIdx := 0
+	for _, bullet := range slide.Bullets {
+		if isPPTCodeBlockBullet(bullet) {
+			continue // code blocks rendered separately
+		}
+		if cardIdx >= 4 {
 			break
 		}
 		b.WriteString(`<div class="content-card"><div class="card-title">`)
-		b.WriteString(htmlEscape(pptCardTitleFromBullet(bullet, i)))
+		b.WriteString(htmlEscape(pptCardTitleFromBullet(bullet, cardIdx)))
 		b.WriteString(`</div><div class="card-body">`)
 		b.WriteString(htmlEscape(pptExpandBullet(bullet, slide.Title)))
 		b.WriteString(`</div></div>`)
+		cardIdx++
 	}
 	b.WriteString(`</div>`)
+	writePPTCodeBlocks(b, slide.Bullets)
 }
 
 // pptCardTitleFromBullet derives a concise card title from the bullet content
@@ -3316,20 +3368,30 @@ func pptExpandBullet(bullet, slideTitle string) string {
 func writePPTFullWidthListSlide(b *strings.Builder, slide pptSlidePlan) {
 	b.WriteString(`<div class="full-width-list"><ul>`)
 	for _, bullet := range slide.Bullets {
+		if isPPTCodeBlockBullet(bullet) {
+			continue // code blocks rendered separately below
+		}
 		b.WriteString("<li>")
 		b.WriteString(htmlEscape(pptExpandBullet(bullet, slide.Title)))
 		b.WriteString("</li>")
 	}
 	b.WriteString("</ul></div>")
+	writePPTCodeBlocks(b, slide.Bullets)
 }
 
 func writePPTComparisonSlide(b *strings.Builder, slide pptSlidePlan) {
-	mid := len(slide.Bullets) / 2
+	var textBullets []string
+	for _, bullet := range slide.Bullets {
+		if !isPPTCodeBlockBullet(bullet) {
+			textBullets = append(textBullets, bullet)
+		}
+	}
+	mid := len(textBullets) / 2
 	if mid == 0 {
 		mid = 1
 	}
-	left := slide.Bullets[:mid]
-	right := slide.Bullets[mid:]
+	left := textBullets[:mid]
+	right := textBullets[mid:]
 	if len(right) == 0 {
 		right = left
 	}
@@ -3352,6 +3414,7 @@ func writePPTComparisonSlide(b *strings.Builder, slide pptSlidePlan) {
 		b.WriteString("</p>")
 	}
 	b.WriteString(`</div></div>`)
+	writePPTCodeBlocks(b, slide.Bullets)
 }
 
 // pptComparisonTitleFromBullets derives a meaningful comparison column title
@@ -3399,6 +3462,48 @@ func writePPTQuoteSlide(b *strings.Builder, slide pptSlidePlan) {
 		b.WriteString(`</div>`)
 	}
 	b.WriteString(`</div>`)
+	writePPTCodeBlocks(b, slide.Bullets)
+}
+
+// writePPTCodeBlocks renders code block bullets as <pre><code> elements
+// with the ppt-code-block class. Non-code-block bullets are skipped.
+func writePPTCodeBlocks(b *strings.Builder, bullets []string) {
+	for _, bullet := range bullets {
+		if !isPPTCodeBlockBullet(bullet) {
+			continue
+		}
+		code, ok := stripFencedCodeBlockForPPT(bullet)
+		if !ok {
+			continue
+		}
+		b.WriteString(`<pre class="ppt-code-block"><code>`)
+		b.WriteString(htmlEscape(code))
+		b.WriteString(`</code></pre>`)
+	}
+}
+
+// writePPTCodeSlide renders a slide optimized for code display. It shows
+// explanatory text bullets first, then renders all code blocks as <pre><code>
+// elements below. This layout is used when the slide contains fenced code blocks.
+func writePPTCodeSlide(b *strings.Builder, slide pptSlidePlan) {
+	// Render non-code bullets as explanatory text
+	var textBullets []string
+	for _, bullet := range slide.Bullets {
+		if !isPPTCodeBlockBullet(bullet) {
+			textBullets = append(textBullets, bullet)
+		}
+	}
+	if len(textBullets) > 0 {
+		b.WriteString(`<div class="full-width-list"><ul>`)
+		for _, bullet := range textBullets {
+			b.WriteString("<li>")
+			b.WriteString(htmlEscape(pptExpandBullet(bullet, slide.Title)))
+			b.WriteString("</li>")
+		}
+		b.WriteString(`</ul></div>`)
+	}
+	// Render code blocks as <pre><code> elements
+	writePPTCodeBlocks(b, slide.Bullets)
 }
 
 func pptCardTitle(slideTitle string, index int) string {
@@ -3440,6 +3545,23 @@ func sanitizePPTPlanVisibleText(plan pptOutlinePlan) pptOutlinePlan {
 
 func cleanPPTVisibleText(value string) string {
 	value = strings.ReplaceAll(value, "&nbsp;", " ")
+
+	// Preserve code blocks: if the value contains a fenced code block (```...```),
+	// keep the fences intact so that downstream code (isPPTCodeBlockBullet,
+	// slideHasCodeBlock, writePPTCodeBlocks) can still identify and correctly
+	// render it. Only clean the text inside the fences (e.g. &nbsp;).
+	// The &nbsp; replacement already happened above; return the code block
+	// with its fences preserved.
+	if isPPTCodeBlockBullet(value) {
+		return value
+	}
+
+	// Single-line code fences (```inline```) without a newline are also code
+	// content — preserve them rather than stripping to plain text.
+	if cleaned, ok := stripFencedCodeBlockForPPT(value); ok {
+		return cleaned
+	}
+
 	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 	for {
 		trimmed := strings.TrimSpace(value)
@@ -3455,6 +3577,48 @@ func cleanPPTVisibleText(value string) string {
 		}
 		return trimmed
 	}
+}
+
+// stripFencedCodeBlockForPPT detects a fenced code block in value (```lang\n...\n```)
+// and returns the inner code with the language label removed, preserving line breaks
+// and indentation. Returns ("", false) if value does not contain a code block.
+func stripFencedCodeBlockForPPT(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "```") {
+		return "", false
+	}
+	// Find the language tag line end
+	firstNewline := strings.Index(trimmed, "\n")
+	if firstNewline < 0 {
+		// Single-line code fence like ```x``` — treat as code
+		inner := strings.TrimPrefix(trimmed, "```")
+		inner = strings.TrimSuffix(inner, "```")
+		inner = strings.TrimSpace(inner)
+		if inner == "" {
+			return "", false
+		}
+		return inner, true
+	}
+	// Remove opening ```lang\n
+	inner := trimmed[firstNewline+1:]
+	// Remove closing \n```
+	if strings.HasSuffix(inner, "\n```") {
+		inner = inner[:len(inner)-4]
+	} else if strings.HasSuffix(inner, "```") {
+		inner = inner[:len(inner)-3]
+	}
+	inner = strings.TrimRight(inner, "\n")
+	if strings.TrimSpace(inner) == "" {
+		return "", false
+	}
+	return inner, true
+}
+
+// isPPTCodeBlockBullet returns true if the bullet text originated from a
+// fenced code block (```...```).
+func isPPTCodeBlockBullet(bullet string) bool {
+	trimmed := strings.TrimSpace(bullet)
+	return strings.HasPrefix(trimmed, "```") && strings.Contains(trimmed, "\n")
 }
 
 func writePPTCoverSlide(b *strings.Builder, plan pptOutlinePlan, slide pptSlidePlan, index int) {
@@ -5206,6 +5370,15 @@ func extractKeyPoints(markdown string, limit int) []string {
 	mergedLines := mergeCodeBlockLines(lines)
 
 	for _, line := range mergedLines {
+		// Code blocks are already merged into single lines starting with ```;
+		// preserve them as-is without TrimLeft which would strip the fence markers.
+		if isPPTCodeBlockBullet(line) {
+			points = append(points, line)
+			if len(points) >= limit {
+				return points
+			}
+			continue
+		}
 		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "-*#0123456789. "))
 		if len([]rune(line)) < 4 {
 			continue
