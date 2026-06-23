@@ -2277,6 +2277,7 @@ func (a *pptGenerationAgent) tryEnrichPPTContent(ctx context.Context, strategy g
 		User:         strings.TrimSpace(state.input.Request.Prompt),
 		Context:      contextValue,
 		OutputFormat: outputFormat,
+		MaxTokens:    pptContentEnrichMaxTokens,
 	})
 	logFields := pptEnrichLogFields(state, retry)
 	if err != nil {
