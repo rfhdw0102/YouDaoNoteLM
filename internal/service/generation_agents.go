@@ -166,6 +166,7 @@ type quizQuestionItem struct {
 	Options     []string
 	Answer      string
 	Explanation string
+	Difficulty  string // easy | medium | hard
 }
 
 func (a *baseGenerationAgent) Generate(ctx context.Context, input generationAgentInput) (generationAgentOutput, error) {
@@ -4434,9 +4435,9 @@ func pptCardTitleMatchesBody(title, body string) bool {
 func extractSignificantWords(text string) []string {
 	// Remove punctuation
 	text = strings.Map(func(r rune) rune {
-		if r == '，' || r == '。' || r == '、' || r == '：' || r == '：' ||
+		if r == '，' || r == '。' || r == '、' || r == '：' ||
 			r == '（' || r == '）' || r == '(' || r == ')' ||
-			r == '"' || r == '"' || r == '\'' || r == ' ' {
+			r == '"' || r == '\'' || r == ' ' {
 			return ' '
 		}
 		return r
@@ -4594,46 +4595,151 @@ func isGenericPPTPlanTitle(title string) bool {
 	)
 }
 
-func requiredMindmapBranchTitles() []string {
-	return []string{"核心概念", "原理机制", "过程步骤", "应用场景", "易错点", "总结"}
+// dynamicMindmapBranches 根据笔记内容智能选择思维导图分支。
+// 如果笔记有明确的章节结构，用章节标题作为分支；
+// 否则按知识点聚类生成3-5个分支。始终保留"总结"分支。
+func dynamicMindmapBranches(analysis learningContentAnalysis) []mindmapBranchPlan {
+	var branches []mindmapBranchPlan
+
+	// 如果笔记有章节结构，直接用章节标题作为分支
+	if len(analysis.Sections) >= 2 {
+		for _, section := range analysis.Sections {
+			title := strings.TrimSpace(section.Title)
+			if title == "" {
+				continue
+			}
+			branch := mindmapBranchPlan{Title: title}
+			for _, point := range section.Points {
+				point = strings.TrimSpace(point)
+				if point == "" {
+					continue
+				}
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					point,
+					mindmapNodeDetailFromEvidence(point, analysis),
+				))
+			}
+			if len(branch.Nodes) == 0 {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					supplementBullet(title, 1),
+					mindmapNodeDetailFromEvidence(title, analysis),
+				))
+			}
+			branches = append(branches, branch)
+		}
+	} else {
+		// 扁平结构：按知识点类型分类
+		if len(analysis.KeyConcepts) > 0 {
+			branch := mindmapBranchPlan{Title: "核心概念"}
+			for _, concept := range analysis.KeyConcepts {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					concept,
+					mindmapNodeDetailFromEvidence(concept, analysis),
+				))
+			}
+			branches = append(branches, branch)
+		}
+		if len(analysis.Processes) > 0 {
+			branch := mindmapBranchPlan{Title: "原理与过程"}
+			for _, proc := range analysis.Processes {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					proc,
+					mindmapNodeDetailFromEvidence(proc, analysis),
+				))
+			}
+			branches = append(branches, branch)
+		}
+		if len(analysis.Examples) > 0 {
+			branch := mindmapBranchPlan{Title: "应用与案例"}
+			for _, example := range analysis.Examples {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					example,
+					mindmapNodeDetailFromEvidence(example, analysis),
+				))
+			}
+			branches = append(branches, branch)
+		}
+		if len(branches) == 0 {
+			// 极端稀疏：创建一个通用分支
+			branch := mindmapBranchPlan{Title: analysis.Topic}
+			for _, concept := range analysis.KeyConcepts {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					concept,
+					mindmapNodeDetailFromEvidence(concept, analysis),
+				))
+			}
+			if len(branch.Nodes) == 0 {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					fmt.Sprintf("围绕“%s”的关键要点", analysis.Topic),
+					"结合笔记内容梳理核心知识点。",
+				))
+			}
+			branches = append(branches, branch)
+		}
+	}
+
+	// 始终保留总结分支
+	branches = append(branches, mindmapBranchPlan{
+		Title: "总结",
+		Nodes: []mindmapNodePlan{
+			newMindmapNode(
+				fmt.Sprintf("围绕“%s”形成可复习的结构。", analysis.Topic),
+				"按概念、机制、过程、应用和误区回顾学习路径。",
+			),
+		},
+	})
+
+	// 确保至少3个分支（含总结）
+	if len(branches) < 3 {
+		branchTitle := "补充内容"
+		if strings.TrimSpace(analysis.Topic) != "" {
+			branchTitle = analysis.Topic
+		}
+		for len(branches) < 3 {
+			branches = append(branches, mindmapBranchPlan{
+				Title: branchTitle,
+				Nodes: []mindmapNodePlan{
+					newMindmapNode(
+						supplementBullet(branchTitle, len(branches)+1),
+						"该节点为解释补充，用于补足学习结构。",
+					),
+				},
+			})
+		}
+	}
+
+	// 限制分支数量在8以内（含总结）
+	if len(branches) > 8 {
+		// 保留前7个分支和最后的总结分支
+		branches = append(branches[:7], branches[len(branches)-1])
+	}
+
+	return branches
 }
 
 func planMindmap(analysis learningContentAnalysis) mindmapPlan {
 	plan := mindmapPlan{Title: analysis.Topic}
-	for _, title := range requiredMindmapBranchTitles() {
-		branch := mindmapBranchPlan{Title: title}
-		switch title {
-		case "核心概念":
-			branch.Nodes = appendMindmapNodes(branch.Nodes, title, analysis.KeyConcepts, analysis)
-		case "原理机制", "过程步骤":
-			branch.Nodes = appendMindmapNodes(branch.Nodes, title, analysis.Processes, analysis)
-		case "应用场景":
-			branch.Nodes = appendMindmapNodes(branch.Nodes, title, analysis.Examples, analysis)
-		case "易错点":
-			branch.Nodes = append(branch.Nodes, newMindmapNode("注意概念边界、条件范围和常见混淆。", "用于复习时主动辨析相近概念、适用条件和结论边界。"))
-		case "总结":
-			branch.Nodes = append(branch.Nodes, newMindmapNode(fmt.Sprintf("围绕“%s”形成可复习的结构。", analysis.Topic), "按概念、机制、过程、应用和误区回顾学习路径。"))
-		}
-		if len(branch.Nodes) == 0 {
-			branch.Nodes = append(branch.Nodes, newMindmapNode(supplementBullet(title, 1), "该节点为解释补充，用于补足学习结构。"))
-		}
-		if analysis.Sparse && !hasSupplementMindmapNode(branch.Nodes) {
-			branch.Nodes = append(branch.Nodes, newMindmapNode(supplementBullet(title, 2), "该节点不是来源事实，主要用于提示复习方向。"))
-		}
-		minNodes := 3
-		if analysis.Sparse {
-			minNodes = 4
-		}
+	branches := dynamicMindmapBranches(analysis)
+
+	// 确保每个分支至少有 minNodes 个节点
+	minNodes := 3
+	if analysis.Sparse {
+		minNodes = 4
+	}
+	for i := range branches {
+		branch := &branches[i]
 		for len(branch.Nodes) < minNodes {
 			branch.Nodes = append(branch.Nodes, newMindmapNode(
-				supplementBullet(title, len(branch.Nodes)+1),
-				"该节点为解释补充，用于形成可展开的导图层级。",
-				mindmapBranchExpansionDetail(title, analysis),
+				supplementBullet(branch.Title, len(branch.Nodes)+1),
+				mindmapNodeDetailFromEvidence(branch.Title, analysis),
+				mindmapBranchExpansionDetail(branch.Title, analysis),
 			))
+			branch.Nodes = uniqueMindmapNodes(branch.Nodes)
 		}
 		branch.Nodes = uniqueMindmapNodes(branch.Nodes)
-		plan.Branches = append(plan.Branches, branch)
 	}
+
+	plan.Branches = branches
 	return plan
 }
 
@@ -4765,6 +4871,47 @@ func mindmapNodeDetail(branchTitle, value string, analysis learningContentAnalys
 	}
 }
 
+// mindmapNodeDetailFromEvidence 从笔记证据中提取具体内容作为节点细节，
+// 替代原有的模板化描述。
+func mindmapNodeDetailFromEvidence(value string, analysis learningContentAnalysis) string {
+	// 如果值包含解释补充标记，返回通用提示
+	if strings.Contains(value, "解释补充") {
+		return "该节点为解释补充，用于补足学习结构。"
+	}
+
+	// 从证据中找与 value 最相关的具体内容
+	valueKeywords := extractSignificantWords(value)
+	for _, ev := range analysis.Evidence {
+		evKeywords := extractSignificantWords(ev.Text)
+		overlap := 0
+		for _, kw := range valueKeywords {
+			for _, ekw := range evKeywords {
+				if strings.EqualFold(kw, ekw) {
+					overlap++
+					break
+				}
+			}
+		}
+		if overlap >= 2 {
+			return summarizeLine(ev.Text, 90)
+		}
+	}
+
+	// 如果没有直接匹配的证据，返回通用但更有针对性的描述
+	switch {
+	case containsAnyFold(value, "定义", "概念", "是什么", "含义"):
+		return "明确该概念的精确定义、适用范围和与相关概念的区别。"
+	case containsAnyFold(value, "原理", "机制", "原因", "为什么"):
+		return "理解该原理成立的条件、因果链条和关键变量。"
+	case containsAnyFold(value, "步骤", "流程", "过程", "方法"):
+		return "按顺序理解每个步骤的输入、变化和产出。"
+	case containsAnyFold(value, "应用", "例子", "场景", "案例"):
+		return "结合具体场景判断该知识点如何迁移使用。"
+	default:
+		return fmt.Sprintf("围绕“%s”展开具体内容和关键要点。", strings.TrimSpace(value))
+	}
+}
+
 func mindmapBranchExpansionDetail(branchTitle string, analysis learningContentAnalysis) string {
 	switch branchTitle {
 	case "核心概念":
@@ -4834,13 +4981,16 @@ func renderMindmap(plan mindmapPlan) string {
 
 func mindmapNeedsStructureRepair(content string) bool {
 	trimmed := strings.TrimSpace(content)
-	if len([]rune(strings.ReplaceAll(trimmed, "#", ""))) < 20 || strings.Count(trimmed, "\n## ") < len(requiredMindmapBranchTitles()) || !strings.Contains(trimmed, "\n### ") {
+	if len([]rune(strings.ReplaceAll(trimmed, "#", ""))) < 20 {
 		return true
 	}
-	for _, title := range requiredMindmapBranchTitles() {
-		if !strings.Contains(trimmed, "## "+title) {
-			return true
-		}
+	// 至少3个 ## 分支
+	if strings.Count(trimmed, "\n## ") < 3 {
+		return true
+	}
+	// 至少有 ### 节点层级
+	if !strings.Contains(trimmed, "\n### ") {
+		return true
 	}
 	return false
 }
@@ -5182,13 +5332,53 @@ func noteNeedsStructureRepair(content string) bool {
 	return false
 }
 
-func requiredQuizQuestionTypes() []string {
-	return []string{"single_choice", "short_answer", "short_answer"}
+func requiredQuizQuestionTypes(analysis learningContentAnalysis) []string {
+	conceptCount := len(analysis.KeyConcepts)
+	processCount := len(analysis.Processes)
+	exampleCount := len(analysis.Examples)
+	totalPoints := conceptCount + processCount + exampleCount
+
+	// 根据材料丰富度决定题目数量
+	targetCount := 5
+	if totalPoints >= 6 {
+		targetCount = 6
+	}
+	if totalPoints >= 10 {
+		targetCount = 7
+	}
+	if totalPoints >= 15 {
+		targetCount = 8
+	}
+
+	// 题型分配：至少1道 single_choice + 1道 true_false
+	types := []string{"single_choice", "true_false"}
+
+	// 如果有对比性知识点，加多选题
+	if conceptCount >= 3 {
+		types = append(types, "multi_choice")
+	}
+
+	// 如果有过程性知识点，加填空题
+	if processCount >= 1 {
+		types = append(types, "fill_blank")
+	}
+
+	// 补充 short_answer 直到达到目标数量
+	for len(types) < targetCount {
+		types = append(types, "short_answer")
+	}
+
+	// 如果超了就截断
+	if len(types) > targetCount {
+		types = types[:targetCount]
+	}
+
+	return types
 }
 
 func planQuizQuestions(analysis learningContentAnalysis) quizQuestionPlan {
 	plan := quizQuestionPlan{Topic: analysis.Topic}
-	types := requiredQuizQuestionTypes()
+	types := requiredQuizQuestionTypes(analysis)
 	concepts := append([]string{}, analysis.KeyConcepts...)
 	processes := append([]string{}, analysis.Processes...)
 	examples := append([]string{}, analysis.Examples...)
@@ -5211,6 +5401,46 @@ func planQuizQuestions(analysis learningContentAnalysis) quizQuestionPlan {
 			}
 			item.Answer = item.Options[0]
 			item.Explanation = fmt.Sprintf("根据笔记，“%s”的定义如原文所述。", topic)
+			item.Difficulty = "easy"
+		case "true_false":
+			topic := pickPoint(concepts, i+1)
+			item.Topic = topic
+			item.Question = fmt.Sprintf("判断：%s。", topic)
+			item.Options = []string{"正确", "错误"}
+			item.Answer = "正确"
+			item.Explanation = fmt.Sprintf("根据笔记内容，该说法是正确的。“%s”的定义和描述如原文所述。", topic)
+			item.Difficulty = "easy"
+		case "multi_choice":
+			topic := pickPoint(concepts, i+2)
+			if topic == "" {
+				topic = pickPoint(concepts, 0)
+			}
+			item.Topic = topic
+			item.Question = fmt.Sprintf("关于“%s”，以下哪些说法是正确的？（多选）", topic)
+			item.Options = []string{
+				topic + " 的基本定义。",
+				topic + " 的关键特征。",
+				"与原文矛盾的描述。",
+				topic + " 的适用条件。",
+			}
+			item.Answer = item.Options[0] + "；" + item.Options[1] + "；" + item.Options[3]
+			item.Explanation = fmt.Sprintf("选项A、B、D正确。选项C与原文矛盾。关于“%s”的详细说明见笔记原文。", topic)
+			item.Difficulty = "medium"
+		case "fill_blank":
+			if len(processes) > 0 {
+				topic := pickPoint(processes, i)
+				item.Topic = topic
+				item.Question = fmt.Sprintf("“%s”的关键步骤是____。", topic)
+				item.Answer = summarizeLine(topic, 100)
+				item.Explanation = "该答案来自提供的笔记上下文。"
+			} else {
+				topic := pickPoint(concepts, i)
+				item.Topic = topic
+				item.Question = fmt.Sprintf("请填写“%s”的核心定义中的关键词：____。", topic)
+				item.Answer = summarizeLine(topic, 100)
+				item.Explanation = "该答案来自提供的笔记上下文。"
+			}
+			item.Difficulty = "medium"
 		case "short_answer":
 			if len(processes) > 0 {
 				topic := pickPoint(processes, i)
@@ -5228,6 +5458,7 @@ func planQuizQuestions(analysis learningContentAnalysis) quizQuestionPlan {
 				item.Answer = summarizeLine(topic, 100)
 				item.Explanation = "该答案来自提供的笔记上下文。"
 			}
+			item.Difficulty = "hard"
 		}
 		plan.Questions = append(plan.Questions, item)
 	}
@@ -5250,7 +5481,7 @@ func expandQuizContent(plan quizQuestionPlan, analysis learningContentAnalysis) 
 			q.Explanation = "该答案来自提供的笔记上下文。"
 		}
 	}
-	for len(expanded.Questions) < 3 {
+	for len(expanded.Questions) < 5 {
 		topic := analysis.Topic
 		if len(analysis.KeyConcepts) > len(expanded.Questions) {
 			topic = analysis.KeyConcepts[len(expanded.Questions)]
@@ -5285,8 +5516,8 @@ func renderQuiz(plan quizQuestionPlan) string {
 		for _, opt := range q.Options {
 			options = append(options, fmt.Sprintf("%q", opt))
 		}
-		item := fmt.Sprintf(`{"type":%q,"question":%q,"options":[%s],"answer":%q,"explanation":%q}`,
-			q.Type, q.Question, strings.Join(options, ","), q.Answer, q.Explanation)
+		item := fmt.Sprintf(`{"type":%q,"question":%q,"options":[%s],"answer":%q,"explanation":%q,"difficulty":%q}`,
+			q.Type, q.Question, strings.Join(options, ","), q.Answer, q.Explanation, q.Difficulty)
 		items = append(items, item)
 	}
 	return `{"questions":[` + strings.Join(items, ",") + `]}`
@@ -5338,7 +5569,13 @@ func appendQuizPlansToContext(contextValue string, plan, expanded quizQuestionPl
 		b.WriteString("\n\nQUIZ_GENERATION_RULES\n")
 		b.WriteString("- Follow the planned question types and topics; do not omit or merge questions.\n")
 		b.WriteString("- Every question must include a non-empty answer and explanation.\n")
-		b.WriteString("- For single_choice, provide 3-4 options and mark the correct one in the answer field.\n")
+		b.WriteString("- For single_choice, provide 3-4 options and mark the correct one in the answer field with the exact option text.\n")
+		b.WriteString("- For true_false, options must be [\"正确\",\"错误\"], answer must be \"正确\" or \"错误\".\n")
+		b.WriteString("- For multi_choice, provide 4-5 options, answer must be all correct option texts joined by semicolons (；).\n")
+		b.WriteString("- For fill_blank, options must be an empty array [], answer must be the key term or phrase to fill in.\n")
+		b.WriteString("- For short_answer, options must be an empty array [], answer must be a reference answer.\n")
+		b.WriteString("- Generate at least 5 questions, covering at least 2 different question types.\n")
+		b.WriteString("- Distribute difficulty levels: roughly 40% easy, 40% medium, 20% hard.\n")
 		b.WriteString("- Content must be grounded in Original Markdown, Local References, Web Results, or the user's explicit prompt.\n")
 		b.WriteString("- Return only the JSON object, no markdown fences or extra text.\n")
 	}

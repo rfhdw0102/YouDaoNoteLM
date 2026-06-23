@@ -26,18 +26,41 @@ export default function QuizCard({ content }: QuizCardProps) {
   const normalizeQuestion = (q: any, index: number): QuizQuestion => {
     const options: string[] = q.options || [];
     let correctIndex = q.correctIndex;
-    if (correctIndex === undefined && typeof q.answer === 'string') {
-      correctIndex = options.indexOf(q.answer);
+
+    // 根据题型确定 correctIndex
+    if (q.type === 'true_false') {
+      // 判断题：answer 是 "正确" 或 "错误"
+      if (correctIndex === undefined && typeof q.answer === 'string') {
+        correctIndex = q.answer === '错误' ? 1 : 0;
+      }
+    } else if (q.type === 'multi_choice') {
+      // 多选题：correctIndex 不适用，存储为 -1 表示多选
+      correctIndex = -1;
+    } else if (q.type === 'fill_blank' || q.type === 'short_answer') {
+      // 填空/简答题：没有选项
+      correctIndex = -2;
+    } else {
+      // 单选题：原有逻辑
+      if (correctIndex === undefined && typeof q.answer === 'string') {
+        correctIndex = options.indexOf(q.answer);
+      }
     }
+
     if (correctIndex === undefined || correctIndex < 0) {
-      correctIndex = 0;
+      if (q.type === 'multi_choice') correctIndex = -1;
+      else if (q.type === 'fill_blank' || q.type === 'short_answer') correctIndex = -2;
+      else correctIndex = 0;
     }
+
     return {
       id: q.id || `quiz-q-${index}`,
+      type: q.type || 'single_choice',
       question: q.question || '',
       options,
       correctIndex,
+      answer: q.answer || '',
       explanation: q.explanation || '',
+      difficulty: q.difficulty,
     };
   };
 
@@ -46,15 +69,41 @@ export default function QuizCard({ content }: QuizCardProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number | null>>({});
   const [showExplanation, setShowExplanation] = useState<Record<string, boolean>>({});
+  const [multiSelectAnswers, setMultiSelectAnswers] = useState<Record<string, number[]>>({});
+  const [fillAnswers, setFillAnswers] = useState<Record<string, string>>({});
 
   const question = questions[currentIndex];
+
+  const isMultiChoice = question?.type === 'multi_choice';
+  const isFillBlank = question?.type === 'fill_blank';
+  const isShortAnswer = question?.type === 'short_answer';
+  const isTrueFalse = question?.type === 'true_false';
+
+  const multiSelected = multiSelectAnswers[question?.id || ''] || [];
+  const isMultiAnswered = isMultiChoice && multiSelected.length > 0;
+
+  const fillValue = fillAnswers[question?.id || ''] || '';
+  const isFillAnswered = (isFillBlank || isShortAnswer) && fillValue.trim() !== '';
+
   if (!question) return null;
 
   const selectedAnswer = selectedAnswers[question.id];
-  const isAnswered = selectedAnswer !== undefined && selectedAnswer !== null;
-  const isCorrect = selectedAnswer === question.correctIndex;
+  const isAnswered = isMultiChoice ? isMultiAnswered : (isFillBlank || isShortAnswer) ? isFillAnswered : selectedAnswer !== undefined && selectedAnswer !== null;
+  const isCorrect = question.type === 'multi_choice' || question.type === 'fill_blank' || question.type === 'short_answer'
+    ? false
+    : selectedAnswer === question.correctIndex;
 
   const handleSelect = (optionIndex: number) => {
+    if (isMultiChoice) {
+      setMultiSelectAnswers((prev) => {
+        const current = prev[question.id] || [];
+        if (current.includes(optionIndex)) {
+          return { ...prev, [question.id]: current.filter(x => x !== optionIndex) };
+        }
+        return { ...prev, [question.id]: [...current, optionIndex] };
+      });
+      return;
+    }
     if (isAnswered) return;
     setSelectedAnswers((prev) => ({ ...prev, [question.id]: optionIndex }));
     setShowExplanation((prev) => ({ ...prev, [question.id]: true }));
@@ -63,16 +112,25 @@ export default function QuizCard({ content }: QuizCardProps) {
   const handleRetry = () => {
     setSelectedAnswers((prev) => ({ ...prev, [question.id]: null }));
     setShowExplanation((prev) => ({ ...prev, [question.id]: false }));
+    setMultiSelectAnswers((prev) => ({ ...prev, [question.id]: [] }));
+    setFillAnswers((prev) => ({ ...prev, [question.id]: '' }));
   };
 
   const handleRetryAll = () => {
     setSelectedAnswers({});
     setShowExplanation({});
+    setMultiSelectAnswers({});
+    setFillAnswers({});
     setCurrentIndex(0);
   };
 
   const answeredCount = Object.values(selectedAnswers).filter((v) => v !== null && v !== undefined).length;
-  const correctCount = questions.filter((q) => selectedAnswers[q.id] === q.correctIndex).length;
+  const correctCount = questions.filter((q) => {
+    if (q.type === 'multi_choice' || q.type === 'fill_blank' || q.type === 'short_answer') {
+      return false;
+    }
+    return selectedAnswers[q.id] === q.correctIndex;
+  }).length;
 
   return (
     <div className="p-6">
@@ -96,8 +154,13 @@ export default function QuizCard({ content }: QuizCardProps) {
       {/* Progress dots */}
       <div className="flex items-center gap-1.5 mb-6">
         {questions.map((q, i) => {
-          const qAnswer = selectedAnswers[q.id];
-          const qAnswered = qAnswer !== undefined && qAnswer !== null;
+          const qSingleAnswer = selectedAnswers[q.id];
+          const qMultiAnswered = multiSelectAnswers[q.id]?.length > 0;
+          const qFillAnswered = (fillAnswers[q.id] || '').trim() !== '';
+          const qAnswered = qSingleAnswer !== undefined && qSingleAnswer !== null
+            || qMultiAnswered
+            || qFillAnswered;
+          const qAnswer = qSingleAnswer ?? (qMultiAnswered ? -1 : undefined);
           return (
             <button
               key={q.id}
@@ -129,17 +192,59 @@ export default function QuizCard({ content }: QuizCardProps) {
             {question.question}
           </h4>
 
+          {/* Difficulty badge */}
+          {question.difficulty && (
+            <span className={`text-xs px-2 py-0.5 rounded-full mb-4 inline-block ${
+              question.difficulty === 'easy' ? 'bg-success/10 text-success' :
+              question.difficulty === 'medium' ? 'bg-accent/10 text-accent' :
+              'bg-error/10 text-error'
+            }`}>
+              {question.difficulty === 'easy' ? '基础' : question.difficulty === 'medium' ? '中等' : '挑战'}
+            </span>
+          )}
+
           <div className="space-y-2.5">
-            {question.options.map((option, i) => {
-              const isSelected = selectedAnswer === i;
+            {/* 填空题 / 简答题 */}
+            {(isFillBlank || isShortAnswer) && (
+              <div className="space-y-3">
+                {isFillBlank ? (
+                  <input
+                    type="text"
+                    value={fillValue}
+                    onChange={(e) => setFillAnswers(prev => ({ ...prev, [question.id]: e.target.value }))}
+                    placeholder="请输入答案..."
+                    disabled={isFillAnswered}
+                    className="w-full p-3.5 rounded-xl border border-border-light bg-bg-tertiary text-text-primary text-sm focus:outline-none focus:border-accent"
+                  />
+                ) : (
+                  <textarea
+                    value={fillValue}
+                    onChange={(e) => setFillAnswers(prev => ({ ...prev, [question.id]: e.target.value }))}
+                    placeholder="请输入你的答案..."
+                    disabled={isFillAnswered}
+                    rows={3}
+                    className="w-full p-3.5 rounded-xl border border-border-light bg-bg-tertiary text-text-primary text-sm focus:outline-none focus:border-accent resize-none"
+                  />
+                )}
+                {!isFillAnswered && (
+                  <Button variant="primary" size="sm" onClick={() => setShowExplanation(prev => ({ ...prev, [question.id]: true }))}>
+                    提交答案
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* 选择题（单选/判断/多选） */}
+            {!isFillBlank && !isShortAnswer && question.options.map((option, i) => {
+              const isSelected = isMultiChoice ? multiSelected.includes(i) : selectedAnswer === i;
               const isCorrectOption = i === question.correctIndex;
               const showResult = isAnswered;
 
               return (
                 <motion.button
                   key={i}
-                  whileHover={!isAnswered ? { scale: 1.01 } : undefined}
-                  whileTap={!isAnswered ? { scale: 0.99 } : undefined}
+                  whileHover={!isAnswered && !isMultiChoice ? { scale: 1.01 } : undefined}
+                  whileTap={!isAnswered && !isMultiChoice ? { scale: 0.99 } : undefined}
                   onClick={() => handleSelect(i)}
                   disabled={isAnswered}
                   className={`w-full flex items-center gap-3 p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
@@ -155,7 +260,7 @@ export default function QuizCard({ content }: QuizCardProps) {
                   }`}
                 >
                   <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold ${
+                    className={`w-6 h-6 ${isMultiChoice ? 'rounded-md' : 'rounded-full'} flex items-center justify-center flex-shrink-0 text-xs font-bold ${
                       showResult
                         ? isCorrectOption
                           ? 'bg-success text-white'
@@ -176,6 +281,15 @@ export default function QuizCard({ content }: QuizCardProps) {
                     )}
                   </div>
                   <span className="text-sm">{option}</span>
+                  {isMultiChoice && (
+                    <div className="ml-auto">
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
+                        isSelected ? 'border-accent bg-accent' : 'border-border-light'
+                      }`}>
+                        {isSelected && <Check size={12} className="text-white" />}
+                      </div>
+                    </div>
+                  )}
                 </motion.button>
               );
             })}
