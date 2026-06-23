@@ -15,7 +15,7 @@ type einoGenerationModel struct {
 
 const (
 	defaultGenerationMaxTokens = 8192
-	pptContentEnrichMaxTokens  = 16384
+	pptContentEnrichMaxTokens  = defaultGenerationMaxTokens
 	defaultGenerationTopP      = 0.9
 	defaultGenerationTemp      = 0.7
 )

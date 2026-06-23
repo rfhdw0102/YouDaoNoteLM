@@ -95,6 +95,8 @@ type pptStyleTheme struct {
 	LayoutHints string // free-form layout guidance for the LLM
 }
 
+const pptContentEnrichBatchSize = 4
+
 type mindmapPlan struct {
 	Title    string
 	Branches []mindmapBranchPlan
@@ -2234,32 +2236,66 @@ func expandPPTContent(plan pptOutlinePlan, analysis learningContentAnalysis) ppt
 }
 
 // enrichPPTContent calls the LLM to expand short bullet points into full
-// paragraphs suitable for presentation slides. The call is wrapped with
-// robust JSON extraction (so prose / code fences around the JSON object
-// no longer kill the result), one stricter-prompt retry on failure, and
-// warning logs at every drop point so we can tell from production logs
-// whether HTML generation is actually receiving enriched paragraphs or
-// silently falling back to the raw outline bullets.
+// paragraphs suitable for presentation slides. It batches the slide plan so
+// each model call returns a small JSON object instead of one oversized deck.
 func (a *pptGenerationAgent) enrichPPTContent(ctx context.Context, state pptChainState) (pptChainState, error) {
 	if a.model == nil {
 		return state, nil
 	}
 
 	strategy := pptContentEnrichPromptStrategy()
-
-	// Build context with outline and source material
-	contextValue := state.input.Context
-	contextValue += "\n\nPPT_OUTLINE_FOR_ENRICHMENT\n"
-	contextValue += renderPPTPlanForPrompt(state.expanded)
-
-	rich, ok := a.tryEnrichPPTContent(ctx, strategy, state, contextValue, false)
-	if !ok {
-		rich, ok = a.tryEnrichPPTContent(ctx, strategy, state, contextValue, true)
+	batches := batchPPTOutlinePlan(state.expanded, pptContentEnrichBatchSize)
+	if len(batches) == 0 {
+		return state, nil
 	}
-	if ok {
-		state.richContent = rich
+
+	merged := pptRichContent{}
+	for batchIndex, batch := range batches {
+		batchState := state
+		batchState.expanded = batch
+		contextValue := state.input.Context
+		contextValue += "\n\nPPT_OUTLINE_FOR_ENRICHMENT\n"
+		contextValue += renderPPTPlanForPrompt(batch)
+
+		rich, ok := a.tryEnrichPPTContent(ctx, strategy, batchState, contextValue, false)
+		if !ok {
+			rich, ok = a.tryEnrichPPTContent(ctx, strategy, batchState, contextValue, true)
+		}
+		if !ok {
+			logger.Warn("enrich ppt content: batch skipped",
+				append(pptEnrichLogFields(batchState, true),
+					zap.Int("batch_index", batchIndex),
+					zap.Int("batch_count", len(batches)),
+				)...)
+			continue
+		}
+		merged.Slides = append(merged.Slides, rich.Slides...)
+	}
+	if pptRichContentHasUsableSlides(merged) {
+		state.richContent = merged
 	}
 	return state, nil
+}
+
+func batchPPTOutlinePlan(plan pptOutlinePlan, batchSize int) []pptOutlinePlan {
+	if batchSize <= 0 {
+		batchSize = pptContentEnrichBatchSize
+	}
+	if len(plan.Slides) == 0 {
+		return nil
+	}
+	batches := make([]pptOutlinePlan, 0, (len(plan.Slides)+batchSize-1)/batchSize)
+	for start := 0; start < len(plan.Slides); start += batchSize {
+		end := start + batchSize
+		if end > len(plan.Slides) {
+			end = len(plan.Slides)
+		}
+		batches = append(batches, pptOutlinePlan{
+			Title:  plan.Title,
+			Slides: append([]pptSlidePlan(nil), plan.Slides[start:end]...),
+		})
+	}
+	return batches
 }
 
 // tryEnrichPPTContent issues one enrichment call and returns the parsed
