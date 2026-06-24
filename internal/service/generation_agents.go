@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"YoudaoNoteLm/pkg/logger"
 
 	"github.com/cloudwego/eino/compose"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type baseGenerationAgent struct {
@@ -2410,6 +2412,8 @@ func expandPPTContent(plan pptOutlinePlan, analysis learningContentAnalysis) ppt
 // enrichPPTContent calls the LLM to expand short bullet points into full
 // paragraphs suitable for presentation slides. It batches the slide plan so
 // each model call returns a small JSON object instead of one oversized deck.
+// Batches are processed concurrently via a fixed-size worker pool to reduce
+// wall-clock time while keeping the per-call retry logic intact.
 func (a *pptGenerationAgent) enrichPPTContent(ctx context.Context, state pptChainState) (pptChainState, error) {
 	if a.model == nil {
 		return state, nil
@@ -2427,34 +2431,138 @@ func (a *pptGenerationAgent) enrichPPTContent(ctx context.Context, state pptChai
 		zap.Int("batch_size", pptContentEnrichBatchSize),
 	)
 
-	merged := pptRichContent{}
-	for batchIndex, batch := range batches {
-		batchStart := time.Now()
-		batchState := state
-		batchState.expanded = batch
-		contextValue := state.input.Context
-		contextValue += "\n\nPPT_OUTLINE_FOR_ENRICHMENT\n"
-		contextValue += renderPPTPlanForPrompt(batch)
+	// Job and result types for the concurrent worker pool.
+	type enrichJob struct {
+		index int
+		batch pptOutlinePlan
+	}
+	type enrichResult struct {
+		index int
+		rich  pptRichContent
+		ok    bool
+	}
 
-		rich, ok := a.tryEnrichPPTContent(ctx, strategy, batchState, contextValue, false)
-		if !ok {
-			rich, ok = a.tryEnrichPPTContent(ctx, strategy, batchState, contextValue, true)
+	// Determine worker count: cap at the effective batch count.
+	workerCount := len(batches)
+	if workerCount > pptContentEnrichBatchSize {
+		workerCount = pptContentEnrichBatchSize
+	}
+
+	jobChan := make(chan enrichJob, len(batches))
+	resultChan := make(chan enrichResult, len(batches))
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	// Producer: send all batches into jobChan.
+	g.Go(func() error {
+		defer close(jobChan)
+		for i, batch := range batches {
+			select {
+			case jobChan <- enrichJob{index: i, batch: batch}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
-		if !ok {
-			logger.Warn("enrich ppt content: batch skipped",
-				append(pptEnrichLogFields(batchState, true),
-					zap.Int("batch_index", batchIndex),
+		return nil
+	})
+
+	// Fixed-size worker pool. Each worker picks up jobs, runs the enrichment
+	// (with retry), and sends the result to resultChan.
+	var mu sync.Mutex
+	workerID := 0
+	for range workerCount {
+		g.Go(func() error {
+			mu.Lock()
+			wid := workerID
+			workerID++
+			mu.Unlock()
+
+			for job := range jobChan {
+				batchStart := time.Now()
+				batchState := state
+				batchState.expanded = job.batch
+
+				contextValue := state.input.Context
+				contextValue += "\n\nPPT_OUTLINE_FOR_ENRICHMENT\n"
+				contextValue += renderPPTPlanForPrompt(job.batch)
+
+				rich, ok := a.tryEnrichPPTContent(ctx, strategy, batchState, contextValue, false)
+				if !ok {
+					rich, ok = a.tryEnrichPPTContent(ctx, strategy, batchState, contextValue, true)
+				}
+
+				// Build common log fields
+				logFields := []zap.Field{
+					zap.Int("worker_id", wid),
+					zap.Int("batch_index", job.index),
 					zap.Int("batch_count", len(batches)),
-				)...)
-			continue
+					zap.Duration("elapsed", time.Since(batchStart)),
+				}
+
+				if !ok {
+					logger.Warn("[PPT] enrichPPTContent: batch skipped",
+						append(logFields,
+							zap.Int("slides_in_batch", len(job.batch.Slides)),
+						)...)
+					select {
+					case resultChan <- enrichResult{index: job.index, ok: false}:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+					continue
+				}
+
+				logger.Info("[PPT] enrichPPTContent: batch done",
+					append(logFields,
+						zap.Int("slides_in_batch", len(job.batch.Slides)),
+						zap.Int("rich_slides", len(rich.Slides)),
+					)...)
+				select {
+				case resultChan <- enrichResult{index: job.index, rich: rich, ok: true}:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			logger.Debug("[PPT] enrichPPTContent: worker finished",
+				zap.Int("worker_id", wid),
+			)
+			return nil
+		})
+	}
+
+	// Producer and workers are all part of the errgroup; wait for them to finish,
+	// then close resultChan. This is done in a separate goroutine (NOT inside the
+	// errgroup) to avoid the deadlock of calling g.Wait() from within g.Go().
+	done := make(chan struct{})
+	var gErr error
+	go func() {
+		gErr = g.Wait()
+		close(resultChan)
+		close(done)
+	}()
+
+	// Collect all results and merge by original index order.
+	results := make([]enrichResult, len(batches))
+	for res := range resultChan {
+		results[res.index] = res
+	}
+
+	// Wait for the errgroup to complete.
+	<-done
+	if gErr != nil {
+		if ctx.Err() != nil {
+			return state, gErr
 		}
-		logger.Info("[PPT] enrichPPTContent: batch done",
-			zap.Int("batch_index", batchIndex),
-			zap.Int("slides_in_batch", len(batch.Slides)),
-			zap.Int("rich_slides", len(rich.Slides)),
-			zap.Duration("elapsed", time.Since(batchStart)),
+		logger.Warn("[PPT] enrichPPTContent: non-fatal worker error",
+			zap.Error(gErr),
 		)
-		merged.Slides = append(merged.Slides, rich.Slides...)
+	}
+
+	merged := pptRichContent{}
+	for _, res := range results {
+		if res.ok {
+			merged.Slides = append(merged.Slides, res.rich.Slides...)
+		}
 	}
 	if pptRichContentHasUsableSlides(merged) {
 		state.richContent = merged
