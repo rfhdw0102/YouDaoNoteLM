@@ -8,30 +8,29 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// ChildChunk 子块分割（内部使用）
-type ChildChunk struct {
+// childChunk 子块分割（内部使用）
+type childChunk struct {
 	ParentBlockIndex int
 	Content          string
 	ChunkType        string // paragraph/code/table/image/mermaid/quote
 	ChapterPath      string
 }
 
-// ChildTransformer 将 ParentBlock 文档分割为 ChildChunk 文档
-// 实现 eino document.Transformer 接口
-type ChildTransformer struct {
+// childTransformer 将 ParentBlock 文档分割为 ChildChunk 文档
+type childTransformer struct {
 	maxTokens int // 默认 400
 }
 
-// NewChildTransformer 创建 ChildChunk 分割器
-func NewChildTransformer(maxTokens int) *ChildTransformer {
+// newChildTransformer 创建 ChildChunk 分割器
+func newChildTransformer(maxTokens int) *childTransformer {
 	if maxTokens <= 0 {
 		maxTokens = 400
 	}
-	return &ChildTransformer{maxTokens: maxTokens}
+	return &childTransformer{maxTokens: maxTokens}
 }
 
 // Transform 实现 eino document.Transformer 接口
-func (t *ChildTransformer) Transform(ctx context.Context, src []*schema.Document, opts ...document.TransformerOption) ([]*schema.Document, error) {
+func (t *childTransformer) Transform(ctx context.Context, src []*schema.Document, opts ...document.TransformerOption) ([]*schema.Document, error) {
 	var result []*schema.Document
 
 	for _, parentDoc := range src {
@@ -59,15 +58,15 @@ func (t *ChildTransformer) Transform(ctx context.Context, src []*schema.Document
 }
 
 // splitContent 分割内容，保持代码块等特殊块的完整性
-func (t *ChildTransformer) splitContent(content string) []ChildChunk {
+func (t *childTransformer) splitContent(content string) []childChunk {
 	// 先识别并提取特殊块（代码块、表格、mermaid）
 	specialBlocks, remainingContent := extractSpecialBlocks(content)
 
-	var chunks []ChildChunk
+	var chunks []childChunk
 
 	// 特殊块作为独立 chunk
 	for _, block := range specialBlocks {
-		chunks = append(chunks, ChildChunk{
+		chunks = append(chunks, childChunk{
 			Content:   block.Content,
 			ChunkType: block.BlockType,
 		})
@@ -78,7 +77,7 @@ func (t *ChildTransformer) splitContent(content string) []ChildChunk {
 		paragraphs := splitIntoParagraphs(remainingContent)
 		textChunks := t.mergeParagraphs(paragraphs, t.maxTokens)
 		for _, tc := range textChunks {
-			chunks = append(chunks, ChildChunk{
+			chunks = append(chunks, childChunk{
 				Content:   tc,
 				ChunkType: "paragraph",
 			})
@@ -191,7 +190,7 @@ func splitIntoParagraphs(content string) []string {
 }
 
 // mergeParagraphs 将段落合并为不超过 maxTokens 的 chunk
-func (t *ChildTransformer) mergeParagraphs(paragraphs []string, maxTokens int) []string {
+func (t *childTransformer) mergeParagraphs(paragraphs []string, maxTokens int) []string {
 	if len(paragraphs) == 0 {
 		return nil
 	}

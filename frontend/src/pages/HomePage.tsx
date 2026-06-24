@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useNotebookStore } from '../stores/useNotebookStore';
 import { formatDate } from '../utils/format';
+import { getErrorMessage } from '../utils/error';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Input from '../components/ui/Input';
@@ -53,7 +54,7 @@ export default function HomePage() {
         navigate(`/notebook/${currentNotebookId}`);
       }
     } catch (err: any) {
-      setError(err.message || '创建失败');
+      setError(getErrorMessage(err, '创建失败'));
     }
   };
 
@@ -75,7 +76,7 @@ export default function HomePage() {
       await renameNotebook(renamingId, renameValue.trim());
       setRenamingId(null);
     } catch (err: any) {
-      setError(err.message || '重命名失败');
+      setError(getErrorMessage(err, '重命名失败'));
     }
   };
 

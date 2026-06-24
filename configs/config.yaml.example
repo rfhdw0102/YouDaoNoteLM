@@ -4,6 +4,10 @@ app:
   mode: "debug"  # debug, release, test
   port: 8080
 
+# 安全配置
+security:
+  encryption_key: "your-32-byte-encryption-key-here!"  # API Key 加密密钥，必须是32字节
+
 # 数据库配置
 database:
   mysql:

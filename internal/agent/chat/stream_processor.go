@@ -1,7 +1,8 @@
-package service
+package chat
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"github.com/cloudwego/eino/adk"
@@ -12,8 +13,16 @@ import (
 	"go.uber.org/zap"
 )
 
-// forwardAgentEvents 转发 Agent 事件，返回最终内容
-func (s *chatAgentService) forwardAgentEvents(ctx context.Context, eventCh chan<- AgentStreamEvent, iter *adk.AsyncIterator[*adk.AgentEvent]) string {
+// StreamProcessor 流式事件处理器
+type StreamProcessor struct{}
+
+// NewStreamProcessor 创建流式事件处理器
+func NewStreamProcessor() *StreamProcessor {
+	return &StreamProcessor{}
+}
+
+// ProcessEvents 处理 Agent 事件，返回最终内容
+func (p *StreamProcessor) ProcessEvents(ctx context.Context, eventCh chan<- StreamEvent, iter *adk.AsyncIterator[*adk.AgentEvent]) string {
 	var fullContent string
 
 	for {
@@ -25,19 +34,14 @@ func (s *chatAgentService) forwardAgentEvents(ctx context.Context, eventCh chan<
 		// 处理错误事件
 		if event.Err != nil {
 			// 检查是否是主动取消
-			if ctx.Err() == context.Canceled {
-				logger.Info("[Agent] 用户主动取消，保留已生成内容", zap.Int("contentLen", len(fullContent)))
-				// 如果有已生成内容，发送 token 事件让前端保留
-				if len(fullContent) > 0 {
-					eventCh <- AgentStreamEvent{
-						Type:    AgentEventToken,
-						Content: "", // 空内容表示流结束
-					}
-				}
+			if errors.Is(ctx.Err(), context.Canceled) {
+				logger.Info("[StreamProcessor] 用户主动取消，保留已生成内容",
+					zap.Int("contentLen", len(fullContent)),
+				)
 				return fullContent
 			}
-			logger.Error("[Agent] Agent 错误", zap.Error(event.Err))
-			s.sendAgentError(eventCh, "Agent 执行失败: "+event.Err.Error())
+			logger.Error("[StreamProcessor] Agent 错误", zap.Error(event.Err))
+			p.sendError(eventCh, "Agent 执行失败: "+event.Err.Error())
 			return fullContent
 		}
 
@@ -49,24 +53,24 @@ func (s *chatAgentService) forwardAgentEvents(ctx context.Context, eventCh chan<
 
 		// 流式模式：逐 chunk 读取，实时推送 token
 		if output.IsStreaming {
-			s.handleStreamingOutput(output, eventCh, &fullContent)
+			p.handleStreamingOutput(output, eventCh, &fullContent)
 			continue
 		}
 
 		// 非流式兜底：一次性读取完整消息
 		msg, msgErr := output.GetMessage()
 		if msgErr != nil {
-			logger.Error("[Agent] 获取消息失败", zap.Error(msgErr))
+			logger.Error("[StreamProcessor] 获取消息失败", zap.Error(msgErr))
 			continue
 		}
-		s.handleCompleteMessage(msg, output, eventCh, &fullContent)
+		p.handleCompleteMessage(msg, output, eventCh, &fullContent)
 	}
 
 	return fullContent
 }
 
 // handleStreamingOutput 处理流式输出，逐 token 推送给前端
-func (s *chatAgentService) handleStreamingOutput(output *adk.MessageVariant, eventCh chan<- AgentStreamEvent, fullContent *string) {
+func (p *StreamProcessor) handleStreamingOutput(output *adk.MessageVariant, eventCh chan<- StreamEvent, fullContent *string) {
 	stream := output.MessageStream
 	if stream == nil {
 		return
@@ -83,15 +87,15 @@ func (s *chatAgentService) handleStreamingOutput(output *adk.MessageVariant, eve
 				break
 			}
 			if err != nil {
-				logger.Error("[Agent] 流式读取失败", zap.Error(err))
+				logger.Error("[StreamProcessor] 流式读取失败", zap.Error(err))
 				return
 			}
 
 			// 文本内容：逐 token 推送前端（但暂不累积到 fullContent）
 			if chunk.Content != "" {
 				streamedContent += chunk.Content
-				eventCh <- AgentStreamEvent{
-					Type:    AgentEventToken,
+				eventCh <- StreamEvent{
+					Type:    EventToken,
 					Content: chunk.Content,
 				}
 			}
@@ -109,8 +113,8 @@ func (s *chatAgentService) handleStreamingOutput(output *adk.MessageVariant, eve
 
 		// 发送工具调用事件
 		for _, tc := range toolCalls {
-			eventCh <- AgentStreamEvent{
-				Type:    AgentEventToolCall,
+			eventCh <- StreamEvent{
+				Type:    EventToolCall,
 				Content: tc.Function.Name,
 				Data:    tc.Function.Arguments,
 			}
@@ -119,11 +123,11 @@ func (s *chatAgentService) handleStreamingOutput(output *adk.MessageVariant, eve
 		// tool 结果消息：一次性读取
 		msg, err := output.GetMessage()
 		if err != nil {
-			logger.Error("[Agent] 获取工具结果失败", zap.Error(err))
+			logger.Error("[StreamProcessor] 获取工具结果失败", zap.Error(err))
 			return
 		}
-		eventCh <- AgentStreamEvent{
-			Type:    AgentEventToolResult,
+		eventCh <- StreamEvent{
+			Type:    EventToolResult,
 			Content: msg.Content,
 			Data:    output.ToolName,
 		}
@@ -131,39 +135,39 @@ func (s *chatAgentService) handleStreamingOutput(output *adk.MessageVariant, eve
 }
 
 // handleCompleteMessage 处理非流式的完整消息（兜底）
-func (s *chatAgentService) handleCompleteMessage(msg *schema.Message, output *adk.MessageVariant, eventCh chan<- AgentStreamEvent, fullContent *string) {
+func (p *StreamProcessor) handleCompleteMessage(msg *schema.Message, output *adk.MessageVariant, eventCh chan<- StreamEvent, fullContent *string) {
 	if output.Role == schema.Assistant {
 		// 文本内容和工具调用独立处理
 		if msg.Content != "" {
 			*fullContent += msg.Content
-			eventCh <- AgentStreamEvent{
-				Type:    AgentEventToken,
+			eventCh <- StreamEvent{
+				Type:    EventToken,
 				Content: msg.Content,
 			}
 		}
 
 		if len(msg.ToolCalls) > 0 {
 			for _, tc := range msg.ToolCalls {
-				eventCh <- AgentStreamEvent{
-					Type:    AgentEventToolCall,
+				eventCh <- StreamEvent{
+					Type:    EventToolCall,
 					Content: tc.Function.Name,
 					Data:    tc.Function.Arguments,
 				}
 			}
 		}
 	} else if output.Role == schema.Tool {
-		eventCh <- AgentStreamEvent{
-			Type:    AgentEventToolResult,
+		eventCh <- StreamEvent{
+			Type:    EventToolResult,
 			Content: msg.Content,
 			Data:    output.ToolName,
 		}
 	}
 }
 
-// sendAgentError 发送错误事件
-func (s *chatAgentService) sendAgentError(eventCh chan<- AgentStreamEvent, msg string) {
-	eventCh <- AgentStreamEvent{
-		Type:    AgentEventError,
+// sendError 发送错误事件
+func (p *StreamProcessor) sendError(eventCh chan<- StreamEvent, msg string) {
+	eventCh <- StreamEvent{
+		Type:    EventError,
 		Content: msg,
 	}
 }

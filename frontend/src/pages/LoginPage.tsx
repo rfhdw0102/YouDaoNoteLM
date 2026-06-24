@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { useAuthStore } from '../stores/useAuthStore';
+import { getErrorMessage } from '../utils/error';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import SliderCaptcha from '../components/ui/SliderCaptcha';
@@ -35,7 +36,7 @@ export default function LoginPage() {
       await login(email, password, captchaId, captchaX);
       navigate('/');
     } catch (err: any) {
-      setError(err.message || '登录失败，请检查邮箱和密码');
+      setError(getErrorMessage(err, '登录失败，请检查邮箱和密码'));
     } finally {
       setLoading(false);
     }

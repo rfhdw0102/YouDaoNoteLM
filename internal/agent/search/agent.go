@@ -1,4 +1,3 @@
-// internal/agent/search/agent.go
 package search
 
 import (

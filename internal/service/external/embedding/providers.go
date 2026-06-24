@@ -41,8 +41,8 @@ func arkEmbeddingFactory(cfg *external.ServiceConfig) (interface{}, error) {
 func init() {
 	r := external.GetGlobalRegistry()
 
-	// 火山引擎（豆包）Embedding — 基于 Eino ark 组件，支持文本和多模态
-	r.Register(ServiceType, "volcengine", "火山引擎（豆包）Embedding",
+	// 火山引擎 Ark Embedding — 基于 Eino ark 组件，支持文本和多模态
+	r.Register(ServiceType, "volcengine", "火山引擎 Ark Embedding",
 		[]string{"api_key", "model", "dimensions", "api_url"}, []string{},
 		external.FactoryFunc(arkEmbeddingFactory), map[string]string{
 			"api_key":    "API Key",
@@ -85,8 +85,4 @@ func openaiEmbeddingFactory(cfg *external.ServiceConfig) (interface{}, error) {
 	}
 
 	return NewOpenAIEmbeddingService(cfg.APIKey, model, apiURL, dimensions)
-}
-
-func init() {
-	external.GetGlobalRegistry().RegisterAlias(ServiceType, "doubao", "volcengine")
 }

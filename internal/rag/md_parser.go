@@ -13,21 +13,21 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-// ASTDocument 解析后的文档结构
-type ASTDocument struct {
-	Sections []*Section
+// astDocument 解析后的文档结构
+type astDocument struct {
+	Sections []*section
 }
 
-// Section 文档章节
-type Section struct {
+// section 文档章节
+type section struct {
 	Heading     string
 	Level       int    // 1=H1, 2=H2, ...
 	ChapterPath string // 完整路径，如 "第一章 > 1.1 背景"
-	Content     []ContentBlock
+	Content     []contentBlock
 }
 
-// ContentBlock 内容块
-type ContentBlock struct {
+// contentBlock 内容块
+type contentBlock struct {
 	Type     string // paragraph/code/table/image/mermaid/quote
 	Content  string
 	Language string // 代码块语言
@@ -42,17 +42,12 @@ type MarkdownParser struct {
 func NewMarkdownParser() *MarkdownParser {
 	md := goldmark.New(
 		goldmark.WithExtensions(
-			extension.Table, // 启用表格扩展
+			extension.Table,
 		),
 	)
-	return &MarkdownParser{
-		md: md,
-	}
+	return &MarkdownParser{md: md}
 }
 
-// Parse 实现 eino parser.Parser 接口。
-// 将 Markdown io.Reader 解析为 []*schema.Document。
-// 每个章节生成一个包含结构信息的文档。
 func (p *MarkdownParser) Parse(ctx context.Context, reader io.Reader, opts ...parser.Option) ([]*schema.Document, error) {
 	content, err := io.ReadAll(reader)
 	if err != nil {
@@ -63,14 +58,14 @@ func (p *MarkdownParser) Parse(ctx context.Context, reader io.Reader, opts ...pa
 	astDoc := p.buildASTDocument(doc, content)
 
 	var docs []*schema.Document
-	for i, section := range astDoc.Sections {
+	for i, sec := range astDoc.Sections {
 		d := &schema.Document{
 			ID:      "",
-			Content: section.buildContent(),
+			Content: sec.buildContent(),
 			MetaData: map[string]any{
-				"heading":      section.Heading,
-				"level":        section.Level,
-				"chapter_path": section.ChapterPath,
+				"heading":      sec.Heading,
+				"level":        sec.Level,
+				"chapter_path": sec.ChapterPath,
 				"section_idx":  i,
 			},
 		}
@@ -79,45 +74,40 @@ func (p *MarkdownParser) Parse(ctx context.Context, reader io.Reader, opts ...pa
 	return docs, nil
 }
 
-// 解析 markdown 语法树 doc，生成自定义的 ASTDocument 结构
-func (p *MarkdownParser) buildASTDocument(doc ast.Node, source []byte) *ASTDocument {
-	result := &ASTDocument{}    // 结果容器
-	var currentSection *Section // 当前正在处理的章节
-	var headingStack []string   // 记录标题层级路径
+func (p *MarkdownParser) buildASTDocument(doc ast.Node, source []byte) *astDocument {
+	result := &astDocument{}
+	var currentSection *section
+	var headingStack []string
 
-	// 遍历 doc 的所有子节点，广度优先
 	for n := doc.FirstChild(); n != nil; n = n.NextSibling() {
 		switch n.Kind() {
-		case ast.KindHeading: // 标题节点
-			heading := n.(*ast.Heading)           // 类型断言为具体 Heading 结构
-			headingText := string(n.Text(source)) // 提取标题文本
-			level := heading.Level                // 标题等级（1-6）
+		case ast.KindHeading:
+			heading := n.(*ast.Heading)
+			headingText := string(n.Text(source))
+			level := heading.Level
 
-			// 若新标题等级 ≤ 当前栈长度，弹出栈顶元素直到长度匹配
 			if level <= len(headingStack) {
 				headingStack = headingStack[:level-1]
 			}
-			// 将当前标题文本加入路径栈
 			headingStack = append(headingStack, headingText)
 
-			// 创建新章节
-			currentSection = &Section{
+			currentSection = &section{
 				Heading:     headingText,
 				Level:       level,
-				ChapterPath: joinPath(headingStack), // 用 "." 拼接路径栈
+				ChapterPath: joinPath(headingStack),
 			}
 			result.Sections = append(result.Sections, currentSection)
 
-		default: // 非标题节点（段落、列表等）
-			if currentSection == nil { // 如果没有标题开头的章节
-				currentSection = &Section{ // 创建一个无标题章节
+		default:
+			if currentSection == nil {
+				currentSection = &section{
 					Heading:     "",
 					Level:       0,
 					ChapterPath: "",
 				}
 				result.Sections = append(result.Sections, currentSection)
 			}
-			block := p.extractContentBlock(n, source) // 提取内容块
+			block := p.extractContentBlock(n, source)
 			if block != nil {
 				currentSection.Content = append(currentSection.Content, *block)
 			}
@@ -126,53 +116,50 @@ func (p *MarkdownParser) buildASTDocument(doc ast.Node, source []byte) *ASTDocum
 	return result
 }
 
-// 将 Markdown AST 节点转换为自定义的 ContentBlock
-func (p *MarkdownParser) extractContentBlock(n ast.Node, source []byte) *ContentBlock {
+func (p *MarkdownParser) extractContentBlock(n ast.Node, source []byte) *contentBlock {
 	switch n.Kind() {
-	case ast.KindParagraph: // 段落
-		return &ContentBlock{Type: "paragraph", Content: string(n.Text(source))}
+	case ast.KindParagraph:
+		return &contentBlock{Type: "paragraph", Content: string(n.Text(source))}
 
-	case ast.KindFencedCodeBlock: // 代码块
+	case ast.KindFencedCodeBlock:
 		lang := ""
-		codeBlock := n.(*ast.FencedCodeBlock) // 类型断言
-		if codeBlock.Info != nil {            // 代码块头部的语言标识
+		codeBlock := n.(*ast.FencedCodeBlock)
+		if codeBlock.Info != nil {
 			lang = string(codeBlock.Info.Text(source))
 		}
 		var code []byte
-		lines := codeBlock.Lines()         // 获取代码行集合
-		for i := 0; i < lines.Len(); i++ { // 遍历所有行
-			seg := lines.At(i) // 每行的文本片段
+		lines := codeBlock.Lines()
+		for i := 0; i < lines.Len(); i++ {
+			seg := lines.At(i)
 			code = append(code, seg.Value(source)...)
-			code = append(code, '\n') // 补回换行符
+			code = append(code, '\n')
 		}
-		if lang == "mermaid" { // 特殊处理 mermaid 图表
-			return &ContentBlock{Type: "mermaid", Content: string(code)}
+		if lang == "mermaid" {
+			return &contentBlock{Type: "mermaid", Content: string(code)}
 		}
-		return &ContentBlock{Type: "code", Content: string(code), Language: lang}
+		return &contentBlock{Type: "code", Content: string(code), Language: lang}
 
-	case ast.KindBlockquote: // 引用块
-		return &ContentBlock{Type: "quote", Content: string(n.Text(source))}
+	case ast.KindBlockquote:
+		return &contentBlock{Type: "quote", Content: string(n.Text(source))}
 
-	case ast.KindList: // 列表
-		return &ContentBlock{Type: "paragraph", Content: string(n.Text(source))}
+	case ast.KindList:
+		return &contentBlock{Type: "paragraph", Content: string(n.Text(source))}
 
-	default: // 其他类型（如图片、表格等）
-		tableContent := p.extractTable(n, source) // 尝试解析表格
+	default:
+		tableContent := p.extractTable(n, source)
 		if tableContent != "" {
-			return &ContentBlock{Type: "table", Content: tableContent}
+			return &contentBlock{Type: "table", Content: tableContent}
 		}
 
 		nodeText := string(n.Text(source))
-		if strings.TrimSpace(nodeText) == "" { // 忽略空节点
+		if strings.TrimSpace(nodeText) == "" {
 			return nil
 		}
-		return &ContentBlock{Type: "paragraph", Content: nodeText}
+		return &contentBlock{Type: "paragraph", Content: nodeText}
 	}
 }
 
-// extractTable 提取表格内容为 Markdown 格式
 func (p *MarkdownParser) extractTable(n ast.Node, source []byte) string {
-	// 检查是否是表格节点
 	if n.Kind().String() != "Table" {
 		return ""
 	}
@@ -181,11 +168,8 @@ func (p *MarkdownParser) extractTable(n ast.Node, source []byte) string {
 	var headerRow string
 	isHeader := true
 
-	// 遍历表格的子节点（TableHeader 和 TableRow）
 	for row := n.FirstChild(); row != nil; row = row.NextSibling() {
 		var cells []string
-
-		// 遍历行的子节点（TableCell）
 		for cell := row.FirstChild(); cell != nil; cell = cell.NextSibling() {
 			cellText := strings.TrimSpace(string(cell.Text(source)))
 			cells = append(cells, cellText)
@@ -195,7 +179,6 @@ func (p *MarkdownParser) extractTable(n ast.Node, source []byte) string {
 			rowStr := "| " + strings.Join(cells, " | ") + " |"
 			if isHeader {
 				headerRow = rowStr
-				// 首行作为表头，其后添加分隔行如 | --- | --- |
 				separator := "| " + strings.Repeat("--- | ", len(cells))
 				rows = append(rows, headerRow)
 				rows = append(rows, separator)
@@ -212,21 +195,15 @@ func (p *MarkdownParser) extractTable(n ast.Node, source []byte) string {
 	return ""
 }
 
-// buildContent 将章节的 ContentBlock 列表合并为纯文本
-// 代码块和 mermaid 会重新添加 ``` 标记，保持类型信息
-// 表格保持 Markdown 格式
-func (s *Section) buildContent() string {
+func (s *section) buildContent() string {
 	var parts []string
 	for _, block := range s.Content {
 		switch block.Type {
 		case "code":
-			// 重新添加代码块标记
 			parts = append(parts, "```"+block.Language+"\n"+block.Content+"```")
 		case "mermaid":
-			// 重新添加 mermaid 标记
 			parts = append(parts, "```mermaid\n"+block.Content+"```")
 		case "table":
-			// 表格已经是 Markdown 格式，直接保留
 			parts = append(parts, block.Content)
 		default:
 			parts = append(parts, block.Content)
@@ -235,7 +212,6 @@ func (s *Section) buildContent() string {
 	return strings.Join(parts, "\n\n")
 }
 
-// joinPath 将标题栈连接为章节路径
 func joinPath(stack []string) string {
 	return strings.Join(stack, " > ")
 }
