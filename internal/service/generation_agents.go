@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"YoudaoNoteLm/pkg/logger"
 
@@ -269,27 +270,174 @@ type pptGenerationAgent struct {
 }
 
 func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgentInput) (generationAgentOutput, error) {
-	chain := compose.NewChain[generationAgentInput, generationAgentOutput]().
-		AppendLambda(compose.InvokableLambda(a.analyzePPTContent)).
-		AppendLambda(compose.InvokableLambda(a.planPPTChainOutline)).
-		AppendLambda(compose.InvokableLambda(a.reviewPPTOutline)).
-		AppendLambda(compose.InvokableLambda(a.expandPPTChainContent)).
-		AppendLambda(compose.InvokableLambda(a.enrichPPTContent)).
-		AppendLambda(compose.InvokableLambda(a.designPPTStyle)).
-		AppendLambda(compose.InvokableLambda(a.generatePPTCSS)).
-		AppendLambda(compose.InvokableLambda(a.generatePPTHTML)).
-		AppendLambda(compose.InvokableLambda(a.structureCheck)).
-		AppendLambda(compose.InvokableLambda(a.polishPPTHTML)).
-		AppendLambda(compose.InvokableLambda(a.repairPPTStructure)).
-		AppendLambda(compose.InvokableLambda(a.factEnhance)).
-		AppendLambda(compose.InvokableLambda(a.formatValidate)).
-		AppendLambda(compose.InvokableLambda(a.finalize))
+	overallStart := time.Now()
+	logger.Info("[PPT] generation started",
+		zap.Int("prompt_len", len(input.Request.Prompt)),
+		zap.Int("context_len", len(input.Context)),
+	)
 
-	runner, err := chain.Compile(ctx)
+	var state pptChainState
+	var err error
+	var stepStart time.Time
+
+	// Step 1: analyzePPTContent
+	stepStart = time.Now()
+	state, err = a.analyzePPTContent(ctx, input)
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	return runner.Invoke(ctx, input)
+	logger.Info("[PPT] step 1/14: analyzePPTContent done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("sections", len(state.analysis.Sections)),
+	)
+
+	// Step 2: planPPTChainOutline
+	stepStart = time.Now()
+	state, err = a.planPPTChainOutline(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 2/14: planPPTChainOutline done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("slides", len(state.outlinePlan.Slides)),
+	)
+
+	// Step 3: reviewPPTOutline
+	stepStart = time.Now()
+	state, err = a.reviewPPTOutline(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 3/14: reviewPPTOutline done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("slides_after_review", len(state.outlinePlan.Slides)),
+	)
+
+	// Step 4: expandPPTChainContent
+	stepStart = time.Now()
+	state, err = a.expandPPTChainContent(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 4/14: expandPPTChainContent done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
+	// Step 5: enrichPPTContent
+	stepStart = time.Now()
+	state, err = a.enrichPPTContent(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 5/14: enrichPPTContent done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("rich_slides", len(state.richContent.Slides)),
+	)
+
+	// Step 6: designPPTStyle
+	stepStart = time.Now()
+	state, err = a.designPPTStyle(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 6/14: designPPTStyle done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.String("theme", state.styleTheme.Name),
+	)
+
+	// Step 7: generatePPTCSS
+	stepStart = time.Now()
+	state, err = a.generatePPTCSS(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 7/14: generatePPTCSS done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("css_len", len(state.cssBlock)),
+	)
+
+	// Step 8: generatePPTHTML
+	stepStart = time.Now()
+	draft, err := a.generatePPTHTML(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 8/14: generatePPTHTML done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("html_len", len(draft.content)),
+		zap.Bool("fallback_used", draft.fallbackUsed),
+	)
+
+	// Step 9: structureCheck
+	stepStart = time.Now()
+	draft, err = a.structureCheck(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 9/14: structureCheck done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
+	// Step 10: polishPPTHTML
+	stepStart = time.Now()
+	draft, err = a.polishPPTHTML(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 10/14: polishPPTHTML done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("html_len_after", len(draft.content)),
+	)
+
+	// Step 11: repairPPTStructure
+	stepStart = time.Now()
+	draft, err = a.repairPPTStructure(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 11/14: repairPPTStructure done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Bool("fallback_used", draft.fallbackUsed),
+	)
+
+	// Step 12: factEnhance
+	stepStart = time.Now()
+	draft, err = a.factEnhance(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 12/14: factEnhance done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
+	// Step 13: formatValidate
+	stepStart = time.Now()
+	draft, err = a.formatValidate(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 13/14: formatValidate done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Bool("format_valid", draft.formatValid),
+	)
+
+	// Step 14: finalize
+	stepStart = time.Now()
+	output, err := a.finalize(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 14/14: finalize done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("final_len", len(output.Content)),
+	)
+
+	logger.Info("[PPT] generation completed",
+		zap.Duration("total_elapsed", time.Since(overallStart)),
+		zap.Bool("fallback_used", output.FallbackUsed),
+	)
+
+	return output, nil
 }
 
 type mindmapGenerationAgent struct {
@@ -391,6 +539,7 @@ func (a *pptGenerationAgent) reviewPPTOutline(ctx context.Context, state pptChai
 	if a.model == nil {
 		return state, nil
 	}
+	llmStart := time.Now()
 	strategy := pptOutlineReviewPromptStrategy()
 	reviewed, err := a.model.Generate(ctx, GenerationPrompt{
 		AgentName:    a.name + "_outline_review",
@@ -399,6 +548,11 @@ func (a *pptGenerationAgent) reviewPPTOutline(ctx context.Context, state pptChai
 		Context:      appendPPTOutlineToContext(state.input.Context, state.outline),
 		OutputFormat: strategy.OutputFormat,
 	})
+	logger.Info("[PPT] LLM call: reviewPPTOutline done",
+		zap.Duration("llm_elapsed", time.Since(llmStart)),
+		zap.Int("reviewed_len", len(reviewed)),
+		zap.Error(err),
+	)
 	if err != nil || strings.TrimSpace(reviewed) == "" {
 		return state, nil
 	}
@@ -429,6 +583,7 @@ func (a *pptGenerationAgent) generatePPTCSS(ctx context.Context, state pptChainS
 		state.cssBlock = fallbackPPTCSS(state.styleTheme)
 		return state, nil
 	}
+	llmStart := time.Now()
 	strategy := pptCSSPromptStrategy()
 	generated, err := a.model.Generate(ctx, GenerationPrompt{
 		AgentName:    a.name + "_css",
@@ -437,6 +592,11 @@ func (a *pptGenerationAgent) generatePPTCSS(ctx context.Context, state pptChainS
 		Context:      appendPPTStyleToContext(appendPPTPlansToContext(state.input.Context, state.outline, state.expanded), state.styleTheme),
 		OutputFormat: strategy.OutputFormat,
 	})
+	logger.Info("[PPT] LLM call: generatePPTCSS done",
+		zap.Duration("llm_elapsed", time.Since(llmStart)),
+		zap.Int("css_len", len(generated)),
+		zap.Error(err),
+	)
 	if err != nil || strings.TrimSpace(generated) == "" {
 		state.cssBlock = fallbackPPTCSS(state.styleTheme)
 		return state, nil
@@ -456,6 +616,7 @@ func (a *pptGenerationAgent) generatePPTHTML(ctx context.Context, state pptChain
 	content := ""
 	fallbackUsed := false
 	if a.model != nil {
+		llmStart := time.Now()
 		strategy := promptStrategyFor(GenerationTypePPT)
 		// Build context with enriched content if available
 		contextValue := appendPPTCSSToContext(appendPPTStyleToContext(appendPPTPlansToContext(state.input.Context, state.outline, state.expanded), state.styleTheme), state.cssBlock)
@@ -469,6 +630,11 @@ func (a *pptGenerationAgent) generatePPTHTML(ctx context.Context, state pptChain
 			Context:      contextValue,
 			OutputFormat: strategy.OutputFormat,
 		})
+		logger.Info("[PPT] LLM call: generatePPTHTML done",
+			zap.Duration("llm_elapsed", time.Since(llmStart)),
+			zap.Int("html_len", len(generated)),
+			zap.Error(err),
+		)
 		if err != nil {
 			return generationDraft{}, err
 		}
@@ -671,6 +837,7 @@ func (a *pptGenerationAgent) generateOutline(ctx context.Context, input generati
 	if a.model == nil {
 		return fallbackPPTOutline(input), nil
 	}
+	llmStart := time.Now()
 	strategy := pptOutlinePromptStrategy()
 	outline, err := a.model.Generate(ctx, GenerationPrompt{
 		AgentName:    "ppt_outline",
@@ -679,6 +846,11 @@ func (a *pptGenerationAgent) generateOutline(ctx context.Context, input generati
 		Context:      input.Context,
 		OutputFormat: strategy.OutputFormat,
 	})
+	logger.Info("[PPT] LLM call: generateOutline done",
+		zap.Duration("llm_elapsed", time.Since(llmStart)),
+		zap.Int("outline_len", len(outline)),
+		zap.Error(err),
+	)
 	if err != nil {
 		return "", err
 	}
@@ -2249,8 +2421,15 @@ func (a *pptGenerationAgent) enrichPPTContent(ctx context.Context, state pptChai
 		return state, nil
 	}
 
+	logger.Info("[PPT] enrichPPTContent: starting batch enrichment",
+		zap.Int("total_slides", len(state.expanded.Slides)),
+		zap.Int("batch_count", len(batches)),
+		zap.Int("batch_size", pptContentEnrichBatchSize),
+	)
+
 	merged := pptRichContent{}
 	for batchIndex, batch := range batches {
+		batchStart := time.Now()
 		batchState := state
 		batchState.expanded = batch
 		contextValue := state.input.Context
@@ -2269,6 +2448,12 @@ func (a *pptGenerationAgent) enrichPPTContent(ctx context.Context, state pptChai
 				)...)
 			continue
 		}
+		logger.Info("[PPT] enrichPPTContent: batch done",
+			zap.Int("batch_index", batchIndex),
+			zap.Int("slides_in_batch", len(batch.Slides)),
+			zap.Int("rich_slides", len(rich.Slides)),
+			zap.Duration("elapsed", time.Since(batchStart)),
+		)
 		merged.Slides = append(merged.Slides, rich.Slides...)
 	}
 	if pptRichContentHasUsableSlides(merged) {
@@ -2307,6 +2492,7 @@ func (a *pptGenerationAgent) tryEnrichPPTContent(ctx context.Context, strategy g
 	if retry {
 		outputFormat += "\n\n严格要求：上一次输出无法被解析为 JSON。本次回复必须只包含一个 JSON 对象，第一个字符必须是 '{'，最后一个字符必须是 '}'。不要输出 ```、不要任何解释、不要前后空行说明。"
 	}
+	llmStart := time.Now()
 	generated, err := a.model.Generate(ctx, GenerationPrompt{
 		AgentName:    a.name + "_content_enrich",
 		System:       strategy.System,
@@ -2315,6 +2501,12 @@ func (a *pptGenerationAgent) tryEnrichPPTContent(ctx context.Context, strategy g
 		OutputFormat: outputFormat,
 		MaxTokens:    pptContentEnrichMaxTokens,
 	})
+	logger.Info("[PPT] LLM call: tryEnrichPPTContent done",
+		zap.Duration("llm_elapsed", time.Since(llmStart)),
+		zap.Int("generated_len", len(generated)),
+		zap.Bool("retry", retry),
+		zap.Error(err),
+	)
 	logFields := pptEnrichLogFields(state, retry)
 	if err != nil {
 		logger.Warn("enrich ppt content: model generate failed",

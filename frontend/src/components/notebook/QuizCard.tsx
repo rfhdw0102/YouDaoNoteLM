@@ -80,28 +80,38 @@ export default function QuizCard({ content }: QuizCardProps) {
   const isTrueFalse = question?.type === 'true_false';
 
   const multiSelected = multiSelectAnswers[question?.id || ''] || [];
-  const isMultiAnswered = isMultiChoice && multiSelected.length > 0;
+  const multiSubmitted = !!(showExplanation[question?.id || '']);
 
   const fillValue = fillAnswers[question?.id || ''] || '';
-  const isFillAnswered = (isFillBlank || isShortAnswer) && fillValue.trim() !== '';
+  const fillSubmitted = !!(showExplanation[question?.id || '']);
 
   if (!question) return null;
 
   const selectedAnswer = selectedAnswers[question.id];
-  const isAnswered = isMultiChoice ? isMultiAnswered : (isFillBlank || isShortAnswer) ? isFillAnswered : selectedAnswer !== undefined && selectedAnswer !== null;
+  const isAnswered = isMultiChoice ? multiSubmitted : (isFillBlank || isShortAnswer) ? fillSubmitted : selectedAnswer !== undefined && selectedAnswer !== null;
   const isCorrect = question.type === 'multi_choice' || question.type === 'fill_blank' || question.type === 'short_answer'
     ? false
     : selectedAnswer === question.correctIndex;
 
+  const handleMultiChoiceToggle = (optionIndex: number) => {
+    if (multiSubmitted) return;
+    setMultiSelectAnswers((prev) => {
+      const current = prev[question.id] || [];
+      if (current.includes(optionIndex)) {
+        return { ...prev, [question.id]: current.filter(x => x !== optionIndex) };
+      }
+      return { ...prev, [question.id]: [...current, optionIndex] };
+    });
+  };
+
+  const handleMultiChoiceSubmit = () => {
+    if (multiSelected.length === 0) return;
+    setShowExplanation((prev) => ({ ...prev, [question.id]: true }));
+  };
+
   const handleSelect = (optionIndex: number) => {
     if (isMultiChoice) {
-      setMultiSelectAnswers((prev) => {
-        const current = prev[question.id] || [];
-        if (current.includes(optionIndex)) {
-          return { ...prev, [question.id]: current.filter(x => x !== optionIndex) };
-        }
-        return { ...prev, [question.id]: [...current, optionIndex] };
-      });
+      handleMultiChoiceToggle(optionIndex);
       return;
     }
     if (isAnswered) return;
@@ -213,7 +223,7 @@ export default function QuizCard({ content }: QuizCardProps) {
                     value={fillValue}
                     onChange={(e) => setFillAnswers(prev => ({ ...prev, [question.id]: e.target.value }))}
                     placeholder="请输入答案..."
-                    disabled={isFillAnswered}
+                    disabled={fillSubmitted}
                     className="w-full p-3.5 rounded-xl border border-border-light bg-bg-tertiary text-text-primary text-sm focus:outline-none focus:border-accent"
                   />
                 ) : (
@@ -221,13 +231,18 @@ export default function QuizCard({ content }: QuizCardProps) {
                     value={fillValue}
                     onChange={(e) => setFillAnswers(prev => ({ ...prev, [question.id]: e.target.value }))}
                     placeholder="请输入你的答案..."
-                    disabled={isFillAnswered}
+                    disabled={fillSubmitted}
                     rows={3}
                     className="w-full p-3.5 rounded-xl border border-border-light bg-bg-tertiary text-text-primary text-sm focus:outline-none focus:border-accent resize-none"
                   />
                 )}
-                {!isFillAnswered && (
-                  <Button variant="primary" size="sm" onClick={() => setShowExplanation(prev => ({ ...prev, [question.id]: true }))}>
+                {!fillSubmitted && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => setShowExplanation(prev => ({ ...prev, [question.id]: true }))}
+                    disabled={fillValue.trim() === ''}
+                  >
                     提交答案
                   </Button>
                 )}
@@ -238,15 +253,15 @@ export default function QuizCard({ content }: QuizCardProps) {
             {!isFillBlank && !isShortAnswer && question.options.map((option, i) => {
               const isSelected = isMultiChoice ? multiSelected.includes(i) : selectedAnswer === i;
               const isCorrectOption = i === question.correctIndex;
-              const showResult = isAnswered;
+              const showResult = isMultiChoice ? multiSubmitted : isAnswered;
 
               return (
                 <motion.button
                   key={i}
-                  whileHover={!isAnswered && !isMultiChoice ? { scale: 1.01 } : undefined}
-                  whileTap={!isAnswered && !isMultiChoice ? { scale: 0.99 } : undefined}
+                  whileHover={!multiSubmitted && !isAnswered ? { scale: 1.01 } : undefined}
+                  whileTap={!multiSubmitted && !isAnswered ? { scale: 0.99 } : undefined}
                   onClick={() => handleSelect(i)}
-                  disabled={isAnswered}
+                  disabled={isMultiChoice ? multiSubmitted : isAnswered}
                   className={`w-full flex items-center gap-3 p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
                     showResult
                       ? isCorrectOption
@@ -293,6 +308,19 @@ export default function QuizCard({ content }: QuizCardProps) {
                 </motion.button>
               );
             })}
+
+            {/* 多选题提交按钮 */}
+            {isMultiChoice && !multiSubmitted && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleMultiChoiceSubmit}
+                disabled={multiSelected.length === 0}
+                className="mt-2"
+              >
+                提交答案 ({multiSelected.length} 项已选)
+              </Button>
+            )}
           </div>
 
           {/* Explanation */}

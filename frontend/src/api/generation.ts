@@ -1,4 +1,4 @@
-import client from './client';
+import client, { doRefreshToken } from './client';
 
 export type GenerationType = 'note' | 'mindmap' | 'quiz' | 'ppt';
 export type GenerationExportType = GenerationType;
@@ -57,7 +57,7 @@ export async function generateFromMarkdown(req: GenerationRequest): Promise<Gene
   const res = await client.post<{ code: number; data: GenerationResponse; message?: string }>(
     '/generations',
     req,
-    { timeout: 300000 }
+    { timeout: 900000 }
   );
   if (res.data.code !== 0) {
     throw new Error(res.data.message || '生成失败');
@@ -83,16 +83,87 @@ function parseAttachmentFilename(disposition?: string): string | null {
   return plainMatch?.[1]?.trim() || null;
 }
 
+async function readBusinessErrorFromBlob(blob: Blob): Promise<string> {
+  if (!String(blob.type || '').includes('application/json')) return '';
+
+  try {
+    const body = JSON.parse(await blob.text()) as { code?: number; message?: string; error?: string };
+    if (typeof body.code === 'number' && body.code !== 0) {
+      return body.message || body.error || `导出失败: ${body.code}`;
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+function getHeaderValue(headers: unknown, key: string): string | undefined {
+  if (!headers || typeof headers !== 'object') return undefined;
+  const value = (headers as Record<string, unknown>)[key];
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.find((item): item is string => typeof item === 'string');
+  return value != null ? String(value) : undefined;
+}
+
 export async function exportGenerationFile(req: GenerationExportRequest): Promise<GenerationExportFile> {
   const res = await client.post<Blob>('/generations/export', req, {
     responseType: 'blob',
     timeout: 180000,
   });
 
+  // Check if the blob contains a token error (axios interceptor can't detect this for blob responses)
+  const tokenError = await checkTokenError(res.data);
+  if (tokenError) {
+    if (tokenError.code === 1006) {
+      // Try to refresh token and retry
+      const newToken = await doRefreshToken();
+      if (newToken) {
+        const retryRes = await client.post<Blob>('/generations/export', req, {
+          responseType: 'blob',
+          timeout: 180000,
+        });
+        const retryBusinessError = await readBusinessErrorFromBlob(retryRes.data);
+        if (retryBusinessError) {
+          throw new Error(retryBusinessError);
+        }
+        return processExportResponse(retryRes, req);
+      }
+    }
+    throw new Error(tokenError.message);
+  }
+
+  const businessError = await readBusinessErrorFromBlob(res.data);
+  if (businessError) {
+    throw new Error(businessError);
+  }
+
+  return processExportResponse(res, req);
+}
+
+async function checkTokenError(blob: Blob): Promise<{ code: number; message: string } | null> {
+  if (!String(blob.type || '').includes('application/json')) return null;
+
+  try {
+    const body = JSON.parse(await blob.text()) as { code?: number; message?: string };
+    if (body.code === 1005 || body.code === 1006) {
+      return { code: body.code, message: body.message || 'token 已过期' };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function processExportResponse(
+  res: { data: Blob; headers?: unknown },
+  req: GenerationExportRequest
+): GenerationExportFile {
   return {
     blob: res.data,
-    filename: parseAttachmentFilename(res.headers['content-disposition']) || `${req.title || 'generation-export'}.pptx`,
-    contentType: res.headers['content-type'] || 'application/octet-stream',
+    filename:
+      parseAttachmentFilename(getHeaderValue(res.headers, 'content-disposition')) ||
+      `${req.title || 'generation-export'}.pptx`,
+    contentType: getHeaderValue(res.headers, 'content-type') || 'application/octet-stream',
   };
 }
 
@@ -101,6 +172,11 @@ export function downloadBlob(blob: Blob, filename: string) {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  // 延迟撤销，确保浏览器有时间启动下载
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 100);
 }
