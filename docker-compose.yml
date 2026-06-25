@@ -6,7 +6,7 @@ services:
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
-      - ./configs/config.yaml:/app/configs/config.yaml:ro
+      - ./configs/docker_config.yaml:/app/configs/config.yaml:ro
       - ./configs/youdao_cookies.json:/app/configs/youdao_cookies.json:ro
       - app-logs:/app/logs
     env_file:
@@ -77,6 +77,9 @@ services:
   minio:
     image: minio/minio:latest
     container_name: youdaonotelm-minio
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}

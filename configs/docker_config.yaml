@@ -1,0 +1,99 @@
+# YouDaoNoteLM Docker 配置文件
+
+# 服务器配置
+app:
+  name: "youdao-api"
+  version: "1.0.0"
+  mode: "debug"
+  port: 8081
+
+# 数据库配置
+database:
+  mysql:
+    host: "mysql"
+    port: 3306
+    username: "root"
+    password: "20041211wzwaicjW."
+    database: "youdao"
+    max_idle_conns: 10
+    max_open_conns: 100
+  redis:
+    host: "redis"
+    port: 6379
+    password: "redis123"
+    db: 15
+    pool_size: 10
+
+# JWT 配置
+jwt:
+  secret: "YouDaoNoteBookLM-API-Web-wangzhiwei-zhaojingchao-renfuhang"
+  access_token_exp: "15m"
+  refresh_token_exp: "24h"
+  issuer: "youdaonotelm"
+
+# 日志配置
+log:
+  level: "debug"
+  filename: "logs/app.log"
+  max_size: 100
+  max_backups: 3
+  max_age: 28
+  compress: true
+
+# 邮箱配置
+email:
+  host: "smtp.qq.com"
+  port: 587
+  username: "2129905621@qq.com"
+  password: "koptculidhqpdcjb"
+  from: "2129905621@qq.com"
+
+# Milvus 向量数据库配置
+milvus:
+  host: "milvus"
+  port: 19530
+
+# 外部服务配置
+external:
+  markitdown:
+    url: "http://markitdown:8085"
+  minio:
+    endpoint: "minio:9000"
+    access_key: "minioadmin"
+    secret_key: "minio123"
+    bucket: "youdaonotelm"
+  bocha:
+    base_url: "https://api.bochaai.com"
+    endpoint: "/v1/web-search"
+    api_key: ""
+    timeout_seconds: 15
+    default_count: 5
+    summary: true
+    cache_ttl_seconds: 300
+    max_count: 10
+  youdao:
+    cli_path: "youdaonote"
+    converter_script_path: "/app/scripts/youdao/convert_to_markdown.py"
+    cookies_path: ""
+
+# CORS 配置
+cors:
+  enabled: true
+  allow_origins:
+    - "*"
+  allow_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "PATCH"
+    - "DELETE"
+    - "OPTIONS"
+  allow_headers:
+    - "Authorization"
+    - "Content-Type"
+    - "Origin"
+    - "Accept"
+  expose_headers:
+    - "Content-Length"
+  allow_credentials: true
+  max_age: 86400
