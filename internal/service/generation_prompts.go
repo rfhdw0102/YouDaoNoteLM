@@ -279,7 +279,7 @@ func pptOutlinePromptStrategy() generationPromptStrategy {
 // pptCSSPromptStrategy returns the prompt strategy for the CSS-only LLM call.
 func pptCSSPromptStrategy() generationPromptStrategy {
 	return generationPromptStrategy{
-		System:       "你是 PPT 视觉设计专家，只负责生成 <style> 块，不负责生成 HTML 结构。读取上下文中的 PPT_STYLE_THEME，使用其中的 CSS 变量作为设计基础。你的任务是设计一套完整、现代、美观的 CSS，覆盖封面页、目录页、内容页（至少 3 种不同布局）、结束页的样式。设计要点：使用 :root 定义 CSS 自定义属性统一管理颜色；每页画布固定 1920x1080px；使用适合 PPT 的大字号（h1: 76-96px, h2: 48-64px, 正文: 30-38px）；使用渐变、阴影、圆角等现代视觉元素；为不同布局准备不同的 CSS 类名。",
+		System:       "你是 PPT 视觉设计专家，只负责生成 <style> 块，不负责生成 HTML 结构。读取上下文中的 PPT_STYLE_THEME，使用其中的 CSS 变量作为设计基础。如果用户在消息中指定了风格偏好（如颜色、氛围、风格类型），必须在设计中体现这些偏好，同时保持与 PPT_STYLE_THEME 基础变量的协调。你的任务是设计一套完整、现代、美观的 CSS，覆盖封面页、目录页、内容页（至少 3 种不同布局）、结束页的样式。设计要点：使用 :root 定义 CSS 自定义属性统一管理颜色；每页画布固定 1920x1080px；使用适合 PPT 的大字号（h1: 76-96px, h2: 48-64px, 正文: 30-38px）；使用渐变、阴影、圆角等现代视觉元素；为不同布局准备不同的 CSS 类名。",
 		OutputFormat: "仅返回一个 <style>...</style> 块，不要返回任何 HTML section 或其他内容。必须包含：1) :root 中的 CSS 变量定义；2) .ppt-slide 基础类（width:1920px; height:1080px; overflow:hidden; position:relative; box-sizing:border-box）；3) 封面页样式 .ppt-cover；4) 目录页样式 .ppt-agenda / .dir-list / .dir-item；5) 至少 3 种内容页布局样式（如 .content-grid / .main-points / .insight-panel, .card-grid / .content-card, .full-width-list, .comparison-layout, .quote-block）；6) 结束页样式 .summary-layout / .summary-card；7) 进度条样式 .slide-progress；8) data-ppt-slide 属性选择器样式。不要包含 html/body 外层标签。",
 	}
 }

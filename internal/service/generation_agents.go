@@ -572,7 +572,7 @@ func (a *pptGenerationAgent) expandPPTChainContent(ctx context.Context, state pp
 }
 
 func (a *pptGenerationAgent) designPPTStyle(ctx context.Context, state pptChainState) (pptChainState, error) {
-	state.styleTheme = designPPTStyleTheme(state.analysis, state.expanded)
+	state.styleTheme = designPPTStyleTheme(state.analysis, state.expanded, state.input.Request.Prompt)
 	return state, nil
 }
 
@@ -682,23 +682,60 @@ func (a *pptGenerationAgent) repairPPTStructure(ctx context.Context, draft gener
 	if pptCanPatchCanvas(draft.content) {
 		draft.content = patchPPTCanvasHTML(draft.content)
 	}
-	if pptNeedsStructureRepair(draft.content) ||
-		pptContainsInternalPromptLeak(draft.content) ||
-		pptContainsVisiblePlaceholderText(draft.content) ||
-		pptContainsUnrelatedBoilerplate(draft.content, draft.input) ||
-		pptContainsRepetitiveText(draft.content) ||
-		pptContainsExcessivePromptWords(draft.content) ||
-		pptHasSparseSlides(draft.content) ||
-		pptHasDuplicatedSlideTitles(draft.content) ||
-		pptHasMismatchedCardContent(draft.content) ||
-		pptNeedsHTMLQualityRepair(draft.content) ||
-		pptNeedsPlanCoverageRepair(draft.content, draft.pptRepairPlan) {
+
+	// 逐个检查触发条件，记录具体是哪个条件触发了 fallback
+	var repairReasons []string
+	if pptNeedsStructureRepair(draft.content) {
+		repairReasons = append(repairReasons, "structure_repair")
+	}
+	if pptContainsInternalPromptLeak(draft.content) {
+		repairReasons = append(repairReasons, "internal_prompt_leak")
+	}
+	if pptContainsVisiblePlaceholderText(draft.content) {
+		repairReasons = append(repairReasons, "visible_placeholder_text")
+	}
+	if pptContainsUnrelatedBoilerplate(draft.content, draft.input) {
+		repairReasons = append(repairReasons, "unrelated_boilerplate")
+	}
+	if pptContainsRepetitiveText(draft.content) {
+		repairReasons = append(repairReasons, "repetitive_text")
+	}
+	if pptContainsExcessivePromptWords(draft.content) {
+		repairReasons = append(repairReasons, "excessive_prompt_words")
+	}
+	if pptHasSparseSlides(draft.content) {
+		repairReasons = append(repairReasons, "sparse_slides")
+	}
+	if pptHasDuplicatedSlideTitles(draft.content) {
+		repairReasons = append(repairReasons, "duplicated_slide_titles")
+	}
+	if pptHasMismatchedCardContent(draft.content) {
+		repairReasons = append(repairReasons, "mismatched_card_content")
+	}
+	if pptNeedsHTMLQualityRepair(draft.content) {
+		repairReasons = append(repairReasons, "html_quality_repair")
+	}
+	if pptNeedsPlanCoverageRepair(draft.content, draft.pptRepairPlan) {
+		repairReasons = append(repairReasons, "plan_coverage_repair")
+	}
+
+	if len(repairReasons) > 0 {
+		logger.Warn("[PPT] repairPPTStructure triggered, replacing LLM output with fallback",
+			zap.Strings("reasons", repairReasons),
+			zap.Int("content_len_before", len(draft.content)),
+		)
 		if draft.pptRepairPlan != nil {
 			draft.content = renderStyledPPTSlides(*draft.pptRepairPlan)
 		} else {
 			draft.content = a.fallback(draft.input)
 		}
 		draft.fallbackUsed = true
+		logger.Warn("[PPT] repairPPTStructure fallback applied",
+			zap.Int("content_len_after", len(draft.content)),
+			zap.Bool("used_renderStyledPPTSlides", draft.pptRepairPlan != nil),
+		)
+	} else {
+		logger.Info("[PPT] repairPPTStructure skipped, LLM output kept")
 	}
 	return draft, nil
 }
@@ -2894,7 +2931,7 @@ func renderPPTSlides(plan pptOutlinePlan) string {
 // designPPTStyleTheme selects a coherent visual theme based on content analysis.
 // It picks from a palette of professional themes and adapts the accent colors
 // to the topic, giving the LLM concrete CSS variables to use.
-func designPPTStyleTheme(analysis learningContentAnalysis, plan pptOutlinePlan) pptStyleTheme {
+func designPPTStyleTheme(analysis learningContentAnalysis, plan pptOutlinePlan, userPrompt string) pptStyleTheme {
 	themes := []pptStyleTheme{
 		{
 			Name: "简约商务", Primary: "#0f766e", Secondary: "#c2410c",
@@ -2933,19 +2970,47 @@ func designPPTStyleTheme(analysis learningContentAnalysis, plan pptOutlinePlan) 
 				"Use large quote blocks, timeline layouts, and photo-placeholder cards.",
 		},
 	}
-	topic := strings.ToLower(analysis.Topic)
-	themeIdx := 0
+
+	// 1. 优先解析用户提示词中的风格关键词
+	userStyleHint := ""
+	themeIdx := -1
+	promptLower := strings.ToLower(userPrompt)
 	switch {
-	case containsAnyFold(topic, "代码", "编程", "算法", "系统", "架构", "数据", "code", "programming", "algorithm", "system", "architecture", "data"):
+	case containsAnyFold(promptLower, "深色", "dark", "科技", "tech", "极客", "geek"):
 		themeIdx = 2
-	case containsAnyFold(topic, "论文", "研究", "理论", "学术", "paper", "research", "theory", "academic"):
+		userStyleHint = "用户要求深色/科技风格"
+	case containsAnyFold(promptLower, "商务", "business", "简约", "minimal", "专业", "professional"):
+		themeIdx = 0
+		userStyleHint = "用户要求商务/简约风格"
+	case containsAnyFold(promptLower, "学术", "academic", "论文", "paper", "研究", "research"):
 		themeIdx = 1
-	case containsAnyFold(topic, "故事", "案例", "历史", "叙事", "story", "case", "history", "narrative"):
+		userStyleHint = "用户要求学术风格"
+	case containsAnyFold(promptLower, "暖色", "warm", "叙事", "narrative", "故事", "story"):
 		themeIdx = 3
+		userStyleHint = "用户要求暖色/叙事风格"
 	}
+
+	// 2. 如果用户没有指定风格，根据内容主题自动选择
+	if themeIdx < 0 {
+		topic := strings.ToLower(analysis.Topic)
+		themeIdx = 0
+		switch {
+		case containsAnyFold(topic, "代码", "编程", "算法", "系统", "架构", "数据", "code", "programming", "algorithm", "system", "architecture", "data"):
+			themeIdx = 2
+		case containsAnyFold(topic, "论文", "研究", "理论", "学术", "paper", "research", "theory", "academic"):
+			themeIdx = 1
+		case containsAnyFold(topic, "故事", "案例", "历史", "叙事", "story", "case", "history", "narrative"):
+			themeIdx = 3
+		}
+	}
+
 	theme := themes[themeIdx%len(themes)]
 	if len(plan.Slides) > 10 {
 		theme.LayoutHints += " With many slides, keep each slide focused on one key idea."
+	}
+	// 把用户的风格偏好附加到 LayoutHints，让 CSS 生成 LLM 能看到
+	if userStyleHint != "" {
+		theme.LayoutHints = userStyleHint + ". " + theme.LayoutHints
 	}
 	return theme
 }
