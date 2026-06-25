@@ -8,6 +8,7 @@ type SourceRepository interface {
 	Create(source *entity.Source) error
 	Update(source *entity.Source) error
 	UpdateContent(id uint, markdown string, status string) error
+	UpdateSummary(id uint, summary string) error
 	Delete(id uint) error
 	BatchDelete(ids []uint) error
 	DeleteByNotebookID(notebookID uint) error
@@ -19,4 +20,6 @@ type SourceRepository interface {
 	ResetVectorizedByUserID(userID uint) error
 	// FindUnvectorizedByUserID 获取用户所有未向量化的资料
 	FindUnvectorizedByUserID(userID uint) ([]*entity.Source, error)
+	// FindSummaryByID 获取资料摘要
+	FindSummaryByID(id uint) (string, error)
 }

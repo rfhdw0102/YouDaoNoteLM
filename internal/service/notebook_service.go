@@ -24,6 +24,7 @@ type notebookService struct {
 	messageRepo      repository.MessageRepository
 	ingestionSvc     rag.IngestionService
 	chatCache        *cache.ChatCache
+	summaryCache     *cache.SourceSummaryCache
 }
 
 // NewNotebookService 创建笔记本服务
@@ -34,6 +35,7 @@ func NewNotebookService(
 	messageRepo repository.MessageRepository,
 	ingestionSvc rag.IngestionService,
 	chatCache *cache.ChatCache,
+	summaryCache *cache.SourceSummaryCache,
 ) NotebookService {
 	return &notebookService{
 		notebookRepo:     notebookRepo,
@@ -42,6 +44,7 @@ func NewNotebookService(
 		messageRepo:      messageRepo,
 		ingestionSvc:     ingestionSvc,
 		chatCache:        chatCache,
+		summaryCache:     summaryCache,
 	}
 }
 
@@ -140,6 +143,11 @@ func (s *notebookService) Delete(userID, notebookID uint) error {
 		s.cleanupNotebookConversations(ctx, notebookID)
 	}
 
+	// 清理该笔记本下所有 source 的摘要缓存
+	if s.summaryCache != nil {
+		s.cleanupNotebookSourceSummaries(ctx, userID, notebookID)
+	}
+
 	// 软删除该笔记本下所有 source（软删除不触发 CASCADE）
 	if err := s.sourceRepo.DeleteByNotebookID(notebookID); err != nil {
 		logger.Error("删除笔记本关联的 source 失败",
@@ -210,6 +218,43 @@ func (s *notebookService) cleanupNotebookConversations(ctx context.Context, note
 		logger.Error("删除笔记本关联的会话失败",
 			zap.Uint("notebook_id", notebookID),
 			zap.Error(err),
+		)
+	}
+}
+
+// cleanupNotebookSourceSummaries 清理笔记本下所有 source 的摘要缓存
+func (s *notebookService) cleanupNotebookSourceSummaries(ctx context.Context, userID, notebookID uint) {
+	// 查询该笔记本下所有 source
+	sources, _, err := s.sourceRepo.ListByNotebook(userID, notebookID, "", 0, 10000)
+	if err != nil {
+		logger.Error("查询笔记本关联的 source 失败（用于清理摘要缓存）",
+			zap.Uint("notebook_id", notebookID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	if len(sources) == 0 {
+		return
+	}
+
+	// 收集所有 sourceID
+	sourceIDs := make([]uint, len(sources))
+	for i, source := range sources {
+		sourceIDs[i] = source.ID
+	}
+
+	// 批量删除摘要缓存
+	if err := s.summaryCache.BatchDelete(ctx, sourceIDs); err != nil {
+		logger.Warn("批量删除摘要缓存失败",
+			zap.Uint("notebook_id", notebookID),
+			zap.Int("count", len(sourceIDs)),
+			zap.Error(err),
+		)
+	} else {
+		logger.Info("已清理笔记本关联的摘要缓存",
+			zap.Uint("notebook_id", notebookID),
+			zap.Int("count", len(sourceIDs)),
 		)
 	}
 }
