@@ -33,6 +33,8 @@ type chatAgentService struct {
 	conversationRepo repository.ConversationRepository
 	messageRepo      repository.MessageRepository
 	cache            *cache.ChatCache
+	sourceRepo       repository.SourceRepository
+	summaryCache     *cache.SourceSummaryCache
 	cancelFuncs      sync.Map
 	encryptionKey    []byte
 }
@@ -44,6 +46,8 @@ func NewChatAgentService(
 	conversationRepo repository.ConversationRepository,
 	messageRepo repository.MessageRepository,
 	chatCache *cache.ChatCache,
+	sourceRepo repository.SourceRepository,
+	summaryCache *cache.SourceSummaryCache,
 	encryptionKey string,
 ) ChatAgentService {
 	return &chatAgentService{
@@ -52,6 +56,8 @@ func NewChatAgentService(
 		conversationRepo: conversationRepo,
 		messageRepo:      messageRepo,
 		cache:            chatCache,
+		sourceRepo:       sourceRepo,
+		summaryCache:     summaryCache,
 		encryptionKey:    []byte(encryptionKey),
 	}
 }
@@ -218,6 +224,9 @@ func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entit
 		return nil, fmt.Errorf("创建 AI 模型失败: %w", err)
 	}
 
+	// 获取资料名称映射
+	sourceNames := s.getSourceNames(sourceIDs)
+
 	logger.Debug("[Agent] AI 模型创建成功，开始创建 ChatAgent")
 	agent, err := chat.NewChatAgent(
 		ctx,
@@ -226,8 +235,11 @@ func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entit
 		s.messageRepo,
 		s.cache,
 		s.retriever,
+		s.sourceRepo,
+		s.summaryCache,
 		userID,
 		sourceIDs,
+		sourceNames,
 	)
 	if err != nil {
 		logger.Error("[Agent] 创建 ChatAgent 失败", zap.Error(err))
@@ -236,6 +248,18 @@ func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entit
 
 	logger.Info("[Agent] ChatAgent 创建成功")
 	return agent, nil
+}
+
+// getSourceNames 获取资料 ID 到名称的映射
+func (s *chatAgentService) getSourceNames(sourceIDs []uint) map[uint]string {
+	names := make(map[uint]string, len(sourceIDs))
+	for _, id := range sourceIDs {
+		source, err := s.sourceRepo.FindByID(id)
+		if err == nil && source != nil {
+			names[id] = source.Name
+		}
+	}
+	return names
 }
 
 // processAndForward 调用 Process 并转发事件，返回完整内容

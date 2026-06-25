@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
@@ -51,7 +52,7 @@ type ChatAgent struct {
 }
 
 // NewChatAgent 创建 Agent 实例
-// 内部自动构建工具集，外部只需传入 retriever 和 sourceIDs
+// 内部自动构建工具集，外部只需传入 retriever、sourceIDs 和 sourceNames
 func NewChatAgent(
 	ctx context.Context,
 	llmModel model.ToolCallingChatModel,
@@ -59,8 +60,11 @@ func NewChatAgent(
 	messageRepo repository.MessageRepository,
 	chatCache *cache.ChatCache,
 	retriever rag.RAGRetriever,
+	sourceRepo repository.SourceRepository,
+	summaryCache *cache.SourceSummaryCache,
 	userID uint,
 	sourceIDs []uint,
+	sourceNames map[uint]string,
 ) (*ChatAgent, error) {
 	if llmModel == nil {
 		return nil, fmt.Errorf("ChatModel 不能为空")
@@ -69,14 +73,18 @@ func NewChatAgent(
 	// 创建引用收集器和工具
 	collector := chatTools.NewReferenceCollector()
 	ragTool := chatTools.NewRAGRetrieverTool(retriever, userID, sourceIDs, collector)
+	summaryTool := chatTools.NewGetSourcesSummaryTool(sourceRepo, summaryCache, sourceIDs, sourceNames)
+
+	// 构建系统提示词（注入资料列表）
+	systemPrompt := buildSystemPrompt(sourceIDs, sourceNames)
 
 	// 创建 ChatModelAgent（ReAct 循环）
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Model:       llmModel,
-		Instruction: prompts.ChatAgentSystemPrompt,
+		Instruction: systemPrompt,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: []tool.BaseTool{ragTool},
+				Tools: []tool.BaseTool{ragTool, summaryTool},
 			},
 		},
 		MaxIterations: 10,
@@ -91,6 +99,24 @@ func NewChatAgent(
 		contextBuilder:  NewContextBuilder(conversationRepo, messageRepo, chatCache),
 		streamProcessor: NewStreamProcessor(),
 	}, nil
+}
+
+// buildSystemPrompt 构建系统提示词，注入资料列表
+func buildSystemPrompt(sourceIDs []uint, sourceNames map[uint]string) string {
+	if len(sourceIDs) == 0 {
+		return strings.Replace(prompts.ChatAgentSystemPrompt, "{{.SourceList}}", "（用户未选定特定资料）", 1)
+	}
+
+	var sb strings.Builder
+	for i, id := range sourceIDs {
+		name := sourceNames[id]
+		if name == "" {
+			name = fmt.Sprintf("资料#%d", id)
+		}
+		sb.WriteString(fmt.Sprintf("%d. %s (ID: %d)\n", i+1, name, id))
+	}
+
+	return strings.Replace(prompts.ChatAgentSystemPrompt, "{{.SourceList}}", sb.String(), 1)
 }
 
 // Process 处理消息，返回事件通道

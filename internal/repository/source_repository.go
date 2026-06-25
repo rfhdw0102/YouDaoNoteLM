@@ -120,3 +120,21 @@ func (r *sourceRepository) FindUnvectorizedByUserID(userID uint) ([]*entity.Sour
 		Find(&sources).Error
 	return sources, err
 }
+
+// UpdateSummary 更新资料摘要
+func (r *sourceRepository) UpdateSummary(id uint, summary string) error {
+	return r.db.Model(&entity.Source{}).Where("id = ?", id).Update("summary", summary).Error
+}
+
+// FindSummaryByID 获取资料摘要
+func (r *sourceRepository) FindSummaryByID(id uint) (string, error) {
+	var source entity.Source
+	err := r.db.Select("summary").First(&source, id).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return source.Summary, nil
+}

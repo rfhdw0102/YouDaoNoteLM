@@ -17,6 +17,7 @@ type Source struct {
 	ErrorMessage    string   `gorm:"type:varchar(1024)" json:"error_message"`                         // 失败原因
 	Vectorized      bool     `gorm:"default:false" json:"vectorized"`                                 // 是否已向量化
 	ExternalID      string   `gorm:"type:varchar(255);index:idx_external_id" json:"external_id"`      // 外部系统ID（如 youdao fileId）
+	Summary         string   `gorm:"type:text" json:"summary"`                                        // 资料摘要（入库时 LLM 生成）
 
 	// 关联
 	ParentBlocks []ParentBlock `gorm:"foreignKey:SourceID"`
