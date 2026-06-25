@@ -28,5 +28,7 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 		sources.GET("/:id/content", ctrl.GetContent)
 		sources.GET("/:id/original", ctrl.GetOriginal)
 		sources.GET("/:id/download", ctrl.GetDownloadURL)
+		sources.POST("/from-note", ctrl.CreateFromNote)
+		sources.POST("/delete-by-note", ctrl.DeleteByNote)
 	}
 }

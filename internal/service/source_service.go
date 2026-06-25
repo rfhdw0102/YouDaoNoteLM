@@ -301,3 +301,59 @@ func (s *sourceService) ReimportSelected(sourceIDs []uint) (int, error) {
 
 	return successCount, nil
 }
+
+// CreateFromNote 将笔记内容保存为来源
+func (s *sourceService) CreateFromNote(userID, notebookID uint, title, content string) (*response.SourceResponse, error) {
+	if title == "" {
+		return nil, bizerrors.New(bizerrors.CodeBadRequest, "标题不能为空")
+	}
+	if content == "" {
+		return nil, bizerrors.New(bizerrors.CodeBadRequest, "内容不能为空")
+	}
+
+	source := &entity.Source{
+		UserID:          userID,
+		NotebookID:      notebookID,
+		Name:            title,
+		Type:            "note",
+		MarkdownContent: content,
+		Status:          "pending",
+		Vectorized:      false,
+	}
+
+	if err := s.sourceRepo.Create(source); err != nil {
+		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "创建来源失败", err)
+	}
+
+	// 异步进行向量化入库
+	if s.ingestionSvc != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			if err := s.ingestionSvc.Ingest(ctx, []uint{source.ID}); err != nil {
+				logger.Warn("笔记来源向量化入库失败",
+					zap.Uint("source_id", source.ID),
+					zap.Error(err),
+				)
+			}
+		}()
+	}
+
+	return toSourceResponse(source), nil
+}
+
+// DeleteByNoteAndNotebook 根据笔记标题和笔记本ID删除来源
+func (s *sourceService) DeleteByNoteAndNotebook(userID, notebookID uint, title string) error {
+	sources, _, err := s.sourceRepo.ListByNotebook(userID, notebookID, title, 0, 100)
+	if err != nil {
+		return err
+	}
+
+	for _, src := range sources {
+		if src.Name == title && src.Type == "note" {
+			return s.Delete(src.ID)
+		}
+	}
+
+	return bizerrors.New(bizerrors.CodeNotFound, "未找到对应的笔记来源")
+}

@@ -255,12 +255,12 @@ function ConfigManagement() {
     fields: {} as Record<string, string>,
   });
 
-  // 固定的 3 个 group（不包含 llm 和 embedding）
-  const allGroups = ['search', 'asr', 'document'] as const;
+  // 固定的 2 个 group（不包含 llm、embedding 和 document）
+  // document（文档转换）作为基础功能，始终从 config.yaml 读取，不需要在后台管理
+  const allGroups = ['search', 'asr'] as const;
   const groupLabels: Record<string, string> = {
     search: '搜索引擎',
     asr: '语音识别',
-    document: '文档转换',
   };
 
   // Fetch config status on mount

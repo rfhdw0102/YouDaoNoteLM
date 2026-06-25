@@ -20,4 +20,8 @@ type SourceService interface {
 	ReimportAll(userID uint) (int, error)
 	// ReimportSelected 重新导入指定的未向量化资料
 	ReimportSelected(sourceIDs []uint) (int, error)
+	// CreateFromNote 将笔记内容保存为来源
+	CreateFromNote(userID, notebookID uint, title, content string) (*response.SourceResponse, error)
+	// DeleteByNoteAndNotebook 根据笔记标题和笔记本ID删除来源
+	DeleteByNoteAndNotebook(userID, notebookID uint, title string) error
 }

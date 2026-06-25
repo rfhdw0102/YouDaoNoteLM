@@ -233,3 +233,67 @@ func (ctrl *Controller) ReimportSelected(c *gin.Context) {
 
 	response.Success(c, map[string]int{"reimported_count": count})
 }
+
+// CreateFromNote 将笔记保存为来源
+func (ctrl *Controller) CreateFromNote(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "user is not authenticated")
+		return
+	}
+
+	nbID64, err := strconv.ParseUint(c.Param("nbId"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "无效的笔记本ID")
+		return
+	}
+	nbID := uint(nbID64)
+
+	var req struct {
+		Title   string `json:"title" binding:"required"`
+		Content string `json:"content" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, response.ParseValidationErrors(err))
+		return
+	}
+
+	source, err := ctrl.sourceService.CreateFromNote(userID, nbID, req.Title, req.Content)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, source)
+}
+
+// DeleteByNote 根据笔记标题删除来源
+func (ctrl *Controller) DeleteByNote(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "user is not authenticated")
+		return
+	}
+
+	nbID64, err := strconv.ParseUint(c.Param("nbId"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "无效的笔记本ID")
+		return
+	}
+	nbID := uint(nbID64)
+
+	var req struct {
+		Title string `json:"title" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, response.ParseValidationErrors(err))
+		return
+	}
+
+	if err := ctrl.sourceService.DeleteByNoteAndNotebook(userID, nbID, req.Title); err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.SuccessWithMessage(c, "取消来源成功", nil)
+}

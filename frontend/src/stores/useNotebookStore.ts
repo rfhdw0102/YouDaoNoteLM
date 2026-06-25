@@ -90,7 +90,7 @@ interface NotebookState {
   deleteNote: (notebookId: string, noteId: string) => void;
   renameNote: (notebookId: string, noteId: string, title: string) => void;
   updateNoteContent: (notebookId: string, noteId: string, content: string) => void;
-  toggleNoteSource: (notebookId: string, noteId: string) => void;
+  toggleNoteSource: (notebookId: string, noteId: string) => Promise<void>;
 
   // Generation actions
   generateNote: (notebookId: string, type: NoteType, opts?: { prompt?: string; useWeb?: boolean; allowDegrade?: boolean }) => Promise<void>;
@@ -1366,14 +1366,90 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
     }));
   },
 
-  toggleNoteSource: (notebookId, noteId) => {
+  toggleNoteSource: async (notebookId, noteId) => {
+    const state = get();
+    const notebook = state.notebooks.find((n) => n.id === notebookId);
+    if (!notebook) return;
+
+    const note = notebook.notes.find((n) => n.id === noteId);
+    if (!note) return;
+
+    const newIsSource = !note.isSource;
+
+    // 先更新本地状态
     set((state) => ({
       notebooks: state.notebooks.map((n) =>
         n.id === notebookId
-          ? { ...n, notes: n.notes.map((note) => note.id === noteId ? { ...note, isSource: !note.isSource } : note) }
+          ? { ...n, notes: n.notes.map((note) => note.id === noteId ? { ...note, isSource: newIsSource } : note) }
           : n
       ),
     }));
+
+    // 调用后端 API
+    try {
+      if (newIsSource) {
+        // 设为来源
+        const res = await sourceApi.createSourceFromNote(Number(notebookId), note.title, note.content);
+        if (res.code !== 0) {
+          // 回滚本地状态
+          set((state) => ({
+            notebooks: state.notebooks.map((n) =>
+              n.id === notebookId
+                ? { ...n, notes: n.notes.map((note) => note.id === noteId ? { ...note, isSource: false } : note) }
+                : n
+            ),
+          }));
+          console.error('设为来源失败:', res.message);
+          return;
+        }
+
+        // 刷新来源列表
+        await get().fetchSources(notebookId);
+
+        // 轮询等待导入完成
+        const sourceId = String(res.data?.id);
+        if (sourceId) {
+          const maxAttempts = 30; // 最多轮询 30 次
+          for (let i = 0; i < maxAttempts; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+            await get().fetchSources(notebookId);
+            const nb = get().notebooks.find(n => n.id === notebookId);
+            const src = nb?.sources.find(s => s.id === sourceId);
+            if (!src || src.status === 'ready' || src.status === 'error') {
+              break; // 导入完成或失败
+            }
+          }
+        }
+      } else {
+        // 取消来源
+        const res = await sourceApi.deleteSourceByNote(Number(notebookId), note.title);
+        if (res.code !== 0) {
+          // 回滚本地状态
+          set((state) => ({
+            notebooks: state.notebooks.map((n) =>
+              n.id === notebookId
+                ? { ...n, notes: n.notes.map((note) => note.id === noteId ? { ...note, isSource: true } : note) }
+                : n
+            ),
+          }));
+          console.error('取消来源失败:', res.message);
+          return;
+        }
+
+        // 刷新来源列表
+        await get().fetchSources(notebookId);
+      }
+    } catch (err) {
+      // 回滚本地状态
+      set((state) => ({
+        notebooks: state.notebooks.map((n) =>
+          n.id === notebookId
+            ? { ...n, notes: n.notes.map((note) => note.id === noteId ? { ...note, isSource: !newIsSource } : note) }
+            : n
+        ),
+      }));
+      console.error('切换来源状态失败:', err);
+    }
   },
 
   // ---- Generation actions ----
