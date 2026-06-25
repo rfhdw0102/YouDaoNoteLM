@@ -64,6 +64,7 @@ type GenerationPrompt struct {
 	User         string
 	Context      string
 	OutputFormat string
+	MaxTokens    int
 }
 
 // GenerationModel abstracts Eino-backed model generation for testable agents.

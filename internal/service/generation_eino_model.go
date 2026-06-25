@@ -15,6 +15,7 @@ type einoGenerationModel struct {
 
 const (
 	defaultGenerationMaxTokens = 8192
+	pptContentEnrichMaxTokens  = defaultGenerationMaxTokens
 	defaultGenerationTopP      = 0.9
 	defaultGenerationTemp      = 0.7
 )
@@ -38,11 +39,16 @@ func (m *einoGenerationModel) Generate(ctx context.Context, prompt GenerationPro
 	user.WriteString("\n\n输出格式：\n")
 	user.WriteString(prompt.OutputFormat)
 
+	maxTokens := prompt.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = defaultGenerationMaxTokens
+	}
+
 	msg, err := m.chat.Generate(ctx, []*schema.Message{
 		schema.SystemMessage(prompt.System),
 		schema.UserMessage(user.String()),
 	},
-		model.WithMaxTokens(defaultGenerationMaxTokens),
+		model.WithMaxTokens(maxTokens),
 		model.WithTopP(defaultGenerationTopP),
 		model.WithTemperature(defaultGenerationTemp),
 	)

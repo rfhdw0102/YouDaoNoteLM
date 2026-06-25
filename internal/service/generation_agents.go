@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"YoudaoNoteLm/pkg/logger"
 
 	"github.com/cloudwego/eino/compose"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type baseGenerationAgent struct {
@@ -95,6 +98,8 @@ type pptStyleTheme struct {
 	LayoutHints string // free-form layout guidance for the LLM
 }
 
+const pptContentEnrichBatchSize = 4
+
 type mindmapPlan struct {
 	Title    string
 	Branches []mindmapBranchPlan
@@ -166,6 +171,7 @@ type quizQuestionItem struct {
 	Options     []string
 	Answer      string
 	Explanation string
+	Difficulty  string // easy | medium | hard
 }
 
 func (a *baseGenerationAgent) Generate(ctx context.Context, input generationAgentInput) (generationAgentOutput, error) {
@@ -266,27 +272,174 @@ type pptGenerationAgent struct {
 }
 
 func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgentInput) (generationAgentOutput, error) {
-	chain := compose.NewChain[generationAgentInput, generationAgentOutput]().
-		AppendLambda(compose.InvokableLambda(a.analyzePPTContent)).
-		AppendLambda(compose.InvokableLambda(a.planPPTChainOutline)).
-		AppendLambda(compose.InvokableLambda(a.reviewPPTOutline)).
-		AppendLambda(compose.InvokableLambda(a.expandPPTChainContent)).
-		AppendLambda(compose.InvokableLambda(a.enrichPPTContent)).
-		AppendLambda(compose.InvokableLambda(a.designPPTStyle)).
-		AppendLambda(compose.InvokableLambda(a.generatePPTCSS)).
-		AppendLambda(compose.InvokableLambda(a.generatePPTHTML)).
-		AppendLambda(compose.InvokableLambda(a.structureCheck)).
-		AppendLambda(compose.InvokableLambda(a.polishPPTHTML)).
-		AppendLambda(compose.InvokableLambda(a.repairPPTStructure)).
-		AppendLambda(compose.InvokableLambda(a.factEnhance)).
-		AppendLambda(compose.InvokableLambda(a.formatValidate)).
-		AppendLambda(compose.InvokableLambda(a.finalize))
+	overallStart := time.Now()
+	logger.Info("[PPT] generation started",
+		zap.Int("prompt_len", len(input.Request.Prompt)),
+		zap.Int("context_len", len(input.Context)),
+	)
 
-	runner, err := chain.Compile(ctx)
+	var state pptChainState
+	var err error
+	var stepStart time.Time
+
+	// Step 1: analyzePPTContent
+	stepStart = time.Now()
+	state, err = a.analyzePPTContent(ctx, input)
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	return runner.Invoke(ctx, input)
+	logger.Info("[PPT] step 1/14: analyzePPTContent done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("sections", len(state.analysis.Sections)),
+	)
+
+	// Step 2: planPPTChainOutline
+	stepStart = time.Now()
+	state, err = a.planPPTChainOutline(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 2/14: planPPTChainOutline done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("slides", len(state.outlinePlan.Slides)),
+	)
+
+	// Step 3: reviewPPTOutline
+	stepStart = time.Now()
+	state, err = a.reviewPPTOutline(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 3/14: reviewPPTOutline done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("slides_after_review", len(state.outlinePlan.Slides)),
+	)
+
+	// Step 4: expandPPTChainContent
+	stepStart = time.Now()
+	state, err = a.expandPPTChainContent(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 4/14: expandPPTChainContent done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
+	// Step 5: enrichPPTContent
+	stepStart = time.Now()
+	state, err = a.enrichPPTContent(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 5/14: enrichPPTContent done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("rich_slides", len(state.richContent.Slides)),
+	)
+
+	// Step 6: designPPTStyle
+	stepStart = time.Now()
+	state, err = a.designPPTStyle(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 6/14: designPPTStyle done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.String("theme", state.styleTheme.Name),
+	)
+
+	// Step 7: generatePPTCSS
+	stepStart = time.Now()
+	state, err = a.generatePPTCSS(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 7/14: generatePPTCSS done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("css_len", len(state.cssBlock)),
+	)
+
+	// Step 8: generatePPTHTML
+	stepStart = time.Now()
+	draft, err := a.generatePPTHTML(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 8/14: generatePPTHTML done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("html_len", len(draft.content)),
+		zap.Bool("fallback_used", draft.fallbackUsed),
+	)
+
+	// Step 9: structureCheck
+	stepStart = time.Now()
+	draft, err = a.structureCheck(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 9/14: structureCheck done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
+	// Step 10: polishPPTHTML
+	stepStart = time.Now()
+	draft, err = a.polishPPTHTML(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 10/14: polishPPTHTML done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("html_len_after", len(draft.content)),
+	)
+
+	// Step 11: repairPPTStructure
+	stepStart = time.Now()
+	draft, err = a.repairPPTStructure(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 11/14: repairPPTStructure done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Bool("fallback_used", draft.fallbackUsed),
+	)
+
+	// Step 12: factEnhance
+	stepStart = time.Now()
+	draft, err = a.factEnhance(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 12/14: factEnhance done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
+	// Step 13: formatValidate
+	stepStart = time.Now()
+	draft, err = a.formatValidate(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 13/14: formatValidate done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Bool("format_valid", draft.formatValid),
+	)
+
+	// Step 14: finalize
+	stepStart = time.Now()
+	output, err := a.finalize(ctx, draft)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 14/14: finalize done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Int("final_len", len(output.Content)),
+	)
+
+	logger.Info("[PPT] generation completed",
+		zap.Duration("total_elapsed", time.Since(overallStart)),
+		zap.Bool("fallback_used", output.FallbackUsed),
+	)
+
+	return output, nil
 }
 
 type mindmapGenerationAgent struct {
@@ -388,6 +541,7 @@ func (a *pptGenerationAgent) reviewPPTOutline(ctx context.Context, state pptChai
 	if a.model == nil {
 		return state, nil
 	}
+	llmStart := time.Now()
 	strategy := pptOutlineReviewPromptStrategy()
 	reviewed, err := a.model.Generate(ctx, GenerationPrompt{
 		AgentName:    a.name + "_outline_review",
@@ -396,6 +550,11 @@ func (a *pptGenerationAgent) reviewPPTOutline(ctx context.Context, state pptChai
 		Context:      appendPPTOutlineToContext(state.input.Context, state.outline),
 		OutputFormat: strategy.OutputFormat,
 	})
+	logger.Info("[PPT] LLM call: reviewPPTOutline done",
+		zap.Duration("llm_elapsed", time.Since(llmStart)),
+		zap.Int("reviewed_len", len(reviewed)),
+		zap.Error(err),
+	)
 	if err != nil || strings.TrimSpace(reviewed) == "" {
 		return state, nil
 	}
@@ -426,6 +585,7 @@ func (a *pptGenerationAgent) generatePPTCSS(ctx context.Context, state pptChainS
 		state.cssBlock = fallbackPPTCSS(state.styleTheme)
 		return state, nil
 	}
+	llmStart := time.Now()
 	strategy := pptCSSPromptStrategy()
 	generated, err := a.model.Generate(ctx, GenerationPrompt{
 		AgentName:    a.name + "_css",
@@ -434,6 +594,11 @@ func (a *pptGenerationAgent) generatePPTCSS(ctx context.Context, state pptChainS
 		Context:      appendPPTStyleToContext(appendPPTPlansToContext(state.input.Context, state.outline, state.expanded), state.styleTheme),
 		OutputFormat: strategy.OutputFormat,
 	})
+	logger.Info("[PPT] LLM call: generatePPTCSS done",
+		zap.Duration("llm_elapsed", time.Since(llmStart)),
+		zap.Int("css_len", len(generated)),
+		zap.Error(err),
+	)
 	if err != nil || strings.TrimSpace(generated) == "" {
 		state.cssBlock = fallbackPPTCSS(state.styleTheme)
 		return state, nil
@@ -453,6 +618,7 @@ func (a *pptGenerationAgent) generatePPTHTML(ctx context.Context, state pptChain
 	content := ""
 	fallbackUsed := false
 	if a.model != nil {
+		llmStart := time.Now()
 		strategy := promptStrategyFor(GenerationTypePPT)
 		// Build context with enriched content if available
 		contextValue := appendPPTCSSToContext(appendPPTStyleToContext(appendPPTPlansToContext(state.input.Context, state.outline, state.expanded), state.styleTheme), state.cssBlock)
@@ -466,6 +632,11 @@ func (a *pptGenerationAgent) generatePPTHTML(ctx context.Context, state pptChain
 			Context:      contextValue,
 			OutputFormat: strategy.OutputFormat,
 		})
+		logger.Info("[PPT] LLM call: generatePPTHTML done",
+			zap.Duration("llm_elapsed", time.Since(llmStart)),
+			zap.Int("html_len", len(generated)),
+			zap.Error(err),
+		)
 		if err != nil {
 			return generationDraft{}, err
 		}
@@ -668,6 +839,7 @@ func (a *pptGenerationAgent) generateOutline(ctx context.Context, input generati
 	if a.model == nil {
 		return fallbackPPTOutline(input), nil
 	}
+	llmStart := time.Now()
 	strategy := pptOutlinePromptStrategy()
 	outline, err := a.model.Generate(ctx, GenerationPrompt{
 		AgentName:    "ppt_outline",
@@ -676,6 +848,11 @@ func (a *pptGenerationAgent) generateOutline(ctx context.Context, input generati
 		Context:      input.Context,
 		OutputFormat: strategy.OutputFormat,
 	})
+	logger.Info("[PPT] LLM call: generateOutline done",
+		zap.Duration("llm_elapsed", time.Since(llmStart)),
+		zap.Int("outline_len", len(outline)),
+		zap.Error(err),
+	)
 	if err != nil {
 		return "", err
 	}
@@ -1376,7 +1553,10 @@ func appendPPTPlansToContext(contextValue, outline string, plan pptOutlinePlan) 
 		b.WriteString("- For each source-topic, generate 1-3 sentences of actual presentation content that: explains the concept, provides context, gives a concrete example, or states a clear conclusion. The output should read like a real slide a presenter would show, not an outline.\n")
 		b.WriteString("- Keep every planned slide title visible as h1/h2/h3, then add 3-5 substantial content blocks for that page.\n")
 		b.WriteString("- CRITICAL: Never output internal plan labels or meta-text as visible slide content. Words like 'Purpose', '页面目的', 'Slide purpose', 'writing brief', 'source-topic', or any planning instruction must NOT appear on the slide. Only output real presentation content.\n")
-		b.WriteString("- CRITICAL: Every content slide MUST have substantial body text. Do not output slides with only a title and empty or near-empty content. Each content slide needs at least 3-5 concrete points, each expanded into a full sentence or paragraph.\n")
+		b.WriteString("- CRITICAL: Every content slide MUST have substantial body text. Do not output slides with only a title and empty or near-empty content. Each content slide needs at least 5-7 concrete points, each expanded into a full sentence or paragraph.\n")
+		b.WriteString("- CRITICAL: 去文字化——不要输出大段连续叙述文本。将内容拆解为：定义句→原理句→证据/数据句→应用/例子句。每个要点自成一体，读出来像一句完整的演讲词。\n")
+		b.WriteString("- CRITICAL: 每个内容页的信息密度要高。一个 slide 至少包含 5-7 个实质性的内容块（列表项、卡片、洞察标签等），不要让页面看起来只有标题和两行字。\n")
+		b.WriteString("- CRITICAL: 当 source-topic 看起来笼统（如'核心概念'、'基本原理'）时，你必须将其拆解为 3-5 个具体的子论点分别展开，而不是输出一个笼统的概括。\n")
 		b.WriteString("- The agenda slide must match the later content sections one-to-one; if the agenda lists a chapter, a later section with the same chapter title must exist.\n")
 		b.WriteString("- Design every section as a real 16:9 PPT canvas: width: 1920px; height: 1080px; overflow: hidden; use px font sizes, not web-card rem layouts.\n")
 		b.WriteString("- Make each HTML section production-ready as a standalone slide: include a clear visual hierarchy, title area, content grouping, and a small progress or section marker.\n")
@@ -1774,7 +1954,7 @@ func extractPPTSourceSections(markdown string, maxSections int) []pptSourceSecti
 		}
 		// Code blocks are already merged into single lines starting with ```
 		point := strings.TrimSpace(strings.TrimLeft(line, "-*0123456789. "))
-		if len([]rune(point)) < 4 {
+		if len([]rune(point)) < 3 {
 			continue
 		}
 		if current == nil {
@@ -2230,32 +2410,185 @@ func expandPPTContent(plan pptOutlinePlan, analysis learningContentAnalysis) ppt
 }
 
 // enrichPPTContent calls the LLM to expand short bullet points into full
-// paragraphs suitable for presentation slides. The call is wrapped with
-// robust JSON extraction (so prose / code fences around the JSON object
-// no longer kill the result), one stricter-prompt retry on failure, and
-// warning logs at every drop point so we can tell from production logs
-// whether HTML generation is actually receiving enriched paragraphs or
-// silently falling back to the raw outline bullets.
+// paragraphs suitable for presentation slides. It batches the slide plan so
+// each model call returns a small JSON object instead of one oversized deck.
+// Batches are processed concurrently via a fixed-size worker pool to reduce
+// wall-clock time while keeping the per-call retry logic intact.
 func (a *pptGenerationAgent) enrichPPTContent(ctx context.Context, state pptChainState) (pptChainState, error) {
 	if a.model == nil {
 		return state, nil
 	}
 
 	strategy := pptContentEnrichPromptStrategy()
-
-	// Build context with outline and source material
-	contextValue := state.input.Context
-	contextValue += "\n\nPPT_OUTLINE_FOR_ENRICHMENT\n"
-	contextValue += renderPPTPlanForPrompt(state.expanded)
-
-	rich, ok := a.tryEnrichPPTContent(ctx, strategy, state, contextValue, false)
-	if !ok {
-		rich, ok = a.tryEnrichPPTContent(ctx, strategy, state, contextValue, true)
+	batches := batchPPTOutlinePlan(state.expanded, pptContentEnrichBatchSize)
+	if len(batches) == 0 {
+		return state, nil
 	}
-	if ok {
-		state.richContent = rich
+
+	logger.Info("[PPT] enrichPPTContent: starting batch enrichment",
+		zap.Int("total_slides", len(state.expanded.Slides)),
+		zap.Int("batch_count", len(batches)),
+		zap.Int("batch_size", pptContentEnrichBatchSize),
+	)
+
+	// Job and result types for the concurrent worker pool.
+	type enrichJob struct {
+		index int
+		batch pptOutlinePlan
+	}
+	type enrichResult struct {
+		index int
+		rich  pptRichContent
+		ok    bool
+	}
+
+	// Determine worker count: cap at the effective batch count.
+	workerCount := len(batches)
+	if workerCount > pptContentEnrichBatchSize {
+		workerCount = pptContentEnrichBatchSize
+	}
+
+	jobChan := make(chan enrichJob, len(batches))
+	resultChan := make(chan enrichResult, len(batches))
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	// Producer: send all batches into jobChan.
+	g.Go(func() error {
+		defer close(jobChan)
+		for i, batch := range batches {
+			select {
+			case jobChan <- enrichJob{index: i, batch: batch}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	})
+
+	// Fixed-size worker pool. Each worker picks up jobs, runs the enrichment
+	// (with retry), and sends the result to resultChan.
+	var mu sync.Mutex
+	workerID := 0
+	for range workerCount {
+		g.Go(func() error {
+			mu.Lock()
+			wid := workerID
+			workerID++
+			mu.Unlock()
+
+			for job := range jobChan {
+				batchStart := time.Now()
+				batchState := state
+				batchState.expanded = job.batch
+
+				contextValue := state.input.Context
+				contextValue += "\n\nPPT_OUTLINE_FOR_ENRICHMENT\n"
+				contextValue += renderPPTPlanForPrompt(job.batch)
+
+				rich, ok := a.tryEnrichPPTContent(ctx, strategy, batchState, contextValue, false)
+				if !ok {
+					rich, ok = a.tryEnrichPPTContent(ctx, strategy, batchState, contextValue, true)
+				}
+
+				// Build common log fields
+				logFields := []zap.Field{
+					zap.Int("worker_id", wid),
+					zap.Int("batch_index", job.index),
+					zap.Int("batch_count", len(batches)),
+					zap.Duration("elapsed", time.Since(batchStart)),
+				}
+
+				if !ok {
+					logger.Warn("[PPT] enrichPPTContent: batch skipped",
+						append(logFields,
+							zap.Int("slides_in_batch", len(job.batch.Slides)),
+						)...)
+					select {
+					case resultChan <- enrichResult{index: job.index, ok: false}:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+					continue
+				}
+
+				logger.Info("[PPT] enrichPPTContent: batch done",
+					append(logFields,
+						zap.Int("slides_in_batch", len(job.batch.Slides)),
+						zap.Int("rich_slides", len(rich.Slides)),
+					)...)
+				select {
+				case resultChan <- enrichResult{index: job.index, rich: rich, ok: true}:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			logger.Debug("[PPT] enrichPPTContent: worker finished",
+				zap.Int("worker_id", wid),
+			)
+			return nil
+		})
+	}
+
+	// Producer and workers are all part of the errgroup; wait for them to finish,
+	// then close resultChan. This is done in a separate goroutine (NOT inside the
+	// errgroup) to avoid the deadlock of calling g.Wait() from within g.Go().
+	done := make(chan struct{})
+	var gErr error
+	go func() {
+		gErr = g.Wait()
+		close(resultChan)
+		close(done)
+	}()
+
+	// Collect all results and merge by original index order.
+	results := make([]enrichResult, len(batches))
+	for res := range resultChan {
+		results[res.index] = res
+	}
+
+	// Wait for the errgroup to complete.
+	<-done
+	if gErr != nil {
+		if ctx.Err() != nil {
+			return state, gErr
+		}
+		logger.Warn("[PPT] enrichPPTContent: non-fatal worker error",
+			zap.Error(gErr),
+		)
+	}
+
+	merged := pptRichContent{}
+	for _, res := range results {
+		if res.ok {
+			merged.Slides = append(merged.Slides, res.rich.Slides...)
+		}
+	}
+	if pptRichContentHasUsableSlides(merged) {
+		state.richContent = merged
 	}
 	return state, nil
+}
+
+func batchPPTOutlinePlan(plan pptOutlinePlan, batchSize int) []pptOutlinePlan {
+	if batchSize <= 0 {
+		batchSize = pptContentEnrichBatchSize
+	}
+	if len(plan.Slides) == 0 {
+		return nil
+	}
+	batches := make([]pptOutlinePlan, 0, (len(plan.Slides)+batchSize-1)/batchSize)
+	for start := 0; start < len(plan.Slides); start += batchSize {
+		end := start + batchSize
+		if end > len(plan.Slides) {
+			end = len(plan.Slides)
+		}
+		batches = append(batches, pptOutlinePlan{
+			Title:  plan.Title,
+			Slides: append([]pptSlidePlan(nil), plan.Slides[start:end]...),
+		})
+	}
+	return batches
 }
 
 // tryEnrichPPTContent issues one enrichment call and returns the parsed
@@ -2267,13 +2600,21 @@ func (a *pptGenerationAgent) tryEnrichPPTContent(ctx context.Context, strategy g
 	if retry {
 		outputFormat += "\n\n严格要求：上一次输出无法被解析为 JSON。本次回复必须只包含一个 JSON 对象，第一个字符必须是 '{'，最后一个字符必须是 '}'。不要输出 ```、不要任何解释、不要前后空行说明。"
 	}
+	llmStart := time.Now()
 	generated, err := a.model.Generate(ctx, GenerationPrompt{
 		AgentName:    a.name + "_content_enrich",
 		System:       strategy.System,
 		User:         strings.TrimSpace(state.input.Request.Prompt),
 		Context:      contextValue,
 		OutputFormat: outputFormat,
+		MaxTokens:    pptContentEnrichMaxTokens,
 	})
+	logger.Info("[PPT] LLM call: tryEnrichPPTContent done",
+		zap.Duration("llm_elapsed", time.Since(llmStart)),
+		zap.Int("generated_len", len(generated)),
+		zap.Bool("retry", retry),
+		zap.Error(err),
+	)
 	logFields := pptEnrichLogFields(state, retry)
 	if err != nil {
 		logger.Warn("enrich ppt content: model generate failed",
@@ -2379,7 +2720,12 @@ func normalizePPTBullets(slide *pptSlidePlan) {
 	// dedup/truncation. The section extractor and the LLM frequently prefix
 	// every point with the page title (e.g. a slide titled "卡尔文循环" gets
 	// "卡尔文循环：场所：叶绿体基质"), which reads redundantly under the heading.
+	// Code blocks are skipped — stripping a title prefix from code would corrupt
+	// the code content.
 	for i, bullet := range slide.Bullets {
+		if isPPTCodeBlockBullet(bullet) {
+			continue
+		}
 		slide.Bullets[i] = stripPPTBulletSlideTitlePrefix(bullet, slide.Title)
 	}
 	slide.Bullets = uniqueNonEmpty(slide.Bullets)
@@ -2387,7 +2733,7 @@ func normalizePPTBullets(slide *pptSlidePlan) {
 	case "封面", "目录":
 		return
 	}
-	if len(slide.Bullets) > 7 {
+	if len(slide.Bullets) > 9 {
 		slide.Bullets = append([]string{}, slide.Bullets[:7]...)
 	}
 }
@@ -2785,6 +3131,8 @@ ul { list-style: none; padding-left: 0; }
 .comparison-col.left { background: var(--accent-soft); border-left: 6px solid var(--accent); }
 .comparison-col.right { background: #fff7ed; border-left: 6px solid var(--accent-2); }
 .quote-block { background: linear-gradient(135deg, var(--accent-soft) 0%%, #fff7ed 100%%); border-left: 8px solid var(--accent); border-radius: 8px; padding: 48px 56px; min-height: 400px; }
+.ppt-code-block { background: #1e293b; color: #e2e8f0; border-radius: 8px; padding: 28px 32px; margin-top: 18px; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace; font-size: 24px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; overflow-x: auto; border-left: 6px solid var(--accent-2); }
+.ppt-code-block code { font-family: inherit; color: inherit; }
 .slide-progress { position: absolute; left: 112px; right: 112px; bottom: 58px; height: 10px; border-radius: 999px; background: #e5e7eb; overflow: hidden; }
 .slide-progress span { display: block; height: 100%%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 </style>`,
@@ -3129,6 +3477,24 @@ li:last-child { border-bottom: none; }
   color: var(--muted);
   font-weight: 600;
 }
+.ppt-code-block {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: 28px 32px;
+  margin-top: 18px;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+  font-size: 24px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+  border-left: 6px solid var(--accent-2);
+}
+.ppt-code-block code {
+  font-family: inherit;
+  color: inherit;
+}
 </style>`)
 	for i, slide := range plan.Slides {
 		className := "ppt-slide"
@@ -3189,6 +3555,8 @@ func writePPTContentSlideBody(b *strings.Builder, slide pptSlidePlan, index int)
 		writePPTComparisonSlide(b, slide)
 	case "quote":
 		writePPTQuoteSlide(b, slide)
+	case "code":
+		writePPTCodeSlide(b, slide)
 	default:
 		writePPTTwoColumnSlide(b, slide)
 	}
@@ -3198,6 +3566,10 @@ func writePPTContentSlideBody(b *strings.Builder, slide pptSlidePlan, index int)
 // It rotates through patterns to ensure visual variety.
 func pptSlideLayoutForIndex(index int, slide pptSlidePlan) string {
 	title := strings.ToLower(slide.Title)
+	// Code layout takes priority when bullets contain code blocks
+	if slideHasCodeBlock(slide) {
+		return "code"
+	}
 	if containsAnyFold(title, "对比", "比较", "vs", "compare", "区别", "差异") {
 		return "comparison"
 	}
@@ -3214,9 +3586,22 @@ func pptSlideLayoutForIndex(index int, slide pptSlidePlan) string {
 	return layouts[index%len(layouts)]
 }
 
+// slideHasCodeBlock returns true if any bullet in the slide is a fenced code block.
+func slideHasCodeBlock(slide pptSlidePlan) bool {
+	for _, bullet := range slide.Bullets {
+		if isPPTCodeBlockBullet(bullet) {
+			return true
+		}
+	}
+	return false
+}
+
 func writePPTTwoColumnSlide(b *strings.Builder, slide pptSlidePlan) {
 	b.WriteString(`<div class="content-grid"><ul class="main-points">`)
 	for _, bullet := range slide.Bullets {
+		if isPPTCodeBlockBullet(bullet) {
+			continue // code blocks rendered separately below
+		}
 		b.WriteString("<li>")
 		b.WriteString(htmlEscape(pptExpandBullet(bullet, slide.Title)))
 		b.WriteString("</li>")
@@ -3233,21 +3618,29 @@ func writePPTTwoColumnSlide(b *strings.Builder, slide pptSlidePlan) {
 		b.WriteString(`</div>`)
 	}
 	b.WriteString("</div>")
+	// Append code blocks as separate <pre> elements after the main content
+	writePPTCodeBlocks(b, slide.Bullets)
 }
 
 func writePPTCardGridSlide(b *strings.Builder, slide pptSlidePlan) {
 	b.WriteString(`<div class="card-grid">`)
-	for i, bullet := range slide.Bullets {
-		if i >= 4 {
+	cardIdx := 0
+	for _, bullet := range slide.Bullets {
+		if isPPTCodeBlockBullet(bullet) {
+			continue // code blocks rendered separately
+		}
+		if cardIdx >= 4 {
 			break
 		}
 		b.WriteString(`<div class="content-card"><div class="card-title">`)
-		b.WriteString(htmlEscape(pptCardTitleFromBullet(bullet, i)))
+		b.WriteString(htmlEscape(pptCardTitleFromBullet(bullet, cardIdx)))
 		b.WriteString(`</div><div class="card-body">`)
 		b.WriteString(htmlEscape(pptExpandBullet(bullet, slide.Title)))
 		b.WriteString(`</div></div>`)
+		cardIdx++
 	}
 	b.WriteString(`</div>`)
+	writePPTCodeBlocks(b, slide.Bullets)
 }
 
 // pptCardTitleFromBullet derives a concise card title from the bullet content
@@ -3316,20 +3709,30 @@ func pptExpandBullet(bullet, slideTitle string) string {
 func writePPTFullWidthListSlide(b *strings.Builder, slide pptSlidePlan) {
 	b.WriteString(`<div class="full-width-list"><ul>`)
 	for _, bullet := range slide.Bullets {
+		if isPPTCodeBlockBullet(bullet) {
+			continue // code blocks rendered separately below
+		}
 		b.WriteString("<li>")
 		b.WriteString(htmlEscape(pptExpandBullet(bullet, slide.Title)))
 		b.WriteString("</li>")
 	}
 	b.WriteString("</ul></div>")
+	writePPTCodeBlocks(b, slide.Bullets)
 }
 
 func writePPTComparisonSlide(b *strings.Builder, slide pptSlidePlan) {
-	mid := len(slide.Bullets) / 2
+	var textBullets []string
+	for _, bullet := range slide.Bullets {
+		if !isPPTCodeBlockBullet(bullet) {
+			textBullets = append(textBullets, bullet)
+		}
+	}
+	mid := len(textBullets) / 2
 	if mid == 0 {
 		mid = 1
 	}
-	left := slide.Bullets[:mid]
-	right := slide.Bullets[mid:]
+	left := textBullets[:mid]
+	right := textBullets[mid:]
 	if len(right) == 0 {
 		right = left
 	}
@@ -3352,6 +3755,7 @@ func writePPTComparisonSlide(b *strings.Builder, slide pptSlidePlan) {
 		b.WriteString("</p>")
 	}
 	b.WriteString(`</div></div>`)
+	writePPTCodeBlocks(b, slide.Bullets)
 }
 
 // pptComparisonTitleFromBullets derives a meaningful comparison column title
@@ -3399,6 +3803,48 @@ func writePPTQuoteSlide(b *strings.Builder, slide pptSlidePlan) {
 		b.WriteString(`</div>`)
 	}
 	b.WriteString(`</div>`)
+	writePPTCodeBlocks(b, slide.Bullets)
+}
+
+// writePPTCodeBlocks renders code block bullets as <pre><code> elements
+// with the ppt-code-block class. Non-code-block bullets are skipped.
+func writePPTCodeBlocks(b *strings.Builder, bullets []string) {
+	for _, bullet := range bullets {
+		if !isPPTCodeBlockBullet(bullet) {
+			continue
+		}
+		code, ok := stripFencedCodeBlockForPPT(bullet)
+		if !ok {
+			continue
+		}
+		b.WriteString(`<pre class="ppt-code-block"><code>`)
+		b.WriteString(htmlEscape(code))
+		b.WriteString(`</code></pre>`)
+	}
+}
+
+// writePPTCodeSlide renders a slide optimized for code display. It shows
+// explanatory text bullets first, then renders all code blocks as <pre><code>
+// elements below. This layout is used when the slide contains fenced code blocks.
+func writePPTCodeSlide(b *strings.Builder, slide pptSlidePlan) {
+	// Render non-code bullets as explanatory text
+	var textBullets []string
+	for _, bullet := range slide.Bullets {
+		if !isPPTCodeBlockBullet(bullet) {
+			textBullets = append(textBullets, bullet)
+		}
+	}
+	if len(textBullets) > 0 {
+		b.WriteString(`<div class="full-width-list"><ul>`)
+		for _, bullet := range textBullets {
+			b.WriteString("<li>")
+			b.WriteString(htmlEscape(pptExpandBullet(bullet, slide.Title)))
+			b.WriteString("</li>")
+		}
+		b.WriteString(`</ul></div>`)
+	}
+	// Render code blocks as <pre><code> elements
+	writePPTCodeBlocks(b, slide.Bullets)
 }
 
 func pptCardTitle(slideTitle string, index int) string {
@@ -3440,6 +3886,23 @@ func sanitizePPTPlanVisibleText(plan pptOutlinePlan) pptOutlinePlan {
 
 func cleanPPTVisibleText(value string) string {
 	value = strings.ReplaceAll(value, "&nbsp;", " ")
+
+	// Preserve code blocks: if the value contains a fenced code block (```...```),
+	// keep the fences intact so that downstream code (isPPTCodeBlockBullet,
+	// slideHasCodeBlock, writePPTCodeBlocks) can still identify and correctly
+	// render it. Only clean the text inside the fences (e.g. &nbsp;).
+	// The &nbsp; replacement already happened above; return the code block
+	// with its fences preserved.
+	if isPPTCodeBlockBullet(value) {
+		return value
+	}
+
+	// Single-line code fences (```inline```) without a newline are also code
+	// content — preserve them rather than stripping to plain text.
+	if cleaned, ok := stripFencedCodeBlockForPPT(value); ok {
+		return cleaned
+	}
+
 	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 	for {
 		trimmed := strings.TrimSpace(value)
@@ -3455,6 +3918,48 @@ func cleanPPTVisibleText(value string) string {
 		}
 		return trimmed
 	}
+}
+
+// stripFencedCodeBlockForPPT detects a fenced code block in value (```lang\n...\n```)
+// and returns the inner code with the language label removed, preserving line breaks
+// and indentation. Returns ("", false) if value does not contain a code block.
+func stripFencedCodeBlockForPPT(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "```") {
+		return "", false
+	}
+	// Find the language tag line end
+	firstNewline := strings.Index(trimmed, "\n")
+	if firstNewline < 0 {
+		// Single-line code fence like ```x``` — treat as code
+		inner := strings.TrimPrefix(trimmed, "```")
+		inner = strings.TrimSuffix(inner, "```")
+		inner = strings.TrimSpace(inner)
+		if inner == "" {
+			return "", false
+		}
+		return inner, true
+	}
+	// Remove opening ```lang\n
+	inner := trimmed[firstNewline+1:]
+	// Remove closing \n```
+	if strings.HasSuffix(inner, "\n```") {
+		inner = inner[:len(inner)-4]
+	} else if strings.HasSuffix(inner, "```") {
+		inner = inner[:len(inner)-3]
+	}
+	inner = strings.TrimRight(inner, "\n")
+	if strings.TrimSpace(inner) == "" {
+		return "", false
+	}
+	return inner, true
+}
+
+// isPPTCodeBlockBullet returns true if the bullet text originated from a
+// fenced code block (```...```).
+func isPPTCodeBlockBullet(bullet string) bool {
+	trimmed := strings.TrimSpace(bullet)
+	return strings.HasPrefix(trimmed, "```") && strings.Contains(trimmed, "\n")
 }
 
 func writePPTCoverSlide(b *strings.Builder, plan pptOutlinePlan, slide pptSlidePlan, index int) {
@@ -4267,9 +4772,9 @@ func pptCardTitleMatchesBody(title, body string) bool {
 func extractSignificantWords(text string) []string {
 	// Remove punctuation
 	text = strings.Map(func(r rune) rune {
-		if r == '，' || r == '。' || r == '、' || r == '：' || r == '：' ||
+		if r == '，' || r == '。' || r == '、' || r == '：' ||
 			r == '（' || r == '）' || r == '(' || r == ')' ||
-			r == '"' || r == '"' || r == '\'' || r == ' ' {
+			r == '"' || r == '\'' || r == ' ' {
 			return ' '
 		}
 		return r
@@ -4427,46 +4932,151 @@ func isGenericPPTPlanTitle(title string) bool {
 	)
 }
 
-func requiredMindmapBranchTitles() []string {
-	return []string{"核心概念", "原理机制", "过程步骤", "应用场景", "易错点", "总结"}
+// dynamicMindmapBranches 根据笔记内容智能选择思维导图分支。
+// 如果笔记有明确的章节结构，用章节标题作为分支；
+// 否则按知识点聚类生成3-5个分支。始终保留"总结"分支。
+func dynamicMindmapBranches(analysis learningContentAnalysis) []mindmapBranchPlan {
+	var branches []mindmapBranchPlan
+
+	// 如果笔记有章节结构，直接用章节标题作为分支
+	if len(analysis.Sections) >= 2 {
+		for _, section := range analysis.Sections {
+			title := strings.TrimSpace(section.Title)
+			if title == "" {
+				continue
+			}
+			branch := mindmapBranchPlan{Title: title}
+			for _, point := range section.Points {
+				point = strings.TrimSpace(point)
+				if point == "" {
+					continue
+				}
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					point,
+					mindmapNodeDetailFromEvidence(point, analysis),
+				))
+			}
+			if len(branch.Nodes) == 0 {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					supplementBullet(title, 1),
+					mindmapNodeDetailFromEvidence(title, analysis),
+				))
+			}
+			branches = append(branches, branch)
+		}
+	} else {
+		// 扁平结构：按知识点类型分类
+		if len(analysis.KeyConcepts) > 0 {
+			branch := mindmapBranchPlan{Title: "核心概念"}
+			for _, concept := range analysis.KeyConcepts {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					concept,
+					mindmapNodeDetailFromEvidence(concept, analysis),
+				))
+			}
+			branches = append(branches, branch)
+		}
+		if len(analysis.Processes) > 0 {
+			branch := mindmapBranchPlan{Title: "原理与过程"}
+			for _, proc := range analysis.Processes {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					proc,
+					mindmapNodeDetailFromEvidence(proc, analysis),
+				))
+			}
+			branches = append(branches, branch)
+		}
+		if len(analysis.Examples) > 0 {
+			branch := mindmapBranchPlan{Title: "应用与案例"}
+			for _, example := range analysis.Examples {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					example,
+					mindmapNodeDetailFromEvidence(example, analysis),
+				))
+			}
+			branches = append(branches, branch)
+		}
+		if len(branches) == 0 {
+			// 极端稀疏：创建一个通用分支
+			branch := mindmapBranchPlan{Title: analysis.Topic}
+			for _, concept := range analysis.KeyConcepts {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					concept,
+					mindmapNodeDetailFromEvidence(concept, analysis),
+				))
+			}
+			if len(branch.Nodes) == 0 {
+				branch.Nodes = append(branch.Nodes, newMindmapNode(
+					fmt.Sprintf("围绕“%s”的关键要点", analysis.Topic),
+					"结合笔记内容梳理核心知识点。",
+				))
+			}
+			branches = append(branches, branch)
+		}
+	}
+
+	// 始终保留总结分支
+	branches = append(branches, mindmapBranchPlan{
+		Title: "总结",
+		Nodes: []mindmapNodePlan{
+			newMindmapNode(
+				fmt.Sprintf("围绕“%s”形成可复习的结构。", analysis.Topic),
+				"按概念、机制、过程、应用和误区回顾学习路径。",
+			),
+		},
+	})
+
+	// 确保至少3个分支（含总结）
+	if len(branches) < 3 {
+		branchTitle := "补充内容"
+		if strings.TrimSpace(analysis.Topic) != "" {
+			branchTitle = analysis.Topic
+		}
+		for len(branches) < 3 {
+			branches = append(branches, mindmapBranchPlan{
+				Title: branchTitle,
+				Nodes: []mindmapNodePlan{
+					newMindmapNode(
+						supplementBullet(branchTitle, len(branches)+1),
+						"该节点为解释补充，用于补足学习结构。",
+					),
+				},
+			})
+		}
+	}
+
+	// 限制分支数量在8以内（含总结）
+	if len(branches) > 8 {
+		// 保留前7个分支和最后的总结分支
+		branches = append(branches[:7], branches[len(branches)-1])
+	}
+
+	return branches
 }
 
 func planMindmap(analysis learningContentAnalysis) mindmapPlan {
 	plan := mindmapPlan{Title: analysis.Topic}
-	for _, title := range requiredMindmapBranchTitles() {
-		branch := mindmapBranchPlan{Title: title}
-		switch title {
-		case "核心概念":
-			branch.Nodes = appendMindmapNodes(branch.Nodes, title, analysis.KeyConcepts, analysis)
-		case "原理机制", "过程步骤":
-			branch.Nodes = appendMindmapNodes(branch.Nodes, title, analysis.Processes, analysis)
-		case "应用场景":
-			branch.Nodes = appendMindmapNodes(branch.Nodes, title, analysis.Examples, analysis)
-		case "易错点":
-			branch.Nodes = append(branch.Nodes, newMindmapNode("注意概念边界、条件范围和常见混淆。", "用于复习时主动辨析相近概念、适用条件和结论边界。"))
-		case "总结":
-			branch.Nodes = append(branch.Nodes, newMindmapNode(fmt.Sprintf("围绕“%s”形成可复习的结构。", analysis.Topic), "按概念、机制、过程、应用和误区回顾学习路径。"))
-		}
-		if len(branch.Nodes) == 0 {
-			branch.Nodes = append(branch.Nodes, newMindmapNode(supplementBullet(title, 1), "该节点为解释补充，用于补足学习结构。"))
-		}
-		if analysis.Sparse && !hasSupplementMindmapNode(branch.Nodes) {
-			branch.Nodes = append(branch.Nodes, newMindmapNode(supplementBullet(title, 2), "该节点不是来源事实，主要用于提示复习方向。"))
-		}
-		minNodes := 3
-		if analysis.Sparse {
-			minNodes = 4
-		}
+	branches := dynamicMindmapBranches(analysis)
+
+	// 确保每个分支至少有 minNodes 个节点
+	minNodes := 3
+	if analysis.Sparse {
+		minNodes = 4
+	}
+	for i := range branches {
+		branch := &branches[i]
 		for len(branch.Nodes) < minNodes {
 			branch.Nodes = append(branch.Nodes, newMindmapNode(
-				supplementBullet(title, len(branch.Nodes)+1),
-				"该节点为解释补充，用于形成可展开的导图层级。",
-				mindmapBranchExpansionDetail(title, analysis),
+				supplementBullet(branch.Title, len(branch.Nodes)+1),
+				mindmapNodeDetailFromEvidence(branch.Title, analysis),
+				mindmapBranchExpansionDetail(branch.Title, analysis),
 			))
+			branch.Nodes = uniqueMindmapNodes(branch.Nodes)
 		}
 		branch.Nodes = uniqueMindmapNodes(branch.Nodes)
-		plan.Branches = append(plan.Branches, branch)
 	}
+
+	plan.Branches = branches
 	return plan
 }
 
@@ -4598,6 +5208,47 @@ func mindmapNodeDetail(branchTitle, value string, analysis learningContentAnalys
 	}
 }
 
+// mindmapNodeDetailFromEvidence 从笔记证据中提取具体内容作为节点细节，
+// 替代原有的模板化描述。
+func mindmapNodeDetailFromEvidence(value string, analysis learningContentAnalysis) string {
+	// 如果值包含解释补充标记，返回通用提示
+	if strings.Contains(value, "解释补充") {
+		return "该节点为解释补充，用于补足学习结构。"
+	}
+
+	// 从证据中找与 value 最相关的具体内容
+	valueKeywords := extractSignificantWords(value)
+	for _, ev := range analysis.Evidence {
+		evKeywords := extractSignificantWords(ev.Text)
+		overlap := 0
+		for _, kw := range valueKeywords {
+			for _, ekw := range evKeywords {
+				if strings.EqualFold(kw, ekw) {
+					overlap++
+					break
+				}
+			}
+		}
+		if overlap >= 2 {
+			return summarizeLine(ev.Text, 90)
+		}
+	}
+
+	// 如果没有直接匹配的证据，返回通用但更有针对性的描述
+	switch {
+	case containsAnyFold(value, "定义", "概念", "是什么", "含义"):
+		return "明确该概念的精确定义、适用范围和与相关概念的区别。"
+	case containsAnyFold(value, "原理", "机制", "原因", "为什么"):
+		return "理解该原理成立的条件、因果链条和关键变量。"
+	case containsAnyFold(value, "步骤", "流程", "过程", "方法"):
+		return "按顺序理解每个步骤的输入、变化和产出。"
+	case containsAnyFold(value, "应用", "例子", "场景", "案例"):
+		return "结合具体场景判断该知识点如何迁移使用。"
+	default:
+		return fmt.Sprintf("围绕“%s”展开具体内容和关键要点。", strings.TrimSpace(value))
+	}
+}
+
 func mindmapBranchExpansionDetail(branchTitle string, analysis learningContentAnalysis) string {
 	switch branchTitle {
 	case "核心概念":
@@ -4667,13 +5318,16 @@ func renderMindmap(plan mindmapPlan) string {
 
 func mindmapNeedsStructureRepair(content string) bool {
 	trimmed := strings.TrimSpace(content)
-	if len([]rune(strings.ReplaceAll(trimmed, "#", ""))) < 20 || strings.Count(trimmed, "\n## ") < len(requiredMindmapBranchTitles()) || !strings.Contains(trimmed, "\n### ") {
+	if len([]rune(strings.ReplaceAll(trimmed, "#", ""))) < 20 {
 		return true
 	}
-	for _, title := range requiredMindmapBranchTitles() {
-		if !strings.Contains(trimmed, "## "+title) {
-			return true
-		}
+	// 至少3个 ## 分支
+	if strings.Count(trimmed, "\n## ") < 3 {
+		return true
+	}
+	// 至少有 ### 节点层级
+	if !strings.Contains(trimmed, "\n### ") {
+		return true
 	}
 	return false
 }
@@ -4683,11 +5337,15 @@ func supplementBullet(title string, detail int) string {
 	if title == "" {
 		return fmt.Sprintf("补充要点 %d：结合材料进一步分析该主题的关键内容。", detail)
 	}
+	// Generate concrete, knowledge-driven supplements rather than vague boilerplate.
+	// Each template provides a specific angle for expanding the topic with real content.
 	templates := []string{
-		fmt.Sprintf("关于%s，需要理解其核心定义和在实际场景中的应用方式。", title),
-		fmt.Sprintf("%s的关键在于把握其主要特征和与其他概念的关联关系。", title),
-		fmt.Sprintf("掌握%s需要从基本原理出发，理解其在整体知识体系中的位置和作用。", title),
-		fmt.Sprintf("在实际应用中，%s的表现形式和影响因素值得深入探讨。", title),
+		fmt.Sprintf("%s的核心定义：用一句话精确概括%s是什么，区分它与其他相近概念的本质差异。", title, title),
+		fmt.Sprintf("%s的运作原理：解释%s背后的因果机制或数学/逻辑基础，说明为什么它这样工作而非那样工作。", title, title),
+		fmt.Sprintf("%s的关键特征：列出%s的3个核心特征，每个特征给出一个具体例子或量化数据支撑。", title, title),
+		fmt.Sprintf("%s的应用场景：描述%s在真实场景中的典型用法，给出一个具体的操作步骤或数值案例。", title, title),
+		fmt.Sprintf("%s的常见误区：指出学习%s时最容易犯的2-3个错误，说明正确理解应该是什么。", title, title),
+		fmt.Sprintf("%s与其他概念的关系：说明%s在整体知识体系中的位置，它依赖什么前置知识，又是什么后续知识的基础。", title, title),
 	}
 	idx := (detail - 1) % len(templates)
 	return templates[idx]
@@ -5011,13 +5669,53 @@ func noteNeedsStructureRepair(content string) bool {
 	return false
 }
 
-func requiredQuizQuestionTypes() []string {
-	return []string{"single_choice", "short_answer", "short_answer"}
+func requiredQuizQuestionTypes(analysis learningContentAnalysis) []string {
+	conceptCount := len(analysis.KeyConcepts)
+	processCount := len(analysis.Processes)
+	exampleCount := len(analysis.Examples)
+	totalPoints := conceptCount + processCount + exampleCount
+
+	// 根据材料丰富度决定题目数量
+	targetCount := 5
+	if totalPoints >= 6 {
+		targetCount = 6
+	}
+	if totalPoints >= 10 {
+		targetCount = 7
+	}
+	if totalPoints >= 15 {
+		targetCount = 8
+	}
+
+	// 题型分配：至少1道 single_choice + 1道 true_false
+	types := []string{"single_choice", "true_false"}
+
+	// 如果有对比性知识点，加多选题
+	if conceptCount >= 3 {
+		types = append(types, "multi_choice")
+	}
+
+	// 如果有过程性知识点，加填空题
+	if processCount >= 1 {
+		types = append(types, "fill_blank")
+	}
+
+	// 补充 short_answer 直到达到目标数量
+	for len(types) < targetCount {
+		types = append(types, "short_answer")
+	}
+
+	// 如果超了就截断
+	if len(types) > targetCount {
+		types = types[:targetCount]
+	}
+
+	return types
 }
 
 func planQuizQuestions(analysis learningContentAnalysis) quizQuestionPlan {
 	plan := quizQuestionPlan{Topic: analysis.Topic}
-	types := requiredQuizQuestionTypes()
+	types := requiredQuizQuestionTypes(analysis)
 	concepts := append([]string{}, analysis.KeyConcepts...)
 	processes := append([]string{}, analysis.Processes...)
 	examples := append([]string{}, analysis.Examples...)
@@ -5040,6 +5738,46 @@ func planQuizQuestions(analysis learningContentAnalysis) quizQuestionPlan {
 			}
 			item.Answer = item.Options[0]
 			item.Explanation = fmt.Sprintf("根据笔记，“%s”的定义如原文所述。", topic)
+			item.Difficulty = "easy"
+		case "true_false":
+			topic := pickPoint(concepts, i+1)
+			item.Topic = topic
+			item.Question = fmt.Sprintf("判断：%s。", topic)
+			item.Options = []string{"正确", "错误"}
+			item.Answer = "正确"
+			item.Explanation = fmt.Sprintf("根据笔记内容，该说法是正确的。“%s”的定义和描述如原文所述。", topic)
+			item.Difficulty = "easy"
+		case "multi_choice":
+			topic := pickPoint(concepts, i+2)
+			if topic == "" {
+				topic = pickPoint(concepts, 0)
+			}
+			item.Topic = topic
+			item.Question = fmt.Sprintf("关于“%s”，以下哪些说法是正确的？（多选）", topic)
+			item.Options = []string{
+				topic + " 的基本定义。",
+				topic + " 的关键特征。",
+				"与原文矛盾的描述。",
+				topic + " 的适用条件。",
+			}
+			item.Answer = item.Options[0] + "；" + item.Options[1] + "；" + item.Options[3]
+			item.Explanation = fmt.Sprintf("选项A、B、D正确。选项C与原文矛盾。关于“%s”的详细说明见笔记原文。", topic)
+			item.Difficulty = "medium"
+		case "fill_blank":
+			if len(processes) > 0 {
+				topic := pickPoint(processes, i)
+				item.Topic = topic
+				item.Question = fmt.Sprintf("“%s”的关键步骤是____。", topic)
+				item.Answer = summarizeLine(topic, 100)
+				item.Explanation = "该答案来自提供的笔记上下文。"
+			} else {
+				topic := pickPoint(concepts, i)
+				item.Topic = topic
+				item.Question = fmt.Sprintf("请填写“%s”的核心定义中的关键词：____。", topic)
+				item.Answer = summarizeLine(topic, 100)
+				item.Explanation = "该答案来自提供的笔记上下文。"
+			}
+			item.Difficulty = "medium"
 		case "short_answer":
 			if len(processes) > 0 {
 				topic := pickPoint(processes, i)
@@ -5057,6 +5795,7 @@ func planQuizQuestions(analysis learningContentAnalysis) quizQuestionPlan {
 				item.Answer = summarizeLine(topic, 100)
 				item.Explanation = "该答案来自提供的笔记上下文。"
 			}
+			item.Difficulty = "hard"
 		}
 		plan.Questions = append(plan.Questions, item)
 	}
@@ -5079,7 +5818,7 @@ func expandQuizContent(plan quizQuestionPlan, analysis learningContentAnalysis) 
 			q.Explanation = "该答案来自提供的笔记上下文。"
 		}
 	}
-	for len(expanded.Questions) < 3 {
+	for len(expanded.Questions) < 5 {
 		topic := analysis.Topic
 		if len(analysis.KeyConcepts) > len(expanded.Questions) {
 			topic = analysis.KeyConcepts[len(expanded.Questions)]
@@ -5114,8 +5853,8 @@ func renderQuiz(plan quizQuestionPlan) string {
 		for _, opt := range q.Options {
 			options = append(options, fmt.Sprintf("%q", opt))
 		}
-		item := fmt.Sprintf(`{"type":%q,"question":%q,"options":[%s],"answer":%q,"explanation":%q}`,
-			q.Type, q.Question, strings.Join(options, ","), q.Answer, q.Explanation)
+		item := fmt.Sprintf(`{"type":%q,"question":%q,"options":[%s],"answer":%q,"explanation":%q,"difficulty":%q}`,
+			q.Type, q.Question, strings.Join(options, ","), q.Answer, q.Explanation, q.Difficulty)
 		items = append(items, item)
 	}
 	return `{"questions":[` + strings.Join(items, ",") + `]}`
@@ -5167,7 +5906,13 @@ func appendQuizPlansToContext(contextValue string, plan, expanded quizQuestionPl
 		b.WriteString("\n\nQUIZ_GENERATION_RULES\n")
 		b.WriteString("- Follow the planned question types and topics; do not omit or merge questions.\n")
 		b.WriteString("- Every question must include a non-empty answer and explanation.\n")
-		b.WriteString("- For single_choice, provide 3-4 options and mark the correct one in the answer field.\n")
+		b.WriteString("- For single_choice, provide 3-4 options and mark the correct one in the answer field with the exact option text.\n")
+		b.WriteString("- For true_false, options must be [\"正确\",\"错误\"], answer must be \"正确\" or \"错误\".\n")
+		b.WriteString("- For multi_choice, provide 4-5 options, answer must be all correct option texts joined by semicolons (；).\n")
+		b.WriteString("- For fill_blank, options must be an empty array [], answer must be the key term or phrase to fill in.\n")
+		b.WriteString("- For short_answer, options must be an empty array [], answer must be a reference answer.\n")
+		b.WriteString("- Generate at least 5 questions, covering at least 2 different question types.\n")
+		b.WriteString("- Distribute difficulty levels: roughly 40% easy, 40% medium, 20% hard.\n")
 		b.WriteString("- Content must be grounded in Original Markdown, Local References, Web Results, or the user's explicit prompt.\n")
 		b.WriteString("- Return only the JSON object, no markdown fences or extra text.\n")
 	}
@@ -5206,6 +5951,15 @@ func extractKeyPoints(markdown string, limit int) []string {
 	mergedLines := mergeCodeBlockLines(lines)
 
 	for _, line := range mergedLines {
+		// Code blocks are already merged into single lines starting with ```;
+		// preserve them as-is without TrimLeft which would strip the fence markers.
+		if isPPTCodeBlockBullet(line) {
+			points = append(points, line)
+			if len(points) >= limit {
+				return points
+			}
+			continue
+		}
 		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "-*#0123456789. "))
 		if len([]rune(line)) < 4 {
 			continue

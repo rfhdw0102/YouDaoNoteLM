@@ -4,10 +4,13 @@ import (
 	"YoudaoNoteLm/internal/middleware"
 	"YoudaoNoteLm/internal/model/dto/request"
 	"YoudaoNoteLm/internal/service"
+	"YoudaoNoteLm/pkg/logger"
 	"YoudaoNoteLm/pkg/response"
 	"mime"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // Controller handles generation HTTP requests.
@@ -74,9 +77,25 @@ func (ctrl *Controller) Export(c *gin.Context) {
 		Template: req.Template,
 	})
 	if err != nil {
+		logger.Warn("generation export failed",
+			zap.Uint("user_id", userID),
+			zap.String("type", req.Type),
+			zap.Int("content_len", len(req.Content)),
+			zap.Bool("contains_section", strings.Contains(strings.ToLower(req.Content), "<section")),
+			zap.String("template", req.Template),
+			zap.Error(err),
+		)
 		response.BizError(c, err)
 		return
 	}
+	logger.Info("generation export completed",
+		zap.Uint("user_id", userID),
+		zap.String("type", req.Type),
+		zap.Int("content_len", len(req.Content)),
+		zap.Int("output_len", len(resp.Data)),
+		zap.String("content_type", resp.ContentType),
+		zap.String("filename", resp.Filename),
+	)
 
 	c.Header("Content-Type", resp.ContentType)
 	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": resp.Filename}))

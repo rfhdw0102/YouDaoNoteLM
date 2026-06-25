@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Maximize2, Minimize2, Download, ArrowLeft } from 'lucide-react';
+import { Maximize2, Minimize2, Download, ArrowLeft, AlertCircle } from 'lucide-react';
 import Button from '../ui/Button';
 import { exportGenerationFile, downloadBlob } from '../../api/generation';
 
@@ -11,6 +11,7 @@ interface PPTViewerProps {
 export default function PPTViewer({ content, onClose }: PPTViewerProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // 进入全屏演示模式
@@ -43,6 +44,7 @@ export default function PPTViewer({ content, onClose }: PPTViewerProps) {
   const handleDownload = async () => {
     if (exporting) return;
     setExporting(true);
+    setExportError(null);
     try {
       const file = await exportGenerationFile({
         type: 'ppt',
@@ -52,6 +54,8 @@ export default function PPTViewer({ content, onClose }: PPTViewerProps) {
       downloadBlob(file.blob, file.filename);
     } catch (err) {
       console.error('PPT export failed:', err);
+      const msg = err instanceof Error ? err.message : '导出失败，请稍后重试';
+      setExportError(msg);
     } finally {
       setExporting(false);
     }

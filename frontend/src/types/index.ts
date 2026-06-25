@@ -68,10 +68,13 @@ export interface Note {
 // ============ Quiz Types ============
 export interface QuizQuestion {
   id: string;
+  type: 'single_choice' | 'true_false' | 'multi_choice' | 'fill_blank' | 'short_answer';
   question: string;
   options: string[];
   correctIndex: number;
+  answer: string;
   explanation: string;
+  difficulty?: 'easy' | 'medium' | 'hard';
 }
 
 export interface Quiz {
