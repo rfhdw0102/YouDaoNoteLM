@@ -191,6 +191,10 @@ func (s *chatAgentService) getLLMConfig(userID, llmConfigID uint) (*entity.UserL
 		return nil, bizerrors.New(bizerrors.CodeBadRequest, "未找到 LLM 配置")
 	}
 
+	if !llmConfig.Enabled {
+		return nil, bizerrors.New(bizerrors.CodeBadRequest, "该 LLM 配置已被禁用，请在设置中启用或选择其他配置")
+	}
+
 	llmConfig.APIKey = utils.DecryptAPIKey(llmConfig.APIKey, s.encryptionKey)
 	return llmConfig, nil
 }
