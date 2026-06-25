@@ -1,7 +1,7 @@
 services:
   # ========== Go 应用 ==========
   app:
-    image: ${DOCKER_IMAGE:-flandern/youdaonotelm:latest}
+    image: ${DOCKER_IMAGE:-youdaonotelm-app:latest}
     container_name: youdaonotelm-app
     ports:
       - "${APP_PORT:-8080}:8080"
@@ -32,7 +32,7 @@ services:
 
   # ========== MySQL ==========
   mysql:
-    image: mysql:8.4
+    image: mysql:8.0
     container_name: youdaonotelm-mysql
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
@@ -56,7 +56,7 @@ services:
 
   # ========== Redis ==========
   redis:
-    image: redis:7.4-alpine
+    image: redis:7-alpine
     container_name: youdaonotelm-redis
     command: >
       redis-server
@@ -135,7 +135,7 @@ services:
 
   # ========== Milvus 向量数据库 ==========
   milvus:
-    image: milvusdb/milvus:v2.5.10
+    image: milvusdb/milvus:latest
     container_name: youdaonotelm-milvus
     environment:
       ETCD_ENDPOINTS: etcd:2379
@@ -160,7 +160,7 @@ services:
 
   # ========== MarkItDown 文档转换服务 ==========
   markitdown:
-    image: ${MARKITDOWN_IMAGE:-flandern1211/markitdown:latest}
+    image: ${MARKITDOWN_IMAGE:-youdaonotelm-markitdown:latest}
     container_name: youdaonotelm-markitdown
     ports:
       - "${MARKITDOWN_PORT:-8085}:8085"
