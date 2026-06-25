@@ -1,0 +1,160 @@
+# CI/CD 工作流配置
+# 作用：自动化测试、构建和代码质量检查
+# 触发条件：仅当 Pull Request 合并到 develop 分支时触发
+
+name: CI
+
+# 触发条件配置
+on:
+  # 当 PR 合并到 develop 分支时触发（包括直接 push 到 develop）
+  push:
+    branches: [ develop ]
+
+  # 当创建 PR 目标是 develop 分支时触发（用于预检查）
+  pull_request:
+    branches: [ develop ]
+
+# 工作流权限设置
+permissions:
+  contents: read
+
+jobs:
+  # 第一阶段：代码质量检查和测试
+  test:
+    name: Lint and Test
+    runs-on: ubuntu-latest  # 使用 Ubuntu 最新版运行
+
+    steps:
+      # 步骤1：检出代码
+      # 作用：从 GitHub 仓库拉取最新代码到工作目录
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      # 步骤2：设置 Go 环境
+      # 作用：安装指定版本的 Go 语言环境
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'  # 与项目 go.mod 中的版本保持一致
+
+      # 步骤3：缓存 Go 模块
+      # 作用：缓存下载的依赖包，加速后续构建
+      # 缓存键：基于 go.sum 文件的哈希值，依赖变化时自动失效
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod  # Go 模块缓存路径
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      # 步骤4：下载依赖
+      # 作用：从 Go 模块代理下载项目所需的依赖包
+      - name: Download dependencies
+        run: go mod download
+
+      # 步骤5：运行代码规范检查
+      # 作用：使用 golangci-lint 检查代码风格和潜在问题
+      # 暂时注释：golangci-lint 尚未支持 Go 1.25，待官方支持后启用
+      # 目前由 quality job 中的 go vet 提供基本静态分析
+      # - name: Run golangci-lint
+      #   uses: golangci/golangci-lint-action@v4
+      #   with:
+      #     version: latest
+
+      # 步骤6：运行单元测试
+      # 作用：执行所有单元测试并生成覆盖率报告
+      # -v: 显示详细输出
+      # -race: 检测竞态条件
+      # -coverprofile: 生成覆盖率报告文件
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      # 步骤7：上传测试覆盖率
+      # 作用：将覆盖率报告上传到 Codecov 平台（可选）
+      # 需要在 GitHub 仓库设置中配置 CODECOV_TOKEN
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          fail_ci_if_error: false  # 上传失败时不阻断 CI
+
+  # 第二阶段：构建应用
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    needs: test  # 依赖 test 任务，只有测试通过才执行构建
+
+    steps:
+      # 步骤1：检出代码
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      # 步骤2：设置 Go 环境
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      # 步骤3：缓存 Go 模块
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      # 步骤4：构建应用
+      # 作用：编译 Go 项目生成可执行文件
+      # -o server: 输出文件名为 server
+      # ./cmd/server: 项目入口文件路径
+      - name: Build application
+        run: go build -o server ./cmd/server
+
+      # 步骤5：上传构建产物
+      # 作用：将编译好的二进制文件上传为 GitHub Artifact
+      # 可以在 Actions 页面下载，保留 7 天
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-binary
+          path: server
+          retention-days: 7
+
+  # 第三阶段：代码质量报告（可选）
+  quality:
+    name: Code Quality Report
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      # 运行 go vet 静态分析
+      # 作用：检查代码中的常见错误和可疑构造
+      - name: Run go vet
+        run: go vet ./...
+
+      # 检查是否有未处理的错误
+      # 作用：确保所有错误都被正确处理
+      - name: Check error handling
+        run: |
+          # 查找忽略错误的代码模式
+          if grep -rn "err = .*; err != nil" --include="*.go" .; then
+            echo "Warning: Found potential error handling issues"
+          fi
+
+      # 检查是否有 TODO/FIXME 注释
+      # 作用：提醒开发者处理遗留问题
+      - name: Check TODO comments
+        run: |
+          if grep -rn "TODO\|FIXME\|HACK" --include="*.go" .; then
+            echo "Found TODO/FIXME comments - consider addressing them"
+          fi
