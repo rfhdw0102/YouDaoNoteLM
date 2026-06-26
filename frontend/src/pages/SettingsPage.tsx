@@ -59,6 +59,7 @@ export default function SettingsPage() {
 
   // 删除确认弹窗状态
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState<UserConfigRequest>({
@@ -444,6 +445,7 @@ export default function SettingsPage() {
       return;
     }
 
+    setDeleting(true);
     try {
       let res;
       switch (activeTab) {
@@ -463,6 +465,9 @@ export default function SettingsPage() {
       }
     } catch (error) {
       console.error('Failed to delete config:', error);
+      setError('删除配置失败，请重试');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -470,6 +475,7 @@ export default function SettingsPage() {
   const handleConfirmDeleteEmbedding = async () => {
     if (!deleteConfirmId) return;
 
+    setDeleting(true);
     try {
       const res = await userConfigApi.deleteEmbeddingAndCollection(deleteConfirmId);
       if (res && res.code === 0) {
@@ -484,6 +490,8 @@ export default function SettingsPage() {
       console.error('Failed to delete embedding config:', error);
       setError('删除配置失败');
       setDeleteConfirmId(null);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -1050,42 +1058,6 @@ export default function SettingsPage() {
                         >
                           <Settings size={14} />
                         </button>
-                        {/* 自定义滑动开关 - 类似 ToggleLeft/ToggleRight 样式 */}
-                        <button
-                          onClick={() => handleToggle(config)}
-                          className="cursor-pointer"
-                        >
-                          <svg
-                            width="24"
-                            height="24"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                          >
-                            {/* 轨道 */}
-                            <rect
-                              x="2"
-                              y="7"
-                              width="20"
-                              height="10"
-                              rx="5"
-                              className={cn(
-                                'transition-colors duration-300',
-                                config.enabled ? 'fill-success' : 'fill-gray-300 dark:fill-gray-600'
-                              )}
-                            />
-                            {/* 滑块（小圆圈） */}
-                            <circle
-                              cx={config.enabled ? '17' : '7'}
-                              cy="12"
-                              r="4"
-                              className="fill-white transition-all duration-300 ease-in-out"
-                              style={{
-                                filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.15))'
-                              }}
-                            />
-                          </svg>
-                        </button>
                         <button
                           onClick={() => handleDelete(config.id)}
                           className="p-1.5 rounded-lg text-text-muted hover:text-error hover:bg-error/5 transition-colors cursor-pointer"
@@ -1261,7 +1233,7 @@ export default function SettingsPage() {
         <AnimatePresence>
           {deleteConfirmId && (
             <>
-              <div className="fixed inset-0 bg-black/50 z-50" onClick={() => setDeleteConfirmId(null)} />
+              <div className="fixed inset-0 bg-black/50 z-50" onClick={() => !deleting && setDeleteConfirmId(null)} />
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -1284,14 +1256,23 @@ export default function SettingsPage() {
                   <Button
                     variant="ghost"
                     onClick={() => setDeleteConfirmId(null)}
+                    disabled={deleting}
                   >
                     取消
                   </Button>
                   <Button
                     variant="danger"
                     onClick={handleConfirmDeleteEmbedding}
+                    disabled={deleting}
                   >
-                    确认删除
+                    {deleting ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        删除中...
+                      </>
+                    ) : (
+                      '确认删除'
+                    )}
                   </Button>
                 </div>
               </motion.div>
