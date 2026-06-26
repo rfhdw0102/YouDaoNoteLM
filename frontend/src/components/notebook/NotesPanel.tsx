@@ -51,6 +51,7 @@ export default function NotesPanel() {
   const [genPrompt, setGenPrompt] = useState('');
   const [useWeb, setUseWeb] = useState(true);
   const [allowDegrade, setAllowDegrade] = useState(true);
+  const [pptStyle, setPptStyle] = useState<string>('auto');
 
   if (!notebook || !currentNotebookId) return null;
 
@@ -106,6 +107,7 @@ export default function NotesPanel() {
       prompt: genPrompt.trim() || undefined,
       useWeb,
       allowDegrade,
+      pptStyle: type === 'ppt' ? pptStyle : undefined,
     });
   };
 
@@ -257,7 +259,24 @@ export default function NotesPanel() {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={pptStyle}
+              onChange={(e) => setPptStyle(e.target.value)}
+              disabled={generatingType !== null}
+              title="PPT 风格"
+              className={cn(
+                'h-7 px-2 rounded-md text-[11px] border outline-none transition-all',
+                'bg-bg-tertiary border-border text-text-secondary focus:border-accent/40',
+                generatingType !== null && 'opacity-50 cursor-not-allowed'
+              )}
+            >
+              <option value="auto">PPT风格：自动</option>
+              <option value="minimal">简约商务</option>
+              <option value="academic">学术清新</option>
+              <option value="tech">科技深色</option>
+              <option value="warm">暖色叙事</option>
+            </select>
             <button
               onClick={() => setUseWeb(!useWeb)}
               disabled={generatingType !== null}

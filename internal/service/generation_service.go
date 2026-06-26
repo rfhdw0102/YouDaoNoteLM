@@ -287,6 +287,21 @@ func optionInt(options map[string]any, key string, fallback int) int {
 	return fallback
 }
 
+// optionString reads a string option from the options map. It returns the
+// fallback when the key is missing or the value is not a non-empty string.
+func optionString(options map[string]any, key string, fallback string) string {
+	if options == nil {
+		return fallback
+	}
+	switch value := options[key].(type) {
+	case string:
+		if v := strings.TrimSpace(value); v != "" {
+			return v
+		}
+	}
+	return fallback
+}
+
 func generationOrchestrationSteps() []string {
 	return []string{
 		"context_prepare",
