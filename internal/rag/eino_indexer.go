@@ -106,9 +106,13 @@ func (w *EinoIndexerWrapper) Store(ctx context.Context, userID uint, docs []*sch
 	}
 
 	// 生成文档 ID（如果未设置）
-	for i, doc := range docs {
+	// 使用 sourceID + parentBlockID + childIndex 确保全局唯一
+	for _, doc := range docs {
 		if doc.ID == "" {
-			doc.ID = fmt.Sprintf("%d_%d", userID, i)
+			sourceID, _ := doc.MetaData["source_id"].(uint)
+			parentBlockID, _ := doc.MetaData["parent_block_id"].(uint)
+			childIndex, _ := doc.MetaData["child_index"].(int)
+			doc.ID = fmt.Sprintf("%d_%d_%d_%d", userID, sourceID, parentBlockID, childIndex)
 		}
 	}
 

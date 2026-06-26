@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"YoudaoNoteLm/internal/llm"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/repository"
@@ -23,6 +24,8 @@ import (
 	"YoudaoNoteLm/pkg/logger"
 	"YoudaoNoteLm/pkg/utils"
 
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -47,7 +50,8 @@ type importerService struct {
 	previewCache *cache.AudioPreviewCache
 	ingestionSvc rag.IngestionService
 	structurer   MarkdownStructurer // LLM 结构化服务
-	cancelFuncs  sync.Map           // taskID -> context.CancelFunc，用于中止运行中的任务
+	summaryCache *cache.SourceSummaryCache
+	cancelFuncs  sync.Map // taskID -> context.CancelFunc，用于中止运行中的任务
 }
 
 // NewImporterService 创建导入服务
@@ -60,6 +64,7 @@ func NewImporterService(
 	previewCache *cache.AudioPreviewCache,
 	ingestionSvc rag.IngestionService,
 	structurer MarkdownStructurer,
+	summaryCache *cache.SourceSummaryCache,
 ) ImporterService {
 	return &importerService{
 		markitdown:   markitdown,
@@ -70,6 +75,7 @@ func NewImporterService(
 		previewCache: previewCache,
 		ingestionSvc: ingestionSvc,
 		structurer:   structurer,
+		summaryCache: summaryCache,
 	}
 }
 
@@ -250,6 +256,9 @@ func (s *importerService) processFileImport(sourceID uint, fileName, ext, filePa
 			zap.Duration("elapsed", time.Since(stepStart)),
 		)
 	}
+
+	// 5. 生成摘要（异步，不阻塞主流程）
+	go s.generateAndSaveSummary(sourceID, userID, markdown)
 
 	logger.Info("文件导入完成",
 		zap.String("file", fileName),
@@ -558,6 +567,9 @@ func (s *importerService) ConfirmAudio(userID uint, previewID string, editedCont
 			zap.Duration("elapsed", time.Since(stepStart)),
 		)
 	}
+
+	// 生成摘要（异步，不阻塞主流程）
+	go s.generateAndSaveSummary(source.ID, userID, content)
 
 	if err := s.previewCache.UpdateStatus(ctx, previewID, "confirmed"); err != nil {
 		logger.Warn("更新预览状态失败", zap.String("preview_id", previewID), zap.Error(err))
@@ -875,6 +887,9 @@ func (s *importerService) processSingleSource(taskCtx context.Context, sourceID 
 		)
 	}
 
+	// 生成摘要（异步，不阻塞主流程）
+	go s.generateAndSaveSummary(sourceID, source.UserID, markdown)
+
 	logger.Info("URL 导入完成",
 		zap.Uint("source_id", sourceID),
 		zap.String("url", source.OriginalURL),
@@ -934,4 +949,149 @@ func (s *importerService) getASR(userID uint) (asr.ASRService, error) {
 		return nil, fmt.Errorf("ConfigService 未初始化")
 	}
 	return s.configSvc.GetASRService(userID)
+}
+
+// summarySystemPrompt 摘要生成的系统提示词
+const summarySystemPrompt = `你是一个资料摘要助手。请为以下文档内容生成一份简洁的摘要。
+
+要求：
+1. 摘要长度：200-400字
+2. 涵盖文档的核心主题、主要观点和关键信息
+3. 使用中文
+4. 保持客观，不添加个人评价
+5. 直接输出摘要内容，不要加任何前缀或解释`
+
+// generateAndSaveSummary 生成资料摘要并保存到 MySQL 和 Redis（importerService 的方法）
+func (s *importerService) generateAndSaveSummary(sourceID uint, userID uint, content string) {
+	doGenerateAndSaveSummary(s.sourceRepo, s.configSvc, s.summaryCache, sourceID, userID, content)
+}
+
+// fallbackSummaryLength 降级摘要的最大字符数
+const fallbackSummaryLength = 300
+
+// doGenerateAndSaveSummary 生成资料摘要的包级别共享实现
+// LLM 失败时自动降级为截取内容前 N 个字符作为兜底摘要
+func doGenerateAndSaveSummary(
+	sourceRepo repository.SourceRepository,
+	configSvc ConfigService,
+	summaryCache *cache.SourceSummaryCache,
+	sourceID uint, userID uint, content string,
+) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	startTime := time.Now()
+
+	summary, usedFallback := tryGenerateWithLLM(ctx, configSvc, userID, content)
+	if usedFallback {
+		// LLM 失败，使用降级摘要
+		summary = buildFallbackSummary(content)
+		logger.Warn("LLM 摘要生成失败，使用降级摘要",
+			zap.Uint("source_id", sourceID),
+			zap.Int("fallback_len", len(summary)),
+		)
+	}
+
+	if summary == "" {
+		logger.Warn("摘要生成失败且内容为空，跳过",
+			zap.Uint("source_id", sourceID),
+		)
+		return
+	}
+
+	// 保存到 MySQL
+	if err := sourceRepo.UpdateSummary(sourceID, summary); err != nil {
+		logger.Error("保存摘要到 MySQL 失败",
+			zap.Uint("source_id", sourceID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	// 保存到 Redis
+	if summaryCache != nil {
+		if err := summaryCache.Set(ctx, sourceID, summary); err != nil {
+			logger.Warn("保存摘要到 Redis 失败",
+				zap.Uint("source_id", sourceID),
+				zap.Error(err),
+			)
+		}
+	}
+
+	logger.Info("资料摘要生成完成",
+		zap.Uint("source_id", sourceID),
+		zap.Int("summary_len", len(summary)),
+		zap.Bool("fallback", usedFallback),
+		zap.Duration("elapsed", time.Since(startTime)),
+	)
+}
+
+// tryGenerateWithLLM 尝试用 LLM 生成摘要，返回 (摘要内容, 是否需要降级)
+func tryGenerateWithLLM(ctx context.Context, configSvc ConfigService, userID uint, content string) (string, bool) {
+	chatModel, err := getChatModelForSummary(ctx, configSvc, userID)
+	if err != nil || chatModel == nil {
+		return "", true
+	}
+
+	userMsg := fmt.Sprintf("请为以下文档生成摘要：\n\n%s", content)
+	msg, err := chatModel.Generate(ctx, []*schema.Message{
+		schema.SystemMessage(summarySystemPrompt),
+		schema.UserMessage(userMsg),
+	}, model.WithMaxTokens(1024))
+	if err != nil {
+		return "", true
+	}
+	if msg == nil || strings.TrimSpace(msg.Content) == "" {
+		return "", true
+	}
+
+	return strings.TrimSpace(msg.Content), false
+}
+
+// buildFallbackSummary 从内容中提取降级摘要 、截取前 fallbackSummaryLength 个字符，尝试在句子边界截断
+func buildFallbackSummary(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+
+	runes := []rune(content)
+	if len(runes) <= fallbackSummaryLength {
+		return content
+	}
+
+	// 截取前 N 个字符，尝试在句号、换行处断开
+	truncated := runes[:fallbackSummaryLength]
+	cutPoints := []rune{'。', '\n', '；', '！', '？', '.', '!', '?'}
+	bestCut := fallbackSummaryLength
+	for i := fallbackSummaryLength - 1; i >= fallbackSummaryLength/2; i-- {
+		for _, cp := range cutPoints {
+			if truncated[i] == cp {
+				bestCut = i + 1
+				break
+			}
+		}
+		if bestCut != fallbackSummaryLength {
+			break
+		}
+	}
+
+	return string(runes[:bestCut]) + "..."
+}
+
+// getChatModelForSummary 获取用于生成摘要的 ChatModel（包级别共享函数）
+func getChatModelForSummary(ctx context.Context, configSvc ConfigService, userID uint) (model.ToolCallingChatModel, error) {
+	llmConfig, err := configSvc.GetUserLLMConfig(userID)
+	if err != nil {
+		return nil, fmt.Errorf("获取 LLM 配置失败: %w", err)
+	}
+	if llmConfig == nil || !llmConfig.Enabled {
+		return nil, nil
+	}
+
+	chatModel, err := llm.NewChatModel(ctx, llmConfig)
+	if err != nil {
+		return nil, fmt.Errorf("创建 ChatModel 失败: %w", err)
+	}
+	return chatModel, nil
 }
