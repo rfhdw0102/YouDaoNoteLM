@@ -88,6 +88,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("external.minio.bucket 不能为空")
 	}
 
+	// Security
+	if c.Security.EncryptionKey == "" {
+		return fmt.Errorf("security.encryption_key 不能为空")
+	}
+	if len(c.Security.EncryptionKey) != 32 {
+		return fmt.Errorf("security.encryption_key 必须为32字节，当前%d字节", len(c.Security.EncryptionKey))
+	}
+
 	return nil
 }
 
@@ -192,10 +200,11 @@ func (c *ASRConfig) GetInt(key string) int {
 
 // MinIOConfig MinIO 对象存储配置
 type MinIOConfig struct {
-	Endpoint  string `mapstructure:"endpoint"`
-	AccessKey string `mapstructure:"access_key"`
-	SecretKey string `mapstructure:"secret_key"`
-	Bucket    string `mapstructure:"bucket"`
+	Endpoint       string `mapstructure:"endpoint"`
+	PublicEndpoint string `mapstructure:"public_endpoint"`
+	AccessKey      string `mapstructure:"access_key"`
+	SecretKey      string `mapstructure:"secret_key"`
+	Bucket         string `mapstructure:"bucket"`
 }
 
 // AppConfig 应用配置

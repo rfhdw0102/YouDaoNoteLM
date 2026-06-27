@@ -77,7 +77,6 @@ export default function QuizCard({ content }: QuizCardProps) {
   const isMultiChoice = question?.type === 'multi_choice';
   const isFillBlank = question?.type === 'fill_blank';
   const isShortAnswer = question?.type === 'short_answer';
-  const isTrueFalse = question?.type === 'true_false';
 
   const multiSelected = multiSelectAnswers[question?.id || ''] || [];
   const multiSubmitted = !!(showExplanation[question?.id || '']);

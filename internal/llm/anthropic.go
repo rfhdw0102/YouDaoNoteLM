@@ -46,19 +46,79 @@ func NewAnthropicChatModel(_ context.Context, apiKey, modelID, baseURL string) (
 
 // Generate 同步生成
 func (m *AnthropicChatModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
-	params := m.buildParams(input)
+	// 处理选项（包括 WithTools）
+	options := model.GetCommonOptions(nil, opts...)
+
+	// 如果选项中包含工具，绑定到模型
+	modelWithTools := m
+	if options.Tools != nil {
+		toolModel, err := m.WithTools(options.Tools)
+		if err != nil {
+			return nil, fmt.Errorf("绑定工具失败: %w", err)
+		}
+		if anthropicModel, ok := toolModel.(*AnthropicChatModel); ok {
+			modelWithTools = anthropicModel
+		}
+	}
+
+	params := modelWithTools.buildParams(input)
+
+	// 调试日志：记录工具配置
+	if len(params.Tools) > 0 {
+		logger.Debug("Anthropic API 请求包含工具",
+			zap.Int("tool_count", len(params.Tools)),
+			zap.String("model", m.modelID),
+		)
+	}
 
 	resp, err := m.client.Messages.New(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("Anthropic API 调用失败: %w", err)
 	}
 
-	return m.convertResponse(resp), nil
+	// 调试日志：记录响应中的工具调用
+	msg := m.convertResponse(resp)
+	if len(msg.ToolCalls) > 0 {
+		logger.Debug("Anthropic API 响应包含工具调用",
+			zap.Int("tool_call_count", len(msg.ToolCalls)),
+		)
+		for _, tc := range msg.ToolCalls {
+			logger.Debug("工具调用",
+				zap.String("tool_name", tc.Function.Name),
+				zap.String("arguments", tc.Function.Arguments),
+			)
+		}
+	}
+
+	return msg, nil
 }
 
 // Stream 流式生成
 func (m *AnthropicChatModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	params := m.buildParams(input)
+	// 处理选项（包括 WithTools）
+	options := model.GetCommonOptions(nil, opts...)
+
+	// 如果选项中包含工具，绑定到模型
+	modelWithTools := m
+	if options.Tools != nil {
+		toolModel, err := m.WithTools(options.Tools)
+		if err != nil {
+			return nil, fmt.Errorf("绑定工具失败: %w", err)
+		}
+		if anthropicModel, ok := toolModel.(*AnthropicChatModel); ok {
+			modelWithTools = anthropicModel
+		}
+	}
+
+	params := modelWithTools.buildParams(input)
+
+	// 调试日志：记录工具配置
+	if len(params.Tools) > 0 {
+		logger.Debug("Anthropic Stream API 请求包含工具",
+			zap.Int("tool_count", len(params.Tools)),
+			zap.String("model", m.modelID),
+		)
+	}
 
 	stream := m.client.Messages.NewStreaming(ctx, params)
 
@@ -81,6 +141,10 @@ func (m *AnthropicChatModel) Stream(ctx context.Context, input []*schema.Message
 					currentToolID = event.ContentBlock.ID
 					currentToolName = event.ContentBlock.Name
 					currentToolInput = ""
+					logger.Debug("Anthropic Stream: 检测到工具调用开始",
+						zap.String("tool_name", currentToolName),
+						zap.String("tool_id", currentToolID),
+					)
 				}
 			case "content_block_delta":
 				if event.Delta.Type == "text_delta" && event.Delta.Text != "" {

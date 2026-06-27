@@ -644,8 +644,14 @@ func (s *importerService) ImportSearchResults(userID, notebookID uint, items []S
 	}
 
 	// 创建可取消的 context，注册 cancel func 以便批量取消
+	// 设置整体超时：每个 URL 最多 2 分钟，整体最多 10 分钟
 	taskID := uuid.New().String()
-	taskCtx, cancel := context.WithCancel(context.Background())
+	maxTimeout := 10 * time.Minute
+	urlTimeout := time.Duration(len(seen)) * 2 * time.Minute
+	if urlTimeout > maxTimeout {
+		urlTimeout = maxTimeout
+	}
+	taskCtx, cancel := context.WithTimeout(context.Background(), urlTimeout)
 	s.cancelFuncs.Store(taskID, cancel)
 
 	// 异步处理每个 Source

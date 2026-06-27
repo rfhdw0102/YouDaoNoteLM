@@ -166,7 +166,7 @@ services:
     image: ${MARKITDOWN_IMAGE:-youdaonotelm-markitdown:latest}
     container_name: youdaonotelm-markitdown
     ports:
-      - "${MARKITDOWN_PORT:-8085}:8085"
+      - "8085:8085"
     volumes:
       - markitdown-cache:/app/cache
     healthcheck:

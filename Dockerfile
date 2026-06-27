@@ -23,26 +23,24 @@ RUN apk add --no-cache tzdata ca-certificates
 
 WORKDIR /app
 
-# 复制依赖文件
+# 复制依赖文件和 vendor 目录
 COPY go.mod go.sum ./
-RUN go mod download
+COPY vendor/ ./vendor/
 
 # 复制源码
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor -ldflags="-s -w" -o server ./cmd/server
 
 # ========== 阶段3: 最终镜像 ==========
-FROM nginx:alpine
+FROM nginx:1.27-bookworm
 
-# 安装运行时依赖
-RUN apk add --no-cache ca-certificates tzdata curl python3 py3-pip bash libc6-compat
+# 安装运行时依赖（Debian-based，提供 glibc 兼容性，youadonote CLI 基于 Bun 需要 glibc）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata curl python3 python3-pip bash && \
+    rm -rf /var/lib/apt/lists/*
 
-# 安装 youdaonote CLI
-RUN curl -fsSL https://artifact.lx.netease.com/download/youdaonote-cli/youdaonote-cli-linux-x64.tar.gz -o /tmp/youdaonote.tar.gz && \
-    tar -xzf /tmp/youdaonote.tar.gz -C /tmp/ && \
-    mv /tmp/linux-x64/youdaonote /usr/local/bin/youdaonote && \
-    chmod +x /usr/local/bin/youdaonote && \
-    rm -rf /tmp/youdaonote.tar.gz /tmp/linux-x64
+# 安装 youdaonote CLI（使用官方一键脚本，自动处理 AVX2 兼容性）
+RUN curl -fsSL https://artifact.lx.netease.com/download/youdaonote-cli/install.sh | bash -s -- -f -b /usr/local/bin
 
 # 设置时区
 ENV TZ=Asia/Shanghai
@@ -61,8 +59,8 @@ COPY configs/ /app/configs/
 
 # 复制有道转换脚本
 COPY scripts/ /app/scripts/
-RUN pip3 install --no-cache-dir -r /app/scripts/youdao/requirements.txt --break-system-packages 2>/dev/null || \
-    pip3 install --no-cache-dir -r /app/scripts/youdao/requirements.txt
+RUN pip3 install --no-cache-dir -r /app/scripts/youdao/requirements.txt 2>/dev/null || \
+    pip3 install --break-system-packages --no-cache-dir -r /app/scripts/youdao/requirements.txt
 
 # 创建必要目录
 RUN mkdir -p /app/logs

@@ -17,12 +17,8 @@ trap cleanup SIGTERM SIGINT
 
 # ========== 修复端口冲突 ==========
 # Nginx 监听 8080 并代理到 8081，Go 应用需要监听 8081
-# 在容器内动态修改 config.yaml 的端口配置
-CONFIG_FILE="/app/configs/config.yaml"
-if [ -f "$CONFIG_FILE" ]; then
-    sed -i 's/port: 8080/port: 8081/' "$CONFIG_FILE"
-    echo "✅ 已将 Go 应用端口修改为 8081（Nginx 代理转发）"
-fi
+# Docker 环境中使用 docker_config.yaml 已配置端口为 8081，无需修改
+echo "✅ Docker 环境：Go 应用端口已配置为 8081（Nginx 代理转发）"
 
 # ========== 启动服务 ==========
 cd /app

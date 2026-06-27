@@ -42,6 +42,11 @@ type aliyunNLSASRService struct {
 func NewAliyunNLSASRService(accessKeyID, accessKeySecret, appKey string) ASRService {
 	// 创建 SDK 客户端
 	c := sdk.NewConfig()
+	c.AutoRetry = true
+	c.MaxRetryTime = 3
+	c.Timeout = 30 * time.Second
+	c.Scheme = "HTTPS" // 使用 HTTPS（阿里云 ASR 推荐）
+	c.Debug = true     // 开启调试日志
 	credential := credentials.NewAccessKeyCredential(accessKeyID, accessKeySecret)
 	client, err := sdk.NewClientWithOptions(nlsRegionID, c, credential)
 	if err != nil {
@@ -53,6 +58,11 @@ func NewAliyunNLSASRService(accessKeyID, accessKeySecret, appKey string) ASRServ
 			appKey:          appKey,
 		}
 	}
+
+	logger.Info("阿里云ASR SDK客户端创建成功",
+		zap.String("region", nlsRegionID),
+		zap.String("scheme", c.Scheme),
+	)
 
 	return &aliyunNLSASRService{
 		accessKeyID:     accessKeyID,
@@ -77,12 +87,14 @@ func (s *aliyunNLSASRService) Transcribe(filePath string) (string, error) {
 		return "", fmt.Errorf("ASR 服务未配置文件存储，无法获取文件 URL")
 	}
 
+	// 获取文件访问 URL（预签名或代理 URL）
 	minioStore, ok := s.storage.(interface {
 		GetPresignedURL(string, time.Duration) (string, error)
 	})
 	if !ok {
 		return "", fmt.Errorf("存储类型不支持预签名 URL")
 	}
+
 	audioURL, err := minioStore.GetPresignedURL(filePath, 2*time.Hour)
 	if err != nil {
 		return "", fmt.Errorf("生成音频文件URL失败: %w", err)
@@ -117,6 +129,7 @@ func (s *aliyunNLSASRService) submitTask(audioURL string) (string, error) {
 	postRequest.Product = nlsProduct
 	postRequest.ApiName = "SubmitTask"
 	postRequest.Method = "POST"
+	postRequest.Scheme = requests.HTTPS // 使用 HTTPS（阿里云 ASR 推荐）
 
 	mapTask := make(map[string]string)
 	mapTask["appkey"] = s.appKey
@@ -130,7 +143,11 @@ func (s *aliyunNLSASRService) submitTask(audioURL string) (string, error) {
 	}
 	postRequest.FormParams["Task"] = string(task)
 
-	logger.Info("提交ASR任务", zap.String("params", string(task)))
+	logger.Info("提交ASR任务",
+		zap.String("domain", nlsDomain),
+		zap.String("scheme", string(postRequest.Scheme)),
+		zap.String("params", string(task)),
+	)
 
 	postResponse, err := s.client.ProcessCommonRequest(postRequest)
 	if err != nil {
@@ -176,6 +193,7 @@ func (s *aliyunNLSASRService) pollResult(taskID string) (string, error) {
 	getRequest.Product = nlsProduct
 	getRequest.ApiName = "GetTaskResult"
 	getRequest.Method = "GET"
+	getRequest.Scheme = requests.HTTPS // 使用 HTTPS（阿里云 ASR 推荐）
 	getRequest.QueryParams["TaskId"] = taskID
 
 	deadline := time.Now().Add(nlsPollTimeout)
@@ -227,6 +245,12 @@ func (s *aliyunNLSASRService) pollResult(taskID string) (string, error) {
 			}
 			return strings.Join(texts, ""), nil
 		default:
+			// 记录完整的响应内容以便调试
+			logger.Error("ASR转写失败",
+				zap.String("task_id", taskID),
+				zap.String("status", statusText),
+				zap.Any("response", getMapResult),
+			)
 			return "", fmt.Errorf("ASR转写失败，状态: %s", statusText)
 		}
 	}

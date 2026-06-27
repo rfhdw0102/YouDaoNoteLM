@@ -115,8 +115,9 @@ func (c *youdaoCLI) runWithKey(apiKey string, args []string) ([]byte, error) {
 		return nil, fmt.Errorf("写入配置失败: %w", err)
 	}
 
-	// 构建命令参数：youdaonote -s ydn <args>
-	fullArgs := append([]string{"-s", "ydn"}, args...)
+	// 构建命令参数：youdaonote --source ydn <args>
+	// 使用长参数 "--source" 替代 "-s"，防止 Bun 运行时拦截短参数
+	fullArgs := append([]string{"--source", "ydn"}, args...)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -150,7 +151,8 @@ func (c *youdaoCLI) CheckAvailable() error {
 	defer cancel()
 
 	// 使用 check --json 检查 CLI 是否可用（不需要 API Key）
-	cmd := exec.CommandContext(ctx, c.cliPath, "-s", "ydn", "check", "--json")
+	// 使用长参数 "--source" 替代 "-s"，防止 Bun 运行时拦截短参数
+	cmd := exec.CommandContext(ctx, c.cliPath, "--source", "ydn", "check", "--json")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
