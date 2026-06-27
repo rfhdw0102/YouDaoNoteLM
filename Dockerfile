@@ -36,7 +36,7 @@ FROM nginx:1.27-bookworm
 
 # 安装运行时依赖（Debian-based，提供 glibc 兼容性，youadonote CLI 基于 Bun 需要 glibc）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata curl python3 python3-pip bash && \
+    ca-certificates tzdata curl python3 python3-pip bash ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
 # 安装 youdaonote CLI（使用官方一键脚本，自动处理 AVX2 兼容性）

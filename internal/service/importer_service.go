@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -322,36 +324,24 @@ func (s *importerService) doAudioTranscribe(previewID string, userID uint, file 
 		return
 	}
 
-	// 转换音频为 ASR 兼容格式
-	stepStart := time.Now()
+	// 使用 ffmpeg 流式转换为 16kHz 单声道 WAV（内存占用低，支持各种格式）
 	asrFilePath := filePath
-	convertedData, convErr := s.convertAudioForASR(file, ext)
-	if convErr != nil {
-		logger.Warn("音频格式转换失败，将使用原始文件",
+	convertedPath, convertErr := s.convertAudioWithFFMPEG(filePath, ext)
+	if convertErr != nil {
+		logger.Warn("ffmpeg音频转换失败，使用原始文件",
 			zap.String("file", filePath),
-			zap.Duration("elapsed", time.Since(stepStart)),
-			zap.Error(convErr),
+			zap.Error(convertErr),
 		)
-	} else if convertedData != nil {
-		asrPath := strings.TrimSuffix(filePath, ext) + "_16k.wav"
-		if uploadErr := s.storage.UploadBytes(asrPath, convertedData, "audio/wav"); uploadErr != nil {
-			logger.Warn("上传转换后音频失败，将使用原始文件",
-				zap.String("file", filePath),
-				zap.Duration("elapsed", time.Since(stepStart)),
-				zap.Error(uploadErr),
-			)
-		} else {
-			asrFilePath = asrPath
-			logger.Info("音频格式转换成功",
-				zap.String("original", filePath),
-				zap.String("converted", asrPath),
-				zap.Duration("elapsed", time.Since(stepStart)),
-			)
-		}
+	} else {
+		asrFilePath = convertedPath
+		logger.Info("音频已通过ffmpeg转换为16kHz单声道WAV",
+			zap.String("original", filePath),
+			zap.String("converted", asrFilePath),
+		)
 	}
 
 	// 获取 ASR 服务
-	stepStart = time.Now()
+	stepStart := time.Now()
 	asrSvc, err := s.getASR(userID)
 	if err != nil {
 		logger.Error("获取ASR服务失败",
@@ -612,6 +602,56 @@ func (s *importerService) convertAudioForASR(file *multipart.FileHeader, ext str
 	}
 
 	return converted, nil
+}
+
+// convertAudioWithFFMPEG 使用 ffmpeg 流式转换音频为 16kHz 单声道 WAV
+// 从 MinIO 下载 → ffmpeg 转换 → 上传回 MinIO，全程流式处理，内存占用低
+func (s *importerService) convertAudioWithFFMPEG(filePath, ext string) (string, error) {
+	// 1. 下载原始文件到临时文件
+	srcData, err := s.storage.Download(filePath)
+	if err != nil {
+		return "", fmt.Errorf("下载原始音频失败: %w", err)
+	}
+
+	tmpInput, err := os.CreateTemp("", "asr-input-*"+ext)
+	if err != nil {
+		return "", fmt.Errorf("创建临时输入文件失败: %w", err)
+	}
+	defer os.Remove(tmpInput.Name())
+	defer tmpInput.Close()
+
+	if _, err := tmpInput.Write(srcData); err != nil {
+		return "", fmt.Errorf("写入临时输入文件失败: %w", err)
+	}
+	tmpInput.Close()
+
+	// 2. ffmpeg 转换为 16kHz 单声道 WAV
+	tmpOutput := tmpInput.Name() + "_16k.wav"
+	defer os.Remove(tmpOutput)
+
+	cmd := exec.Command("ffmpeg", "-y", "-i", tmpInput.Name(),
+		"-ar", "16000", "-ac", "1", "-sample_fmt", "s16",
+		"-f", "wav", tmpOutput)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ffmpeg转换失败: %w, stderr: %s", err, stderr.String())
+	}
+
+	// 3. 读取转换后的文件
+	convertedData, err := os.ReadFile(tmpOutput)
+	if err != nil {
+		return "", fmt.Errorf("读取转换后文件失败: %w", err)
+	}
+
+	// 4. 上传到 MinIO
+	convertedPath := filePath[:len(filePath)-len(filepath.Ext(filePath))] + "_16k.wav"
+	if err := s.storage.UploadBytes(convertedPath, convertedData, "audio/wav"); err != nil {
+		return "", fmt.Errorf("上传转换后音频失败: %w", err)
+	}
+
+	return convertedPath, nil
 }
 
 // ImportSearchResults 批量导入搜索结果
