@@ -93,7 +93,7 @@ interface NotebookState {
   toggleNoteSource: (notebookId: string, noteId: string) => Promise<void>;
 
   // Generation actions
-  generateNote: (notebookId: string, type: NoteType, opts?: { prompt?: string; useWeb?: boolean; allowDegrade?: boolean }) => Promise<void>;
+  generateNote: (notebookId: string, type: NoteType, opts?: { prompt?: string; useWeb?: boolean; allowDegrade?: boolean; pptStyle?: string }) => Promise<void>;
   clearGenerationError: () => void;
 
   // Reimport actions
@@ -1508,6 +1508,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         source_ids: sourceIds,
         use_web: opts?.useWeb ?? true,
         allow_degrade: opts?.allowDegrade ?? true,
+        options: opts?.pptStyle ? { ppt_style: opts.pptStyle } : undefined,
       });
 
       const typeLabel: Record<NoteType, string> = {

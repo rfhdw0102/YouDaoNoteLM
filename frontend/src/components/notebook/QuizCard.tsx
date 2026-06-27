@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Check, X, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { QuizQuestion } from '../../types';
 import Button from '../ui/Button';
+import { judgeAnswer, isAnswered, getCorrectOptionIndices } from './quizJudge';
 
 interface QuizCardProps {
   content: string;
@@ -87,10 +88,9 @@ export default function QuizCard({ content }: QuizCardProps) {
   if (!question) return null;
 
   const selectedAnswer = selectedAnswers[question.id];
-  const isAnswered = isMultiChoice ? multiSubmitted : (isFillBlank || isShortAnswer) ? fillSubmitted : selectedAnswer !== undefined && selectedAnswer !== null;
-  const isCorrect = question.type === 'multi_choice' || question.type === 'fill_blank' || question.type === 'short_answer'
-    ? false
-    : selectedAnswer === question.correctIndex;
+  const answerState = { selected: selectedAnswer, multiSelected, fillValue };
+  const isAnsweredCurrent = isAnswered(question, answerState);
+  const judgeResult = judgeAnswer(question, answerState);
 
   const handleMultiChoiceToggle = (optionIndex: number) => {
     if (multiSubmitted) return;
@@ -113,7 +113,7 @@ export default function QuizCard({ content }: QuizCardProps) {
       handleMultiChoiceToggle(optionIndex);
       return;
     }
-    if (isAnswered) return;
+    if (isAnsweredCurrent) return;
     setSelectedAnswers((prev) => ({ ...prev, [question.id]: optionIndex }));
     setShowExplanation((prev) => ({ ...prev, [question.id]: true }));
   };
@@ -133,12 +133,13 @@ export default function QuizCard({ content }: QuizCardProps) {
     setCurrentIndex(0);
   };
 
-  const answeredCount = Object.values(selectedAnswers).filter((v) => v !== null && v !== undefined).length;
+  const answeredCount = questions.filter((q) => {
+    const state = { selected: selectedAnswers[q.id], multiSelected: multiSelectAnswers[q.id], fillValue: fillAnswers[q.id] };
+    return isAnswered(q, state);
+  }).length;
   const correctCount = questions.filter((q) => {
-    if (q.type === 'multi_choice' || q.type === 'fill_blank' || q.type === 'short_answer') {
-      return false;
-    }
-    return selectedAnswers[q.id] === q.correctIndex;
+    const state = { selected: selectedAnswers[q.id], multiSelected: multiSelectAnswers[q.id], fillValue: fillAnswers[q.id] };
+    return judgeAnswer(q, state) === 'correct';
   }).length;
 
   return (
@@ -163,13 +164,8 @@ export default function QuizCard({ content }: QuizCardProps) {
       {/* Progress dots */}
       <div className="flex items-center gap-1.5 mb-6">
         {questions.map((q, i) => {
-          const qSingleAnswer = selectedAnswers[q.id];
-          const qMultiAnswered = multiSelectAnswers[q.id]?.length > 0;
-          const qFillAnswered = (fillAnswers[q.id] || '').trim() !== '';
-          const qAnswered = qSingleAnswer !== undefined && qSingleAnswer !== null
-            || qMultiAnswered
-            || qFillAnswered;
-          const qAnswer = qSingleAnswer ?? (qMultiAnswered ? -1 : undefined);
+          const qState = { selected: selectedAnswers[q.id], multiSelected: multiSelectAnswers[q.id], fillValue: fillAnswers[q.id] };
+          const qResult = judgeAnswer(q, qState);
           return (
             <button
               key={q.id}
@@ -177,11 +173,13 @@ export default function QuizCard({ content }: QuizCardProps) {
               className={`w-2 h-2 rounded-full transition-all cursor-pointer ${
                 i === currentIndex
                   ? 'w-6 bg-accent'
-                  : qAnswered
-                    ? qAnswer === q.correctIndex
-                      ? 'bg-success'
-                      : 'bg-error'
-                    : 'bg-border-light'
+                  : qResult === 'correct'
+                    ? 'bg-success'
+                    : qResult === 'wrong'
+                      ? 'bg-error'
+                      : qResult === 'reference'
+                        ? 'bg-accent'
+                        : 'bg-border-light'
               }`}
             />
           );
@@ -251,16 +249,17 @@ export default function QuizCard({ content }: QuizCardProps) {
             {/* 选择题（单选/判断/多选） */}
             {!isFillBlank && !isShortAnswer && question.options.map((option, i) => {
               const isSelected = isMultiChoice ? multiSelected.includes(i) : selectedAnswer === i;
-              const isCorrectOption = i === question.correctIndex;
-              const showResult = isMultiChoice ? multiSubmitted : isAnswered;
+              const correctSet = new Set(getCorrectOptionIndices(question));
+              const isCorrectOption = isMultiChoice ? correctSet.has(i) : i === question.correctIndex;
+              const showResult = isMultiChoice ? multiSubmitted : isAnsweredCurrent;
 
               return (
                 <motion.button
                   key={i}
-                  whileHover={!multiSubmitted && !isAnswered ? { scale: 1.01 } : undefined}
-                  whileTap={!multiSubmitted && !isAnswered ? { scale: 0.99 } : undefined}
+                  whileHover={!multiSubmitted && !isAnsweredCurrent ? { scale: 1.01 } : undefined}
+                  whileTap={!multiSubmitted && !isAnsweredCurrent ? { scale: 0.99 } : undefined}
                   onClick={() => handleSelect(i)}
-                  disabled={isMultiChoice ? multiSubmitted : isAnswered}
+                  disabled={isMultiChoice ? multiSubmitted : isAnsweredCurrent}
                   className={`w-full flex items-center gap-3 p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
                     showResult
                       ? isCorrectOption
@@ -333,8 +332,10 @@ export default function QuizCard({ content }: QuizCardProps) {
               >
                 <div className="mt-5 p-4 rounded-xl bg-bg-tertiary border border-border-light">
                   <div className="flex items-center gap-2 mb-2">
-                    {isCorrect ? (
+                    {judgeResult === 'correct' ? (
                       <span className="text-sm font-medium text-success">✓ 回答正确</span>
+                    ) : judgeResult === 'reference' ? (
+                      <span className="text-sm font-medium text-accent">参考答案</span>
                     ) : (
                       <span className="text-sm font-medium text-error">✗ 回答错误</span>
                     )}
@@ -342,7 +343,7 @@ export default function QuizCard({ content }: QuizCardProps) {
                   <p className="text-sm text-text-secondary leading-relaxed">
                     {question.explanation}
                   </p>
-                  {!isCorrect && (
+                  {judgeResult !== 'correct' && judgeResult !== null && (
                     <Button variant="ghost" size="sm" onClick={handleRetry} className="mt-3">
                       <RotateCcw size={12} /> 重新作答
                     </Button>

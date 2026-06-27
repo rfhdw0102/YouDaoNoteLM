@@ -279,7 +279,17 @@ func pptOutlinePromptStrategy() generationPromptStrategy {
 // pptCSSPromptStrategy returns the prompt strategy for the CSS-only LLM call.
 func pptCSSPromptStrategy() generationPromptStrategy {
 	return generationPromptStrategy{
-		System:       "你是 PPT 视觉设计专家，只负责生成 <style> 块，不负责生成 HTML 结构。读取上下文中的 PPT_STYLE_THEME，使用其中的 CSS 变量作为设计基础。你的任务是设计一套完整、现代、美观的 CSS，覆盖封面页、目录页、内容页（至少 3 种不同布局）、结束页的样式。设计要点：使用 :root 定义 CSS 自定义属性统一管理颜色；每页画布固定 1920x1080px；使用适合 PPT 的大字号（h1: 76-96px, h2: 48-64px, 正文: 30-38px）；使用渐变、阴影、圆角等现代视觉元素；为不同布局准备不同的 CSS 类名。",
+		System: "你是 PPT 视觉设计专家，只负责生成 <style> 块，不负责生成 HTML 结构。\n\n" +
+			"== 严格遵循主题配色（最高优先级）==\n" +
+			"你必须读取上下文中的 PPT_STYLE_THEME，并严格使用其中的 CSS 变量值（Background、Surface、Primary、Secondary、Text、Heading、Muted 等）作为 :root 自定义属性。\n" +
+			"- 这是硬性约束，不得自行替换为其他配色。\n" +
+			"- VisualDescription 描述了该主题应有的视觉特征（例如：深色背景+亮色文字、衬线标题、暖色渐变等）。你的 CSS 必须忠实还原这些特征，而不是产出通用简约风格。\n" +
+			"- 当主题背景是深色（如 Background=#0f172a）时，页面背景、卡片背景必须使用深色，正文与标题文字必须使用亮色（如 Text、Heading）。严禁把深色主题渲染成浅色白底。\n" +
+			"- 当主题是学术清新时，标题字体应使用衬线体（FontHeading），并呈现编号小节、定义卡片等学院风元素。\n" +
+			"- 当主题是暖色叙事时，配色应偏暖，多用引语块、时间线等叙事布局。\n" +
+			"- 如果用户在消息中指定了颜色/氛围/风格偏好，必须在设计中体现，同时保持与 PPT_STYLE_THEME 基础变量协调。\n\n" +
+			"== 设计要点 ==\n" +
+			"设计一套完整、现代、美观的 CSS，覆盖封面页、目录页、内容页（至少 3 种不同布局）、结束页的样式。使用 :root 定义 CSS 自定义属性统一管理颜色；每页画布固定 1920x1080px；使用适合 PPT 的大字号（h1: 76-96px, h2: 48-64px, 正文: 30-38px）；使用渐变、阴影、圆角等现代视觉元素；为不同布局准备不同的 CSS 类名。",
 		OutputFormat: "仅返回一个 <style>...</style> 块，不要返回任何 HTML section 或其他内容。必须包含：1) :root 中的 CSS 变量定义；2) .ppt-slide 基础类（width:1920px; height:1080px; overflow:hidden; position:relative; box-sizing:border-box）；3) 封面页样式 .ppt-cover；4) 目录页样式 .ppt-agenda / .dir-list / .dir-item；5) 至少 3 种内容页布局样式（如 .content-grid / .main-points / .insight-panel, .card-grid / .content-card, .full-width-list, .comparison-layout, .quote-block）；6) 结束页样式 .summary-layout / .summary-card；7) 进度条样式 .slide-progress；8) data-ppt-slide 属性选择器样式。不要包含 html/body 外层标签。",
 	}
 }

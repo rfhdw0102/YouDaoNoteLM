@@ -29,6 +29,7 @@ type generationDraft struct {
 	formatValid       bool
 	fallbackUsed      bool
 	pptRepairPlan     *pptOutlinePlan
+	pptStyleTheme     pptStyleTheme
 	mindmapRepairPlan *mindmapPlan
 	noteRepairPlan    *noteOutlinePlan
 	quizRepairPlan    *quizQuestionPlan
@@ -572,7 +573,17 @@ func (a *pptGenerationAgent) expandPPTChainContent(ctx context.Context, state pp
 }
 
 func (a *pptGenerationAgent) designPPTStyle(ctx context.Context, state pptChainState) (pptChainState, error) {
-	state.styleTheme = designPPTStyleTheme(state.analysis, state.expanded)
+	styleHint := ""
+	if state.input.Request != nil {
+		styleHint = optionString(state.input.Request.Options, "ppt_style", "")
+		if styleHint == "" {
+			styleHint = optionString(state.input.Request.Options, "pptStyle", "")
+		}
+		if styleHint == "" {
+			styleHint = optionString(state.input.Request.Options, "style", "")
+		}
+	}
+	state.styleTheme = designPPTStyleTheme(state.analysis, state.expanded, state.input.Request.Prompt, styleHint)
 	return state, nil
 }
 
@@ -643,14 +654,14 @@ func (a *pptGenerationAgent) generatePPTHTML(ctx context.Context, state pptChain
 		content = strings.TrimSpace(generated)
 	}
 	if content == "" {
-		content = renderStyledPPTSlides(state.expanded)
+		content = renderStyledPPTSlides(state.expanded, state.styleTheme)
 		fallbackUsed = true
 	}
 	if state.cssBlock != "" && !strings.Contains(strings.ToLower(content), "<style") {
 		content = state.cssBlock + "\n" + content
 	}
 	repairPlan := state.expanded
-	return generationDraft{input: state.input, content: content, fallbackUsed: fallbackUsed, pptRepairPlan: &repairPlan}, nil
+	return generationDraft{input: state.input, content: content, fallbackUsed: fallbackUsed, pptRepairPlan: &repairPlan, pptStyleTheme: state.styleTheme}, nil
 }
 
 // polishPPTHTML attempts to fix minor HTML quality issues without discarding
@@ -682,23 +693,60 @@ func (a *pptGenerationAgent) repairPPTStructure(ctx context.Context, draft gener
 	if pptCanPatchCanvas(draft.content) {
 		draft.content = patchPPTCanvasHTML(draft.content)
 	}
-	if pptNeedsStructureRepair(draft.content) ||
-		pptContainsInternalPromptLeak(draft.content) ||
-		pptContainsVisiblePlaceholderText(draft.content) ||
-		pptContainsUnrelatedBoilerplate(draft.content, draft.input) ||
-		pptContainsRepetitiveText(draft.content) ||
-		pptContainsExcessivePromptWords(draft.content) ||
-		pptHasSparseSlides(draft.content) ||
-		pptHasDuplicatedSlideTitles(draft.content) ||
-		pptHasMismatchedCardContent(draft.content) ||
-		pptNeedsHTMLQualityRepair(draft.content) ||
-		pptNeedsPlanCoverageRepair(draft.content, draft.pptRepairPlan) {
+
+	// 逐个检查触发条件，记录具体是哪个条件触发了 fallback
+	var repairReasons []string
+	if pptNeedsStructureRepair(draft.content) {
+		repairReasons = append(repairReasons, "structure_repair")
+	}
+	if pptContainsInternalPromptLeak(draft.content) {
+		repairReasons = append(repairReasons, "internal_prompt_leak")
+	}
+	if pptContainsVisiblePlaceholderText(draft.content) {
+		repairReasons = append(repairReasons, "visible_placeholder_text")
+	}
+	if pptContainsUnrelatedBoilerplate(draft.content, draft.input) {
+		repairReasons = append(repairReasons, "unrelated_boilerplate")
+	}
+	if pptContainsRepetitiveText(draft.content) {
+		repairReasons = append(repairReasons, "repetitive_text")
+	}
+	if pptContainsExcessivePromptWords(draft.content) {
+		repairReasons = append(repairReasons, "excessive_prompt_words")
+	}
+	if pptHasSparseSlides(draft.content) {
+		repairReasons = append(repairReasons, "sparse_slides")
+	}
+	if pptHasDuplicatedSlideTitles(draft.content) {
+		repairReasons = append(repairReasons, "duplicated_slide_titles")
+	}
+	if pptHasMismatchedCardContent(draft.content) {
+		repairReasons = append(repairReasons, "mismatched_card_content")
+	}
+	if pptNeedsHTMLQualityRepair(draft.content) {
+		repairReasons = append(repairReasons, "html_quality_repair")
+	}
+	if pptNeedsPlanCoverageRepair(draft.content, draft.pptRepairPlan) {
+		repairReasons = append(repairReasons, "plan_coverage_repair")
+	}
+
+	if len(repairReasons) > 0 {
+		logger.Warn("[PPT] repairPPTStructure triggered, replacing LLM output with fallback",
+			zap.Strings("reasons", repairReasons),
+			zap.Int("content_len_before", len(draft.content)),
+		)
 		if draft.pptRepairPlan != nil {
-			draft.content = renderStyledPPTSlides(*draft.pptRepairPlan)
+			draft.content = renderStyledPPTSlides(*draft.pptRepairPlan, draft.pptStyleTheme)
 		} else {
 			draft.content = a.fallback(draft.input)
 		}
 		draft.fallbackUsed = true
+		logger.Warn("[PPT] repairPPTStructure fallback applied",
+			zap.Int("content_len_after", len(draft.content)),
+			zap.Bool("used_renderStyledPPTSlides", draft.pptRepairPlan != nil),
+		)
+	} else {
+		logger.Info("[PPT] repairPPTStructure skipped, LLM output kept")
 	}
 	return draft, nil
 }
@@ -865,7 +913,17 @@ func (a *pptGenerationAgent) generateOutline(ctx context.Context, input generati
 
 func fallbackPPTContent(input generationAgentInput) string {
 	analysis := analyzeLearningContent(input)
-	return renderStyledPPTSlides(expandPPTContent(planPPTOutline(analysis), analysis))
+	styleHint := ""
+	userPrompt := ""
+	if input.Request != nil {
+		userPrompt = input.Request.Prompt
+		styleHint = optionString(input.Request.Options, "ppt_style", "")
+		if styleHint == "" {
+			styleHint = optionString(input.Request.Options, "pptStyle", "")
+		}
+	}
+	theme := designPPTStyleTheme(analysis, expandPPTContent(planPPTOutline(analysis), analysis), userPrompt, styleHint)
+	return renderStyledPPTSlides(expandPPTContent(planPPTOutline(analysis), analysis), theme)
 }
 func fallbackPPTOutline(input generationAgentInput) string {
 	plan := planPPTOutline(analyzeLearningContent(input))
@@ -2891,10 +2949,50 @@ func renderPPTSlides(plan pptOutlinePlan) string {
 	return strings.TrimSpace(b.String())
 }
 
+// styleHintMap: keyword patterns mapped to theme indices and descriptions
+// This lets users express style preferences in natural language.
+var styleHintMap = []struct {
+	patterns []string
+	themeIdx int
+	desc     string
+}{
+	// 科技深色
+	{[]string{"深色", "dark", "科技", "tech", "极客", "geek", "赛博", "cyber", "霓虹", "neon", "暗黑", "midnight", "黑客", "hacker", "渐变蓝", "渐变", "glow", "发光", "脉冲", "pulse"}, 2, "用户要求深色/科技风格"},
+	// 学术清新
+	{[]string{"商务", "business", "简约", "minimal", "专业", "professional", "经典", "classic", "古典", "antique", "庄重", "solemn", "古风", "传统", "traditional", "莫兰迪", "morandi", "低饱和", "低度饱和"}, 0, "用户要求商务/简约风格"},
+	{[]string{"学术", "academic", "论文", "paper", "研究", "research", "论文风格", "学院", "institute", "知网", "期刊", "journal"}, 1, "用户要求学术风格"},
+	// 暖色叙事
+	{[]string{"暖色", "warm", "叙事", "narrative", "故事", "story", "温暖", "温暖色调", "治愈", "healing", "柔和", "soft", "温馨", "cozy", "橙", "orange", "粉", "pink", "日落", "sunset", " autobiograph"}, 3, "用户要求暖色/叙事风格"},
+}
+
+// extractStyleHintFromPrompt scans the user prompt for style-related keywords
+// and returns the matching theme index and description, or (-1, "") if no match.
+func extractStyleHintFromPrompt(prompt string) (int, string) {
+	promptLower := strings.ToLower(prompt)
+	// Also split the prompt into individual words for broader matching
+	words := splitKeywordCandidates(promptLower)
+	for _, entry := range styleHintMap {
+		for _, pattern := range entry.patterns {
+			patternLower := strings.ToLower(pattern)
+			// Check if the prompt contains the pattern as a substring
+			if strings.Contains(promptLower, patternLower) {
+				return entry.themeIdx, entry.desc
+			}
+			// Also check individual words
+			for _, word := range words {
+				if word == patternLower || strings.Contains(word, patternLower) {
+					return entry.themeIdx, entry.desc
+				}
+			}
+		}
+	}
+	return -1, ""
+}
+
 // designPPTStyleTheme selects a coherent visual theme based on content analysis.
-// It picks from a palette of professional themes and adapts the accent colors
-// to the topic, giving the LLM concrete CSS variables to use.
-func designPPTStyleTheme(analysis learningContentAnalysis, plan pptOutlinePlan) pptStyleTheme {
+// styleHint is an explicit style preference string (e.g. from options["ppt_style"] or prompt keywords).
+// If styleHint is one of the theme names, it's used directly. Otherwise, keyword matching applies.
+func designPPTStyleTheme(analysis learningContentAnalysis, plan pptOutlinePlan, userPrompt string, styleHint string) pptStyleTheme {
 	themes := []pptStyleTheme{
 		{
 			Name: "简约商务", Primary: "#0f766e", Secondary: "#c2410c",
@@ -2933,21 +3031,99 @@ func designPPTStyleTheme(analysis learningContentAnalysis, plan pptOutlinePlan) 
 				"Use large quote blocks, timeline layouts, and photo-placeholder cards.",
 		},
 	}
-	topic := strings.ToLower(analysis.Topic)
-	themeIdx := 0
-	switch {
-	case containsAnyFold(topic, "代码", "编程", "算法", "系统", "架构", "数据", "code", "programming", "algorithm", "system", "architecture", "data"):
-		themeIdx = 2
-	case containsAnyFold(topic, "论文", "研究", "理论", "学术", "paper", "research", "theory", "academic"):
-		themeIdx = 1
-	case containsAnyFold(topic, "故事", "案例", "历史", "叙事", "story", "case", "history", "narrative"):
-		themeIdx = 3
+
+	// 1. 优先使用显式风格 hint（来自 options["ppt_style"]）
+	userStyleHint := ""
+	themeIdx := -1
+	styleHint = strings.TrimSpace(styleHint)
+	if styleHint != "" {
+		if idx, ok := matchThemeByName(styleHint); ok {
+			themeIdx = idx
+			userStyleHint = "用户显式指定风格: " + styleHint
+		} else if idx, desc := extractStyleHintFromPrompt(styleHint); idx >= 0 {
+			themeIdx = idx
+			userStyleHint = desc
+		}
 	}
+
+	// 2. 其次解析用户提示词中的风格关键词
+	if themeIdx < 0 {
+		if idx, desc := extractStyleHintFromPrompt(userPrompt); idx >= 0 {
+			themeIdx = idx
+			userStyleHint = desc
+		}
+	}
+
+	// 3. 如果用户没有指定风格，根据内容主题自动选择
+	if themeIdx < 0 {
+		topic := strings.ToLower(analysis.Topic)
+		themeIdx = 0
+		switch {
+		case containsAnyFold(topic, "代码", "编程", "算法", "系统", "架构", "数据", "code", "programming", "algorithm", "system", "architecture", "data"):
+			themeIdx = 2
+		case containsAnyFold(topic, "论文", "研究", "理论", "学术", "paper", "research", "theory", "academic"):
+			themeIdx = 1
+		case containsAnyFold(topic, "故事", "案例", "历史", "叙事", "story", "case", "history", "narrative"):
+			themeIdx = 3
+		}
+	}
+
 	theme := themes[themeIdx%len(themes)]
 	if len(plan.Slides) > 10 {
 		theme.LayoutHints += " With many slides, keep each slide focused on one key idea."
 	}
+	// 把用户的风格偏好附加到 LayoutHints，让 CSS 生成 LLM 能看到
+	if userStyleHint != "" {
+		theme.LayoutHints = userStyleHint + ". " + theme.LayoutHints
+	}
 	return theme
+}
+
+// matchThemeByName maps an explicit style string (e.g. "tech", "minimal",
+// "科技深色", "简约商务") to a theme index. Returns ok=false when the string
+// does not correspond to any known theme.
+func matchThemeByName(style string) (int, bool) {
+	style = strings.ToLower(strings.TrimSpace(style))
+	if style == "" {
+		return 0, false
+	}
+	// short aliases
+	switch style {
+	case "auto", "automatic", "自动":
+		return -1, true // -1 means "let the auto path decide"
+	case "minimal", "business", "简约", "简约商务", "商务", "minimal-business":
+		return 0, true
+	case "academic", "清新", "学术", "学术清新", "scholarly":
+		return 1, true
+	case "tech", "dark", "科技", "深色", "科技深色", "technology", "geek":
+		return 2, true
+	case "warm", "narrative", "暖色", "叙事", "暖色叙事", "story":
+		return 3, true
+	}
+	// fuzzy: style string contains a theme name fragment
+	for i, name := range []string{"简约商务", "学术清新", "科技深色", "暖色叙事"} {
+		if strings.Contains(style, strings.ToLower(name)) {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// pptThemeVisualDescription returns a natural-language description of each
+// theme's visual characteristics. The CSS-generation LLM uses this to faithfully
+// reproduce the intended look instead of defaulting to a generic style.
+func pptThemeVisualDescription(name string) string {
+	switch name {
+	case "简约商务":
+		return "浅色背景、大面积留白、细线分隔、青绿色主色调点缀橙色强调；扁平卡片、双栏布局；整体克制、专业、商务感强。"
+	case "学术清新":
+		return "米黄底色、衬线标题（Georgia/宋体感）、蓝紫色配色、编号小节、定义卡片与对比表格；严谨、学院风、文献感。"
+	case "科技深色":
+		return "深色背景（深蓝/近黑）、亮色文字、青色与琥珀色高对比强调、发光描边、等宽代码块、数据图表感；未来、科技、极客风。"
+	case "暖色叙事":
+		return "暖白底色、酒红与深蓝配色、大号引语块、时间线布局、图片占位卡；温暖、叙事、故事感。"
+	}
+	return ""
 }
 
 // appendPPTStyleToContext injects the visual style theme into the LLM context
@@ -2966,9 +3142,15 @@ func appendPPTStyleToContext(contextValue string, theme pptStyleTheme) string {
 	b.WriteString(fmt.Sprintf("Muted: %s\n", theme.Muted))
 	b.WriteString(fmt.Sprintf("FontHeading: %s\n", theme.FontHeading))
 	b.WriteString(fmt.Sprintf("FontBody: %s\n", theme.FontBody))
+	b.WriteString("VisualDescription: ")
+	b.WriteString(pptThemeVisualDescription(theme.Name))
+	b.WriteString("\n")
 	b.WriteString("LayoutGuidance: ")
 	b.WriteString(theme.LayoutHints)
 	b.WriteString("\n\nSTYLE_USAGE_RULES\n")
+	b.WriteString("- 你必须严格使用上方 PPT_STYLE_THEME 中的配色与字体作为 :root 的 CSS 自定义属性（--bg、--surface、--accent、--accent-2、--accent-soft、--text、--muted、--heading、--border、--panel 等），不要自行替换为其他颜色。\n")
+	b.WriteString("- VisualDescription 描述了该风格的视觉特征，你的 CSS 必须忠实还原这些特征（如深色背景、衬线标题、暖色渐变等），而不是回归通用简约样式。\n")
+	b.WriteString("- 背景色必须使用 Background 值（深色主题尤其重要：背景必须是深色，文字必须是亮色），不得用浅色背景覆盖深色主题。\n")
 	b.WriteString("- Use the CSS variables above as :root custom properties in your <style> block.\n")
 	b.WriteString("- Vary slide layouts: not every content slide should look the same.\n")
 	b.WriteString("- Use at least 3 different layout patterns across the deck (e.g. two-column, full-width, card-grid, comparison, timeline).\n")
@@ -3085,7 +3267,7 @@ func fallbackPPTCSS(theme pptStyleTheme) string {
   --bg: %s; --surface: %s; --surface-soft: %s;
   --accent: %s; --accent-2: %s; --accent-soft: %s;
   --text: %s; --muted: %s; --heading: %s;
-  --border: #d7e3df; --panel: #f3f7f6;
+  --border: %s; --panel: %s;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 .ppt-slide {
@@ -3112,7 +3294,7 @@ func fallbackPPTCSS(theme pptStyleTheme) string {
 }
 .ppt-cover {
   justify-content: center;
-  background: linear-gradient(135deg, #f7fbfa 0%%, #e8f2ef 58%%, #fff7ed 100%%);
+  background: %s;
   padding: 120px 150px;
 }
 h1 { font-size: 76px; font-weight: 850; color: var(--heading); line-height: 1.12; }
@@ -3122,24 +3304,85 @@ p, li { font-size: 32px; line-height: 1.36; }
 ul { list-style: none; padding-left: 0; }
 .content-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(420px, .7fr); gap: 54px; }
 .main-points { background: var(--surface); border-top: 6px solid var(--accent); padding: 12px 0 0; }
-.insight-panel { min-height: 360px; background: linear-gradient(180deg, #ecfdf5 0%%, #fff7ed 100%%); border: 1px solid var(--border); border-radius: 8px; padding: 34px; }
+.insight-panel { min-height: 360px; background: linear-gradient(180deg, var(--accent-soft) 0%%, var(--panel) 100%%); border: 1px solid var(--border); border-radius: 8px; padding: 34px; }
 .card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; }
 .content-card { min-height: 280px; background: var(--surface); border: 1px solid var(--border); border-left: 6px solid var(--accent); border-radius: 8px; padding: 32px 36px; }
 .full-width-list { background: var(--surface); border-top: 6px solid var(--accent); padding: 12px 0 0; }
 .comparison-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 42px; }
 .comparison-col { min-height: 400px; border-radius: 8px; padding: 36px; }
 .comparison-col.left { background: var(--accent-soft); border-left: 6px solid var(--accent); }
-.comparison-col.right { background: #fff7ed; border-left: 6px solid var(--accent-2); }
-.quote-block { background: linear-gradient(135deg, var(--accent-soft) 0%%, #fff7ed 100%%); border-left: 8px solid var(--accent); border-radius: 8px; padding: 48px 56px; min-height: 400px; }
+.comparison-col.right { background: var(--panel); border-left: 6px solid var(--accent-2); }
+.quote-block { background: linear-gradient(135deg, var(--accent-soft) 0%%, var(--panel) 100%%); border-left: 8px solid var(--accent); border-radius: 8px; padding: 48px 56px; min-height: 400px; }
 .ppt-code-block { background: #1e293b; color: #e2e8f0; border-radius: 8px; padding: 28px 32px; margin-top: 18px; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace; font-size: 24px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; overflow-x: auto; border-left: 6px solid var(--accent-2); }
 .ppt-code-block code { font-family: inherit; color: inherit; }
 .slide-progress { position: absolute; left: 112px; right: 112px; bottom: 58px; height: 10px; border-radius: 999px; background: #e5e7eb; overflow: hidden; }
 .slide-progress span { display: block; height: 100%%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 </style>`,
 		theme.Background, theme.Surface, theme.Surface,
-		theme.Primary, theme.Secondary, theme.Primary+"22",
+		theme.Primary, theme.Secondary, pptAccentSoft(theme),
 		theme.Text, theme.Muted, theme.Heading,
+		pptThemeBorder(theme), pptThemePanel(theme),
+		pptThemeCoverGradient(theme),
 		theme.FontBody)
+}
+
+// pptAccentSoft returns a soft tint of the primary accent suitable for
+// panel backgrounds. Dark themes use a darker accent overlay.
+func pptAccentSoft(theme pptStyleTheme) string {
+	switch theme.Name {
+	case "科技深色":
+		return "#1e3a5f"
+	case "学术清新":
+		return "#eef2ff"
+	case "暖色叙事":
+		return theme.Primary + "1a"
+	default:
+		return theme.Primary + "22"
+	}
+}
+
+// pptThemeBorder returns a border color derived from the theme. Light themes
+// use a subtle gray-green border; the dark theme uses a darker slate border.
+func pptThemeBorder(theme pptStyleTheme) string {
+	switch theme.Name {
+	case "科技深色":
+		return "#334155"
+	case "学术清新":
+		return "#dbe4f0"
+	case "暖色叙事":
+		return "#f0d9c4"
+	default:
+		return "#d7e3df"
+	}
+}
+
+// pptThemePanel returns a panel/surface-soft background color derived from
+// the theme.
+func pptThemePanel(theme pptStyleTheme) string {
+	switch theme.Name {
+	case "科技深色":
+		return "#1e293b"
+	case "学术清新":
+		return "#eef2ff"
+	case "暖色叙事":
+		return "#fff1e6"
+	default:
+		return "#f3f7f6"
+	}
+}
+
+// pptThemeCoverGradient returns the cover-page gradient for a given theme.
+func pptThemeCoverGradient(theme pptStyleTheme) string {
+	switch theme.Name {
+	case "科技深色":
+		return "linear-gradient(135deg, #0f172a 0%, #1e293b 58%, #0c2438 100%)"
+	case "学术清新":
+		return "linear-gradient(135deg, #fefce8 0%, #eef2ff 58%, #faf5ff 100%)"
+	case "暖色叙事":
+		return "linear-gradient(135deg, #fff7ed 0%, #ffe4e6 58%, #ffedd5 100%)"
+	default:
+		return "linear-gradient(135deg, #f7fbfa 0%, #e8f2ef 58%, #fff7ed 100%)"
+	}
 }
 
 // pptCSSHasCanvasSize checks if the CSS block defines 1920x1080 canvas.
@@ -3180,17 +3423,18 @@ func appendPPTCSSToContext(contextValue string, cssBlock string) string {
 	return strings.TrimSpace(b.String())
 }
 
-func renderStyledPPTSlides(plan pptOutlinePlan) string {
+func renderStyledPPTSlides(plan pptOutlinePlan, theme pptStyleTheme) string {
 	plan = sanitizePPTPlanVisibleText(plan)
 	var b strings.Builder
-	b.WriteString(`<style>
+	b.WriteString(fmt.Sprintf(`<style>
 :root {
-  --bg: #f8fafc; --surface: #ffffff; --surface-soft: #eef6f2;
-  --accent: #0f766e; --accent-2: #c2410c; --accent-soft: #d9f1ec;
-  --text: #111827; --muted: #4b5563; --heading: #0f172a;
-  --border: #d7e3df; --panel: #f3f7f6;
+  --bg: %s; --surface: %s; --surface-soft: %s;
+  --accent: %s; --accent-2: %s; --accent-soft: %s;
+  --text: %s; --muted: %s; --heading: %s;
+  --border: %s; --panel: %s;
 }
-* { margin: 0; padding: 0; box-sizing: border-box; }
+`, theme.Background, theme.Surface, theme.Surface, theme.Primary, theme.Secondary, pptAccentSoft(theme), theme.Text, theme.Muted, theme.Heading, pptThemeBorder(theme), pptThemePanel(theme)))
+	b.WriteString(`* { margin: 0; padding: 0; box-sizing: border-box; }
 .ppt-slide {
   position: relative;
   width: 1920px;
@@ -3198,7 +3442,7 @@ func renderStyledPPTSlides(plan pptOutlinePlan) string {
   overflow: hidden;
   background: var(--surface);
   color: var(--text);
-  font-family: system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-family: ` + theme.FontBody + `;
   padding: 86px 112px;
   display: flex;
   flex-direction: column;
@@ -3215,7 +3459,7 @@ func renderStyledPPTSlides(plan pptOutlinePlan) string {
 }
 .ppt-cover {
   justify-content: center;
-  background: linear-gradient(135deg, #f7fbfa 0%, #e8f2ef 58%, #fff7ed 100%);
+  background: ` + pptThemeCoverGradient(theme) + `;
   padding: 120px 150px;
 }
 .cover-meta {
@@ -3248,7 +3492,7 @@ func renderStyledPPTSlides(plan pptOutlinePlan) string {
   font-size: 28px;
   font-weight: 760;
 }
-.ppt-agenda { background: #fbfdfc; }
+.ppt-agenda { background: var(--bg); }
 .section-number {
   width: fit-content;
   background: var(--accent-soft);
@@ -3310,7 +3554,7 @@ li:last-child { border-bottom: none; }
 }
 .insight-panel {
   min-height: 360px;
-  background: linear-gradient(180deg, #ecfdf5 0%, #fff7ed 100%);
+  background: linear-gradient(180deg, var(--accent-soft) 0%, var(--panel) 100%);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 34px;
@@ -3350,12 +3594,12 @@ li:last-child { border-bottom: none; }
   padding: 38px 42px;
 }
 .summary-card {
-  background: #f8fafc;
+  background: var(--surface);
   border-left: 8px solid var(--accent);
 }
 .summary-actions {
-  background: #fff7ed;
-  border: 1px solid #fed7aa;
+  background: var(--panel);
+  border: 1px solid var(--border);
 }
 .summary-card h3,
 .summary-actions h3 {
@@ -3441,7 +3685,7 @@ li:last-child { border-bottom: none; }
   border-left: 6px solid var(--accent);
 }
 .comparison-col.right {
-  background: #fff7ed;
+  background: var(--panel);
   border-left: 6px solid var(--accent-2);
 }
 .comparison-col h3 {
@@ -3456,7 +3700,7 @@ li:last-child { border-bottom: none; }
   color: var(--text);
 }
 .quote-block {
-  background: linear-gradient(135deg, var(--accent-soft) 0%, #fff7ed 100%);
+  background: linear-gradient(135deg, var(--accent-soft) 0%, var(--panel) 100%);
   border-left: 8px solid var(--accent);
   border-radius: 8px;
   padding: 48px 56px;

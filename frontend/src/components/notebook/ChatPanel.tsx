@@ -110,10 +110,20 @@ function ReferencePopover({ references, startIndex = 1 }: { references: Referenc
                   <Markdown remarkPlugins={[remarkGfm]}>{ref.chunkContent}</Markdown>
                 </div>
               </div>
-              <div className="px-3 py-1.5 border-t border-border bg-bg-secondary/30">
-                <span className="text-[10px] text-text-muted">
-                  相关度: {(ref.score * 100).toFixed(0)}%
-                </span>
+              <div className="px-3 py-1.5 border-t border-border bg-bg-secondary/30 flex justify-end">
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      await navigator.clipboard.writeText(ref.chunkContent);
+                    } catch (err) {
+                      console.error('Failed to copy:', err);
+                    }
+                  }}
+                  className="flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors cursor-pointer"
+                >
+                  <Copy size={10} /> 复制
+                </button>
               </div>
             </div>
           )}
@@ -288,6 +298,7 @@ export default function ChatPanel() {
   const [editConvTitle, setEditConvTitle] = useState('');
   const [llmConfigs, setLlmConfigs] = useState<UserLLMConfig[]>([]);
   const [selectedLlmConfigId, setSelectedLlmConfigId] = useState<number>(0);
+  const [deletingConvId, setDeletingConvId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const prevConvIdRef = useRef<string | null>(null);
   const modelListRef = useRef<HTMLDivElement>(null);
@@ -493,11 +504,23 @@ export default function ChatPanel() {
                         <button
                           onClick={async (e) => {
                             e.stopPropagation();
-                            await deleteConversation(currentNotebookId, conv.id);
+                            setDeletingConvId(conv.id);
+                            try {
+                              await deleteConversation(currentNotebookId, conv.id);
+                            } catch (err) {
+                              console.error('Failed to delete conversation:', err);
+                            } finally {
+                              setDeletingConvId(null);
+                            }
                           }}
-                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-error/10 transition-all cursor-pointer"
+                          disabled={deletingConvId === conv.id}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-error/10 transition-all cursor-pointer disabled:opacity-50"
                         >
-                          <Trash2 size={11} className="text-error" />
+                          {deletingConvId === conv.id ? (
+                            <Loader2 size={11} className="animate-spin text-error" />
+                          ) : (
+                            <Trash2 size={11} className="text-error" />
+                          )}
                         </button>
                       </div>
                     ))}

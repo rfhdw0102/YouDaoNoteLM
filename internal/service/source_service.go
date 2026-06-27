@@ -9,6 +9,7 @@ import (
 	"YoudaoNoteLm/internal/model/dto/response"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/repository"
+	"YoudaoNoteLm/pkg/cache"
 	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/logger"
 	"go.uber.org/zap"
@@ -18,10 +19,11 @@ type sourceService struct {
 	sourceRepo   repository.SourceRepository
 	storage      storage.FileStorage
 	ingestionSvc rag.IngestionService
+	summaryCache *cache.SourceSummaryCache
 }
 
-func NewSourceService(sourceRepo repository.SourceRepository, storage storage.FileStorage, ingestionSvc rag.IngestionService) SourceService {
-	return &sourceService{sourceRepo: sourceRepo, storage: storage, ingestionSvc: ingestionSvc}
+func NewSourceService(sourceRepo repository.SourceRepository, storage storage.FileStorage, ingestionSvc rag.IngestionService, summaryCache *cache.SourceSummaryCache) SourceService {
+	return &sourceService{sourceRepo: sourceRepo, storage: storage, ingestionSvc: ingestionSvc, summaryCache: summaryCache}
 }
 
 func (s *sourceService) List(userID, notebookID uint, keyword string, page, size int) ([]*response.SourceResponse, int64, error) {
@@ -88,6 +90,18 @@ func (s *sourceService) Delete(id uint) error {
 		}
 	}
 
+	// 删除摘要缓存
+	if s.summaryCache != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.summaryCache.Delete(ctx, id); err != nil {
+			logger.Warn("删除摘要缓存失败",
+				zap.Uint("source_id", id),
+				zap.Error(err),
+			)
+		}
+	}
+
 	return s.sourceRepo.Delete(id)
 }
 
@@ -110,6 +124,18 @@ func (s *sourceService) BatchDelete(ids []uint) error {
 					)
 				}
 			}
+		}
+	}
+
+	// 批量删除摘要缓存
+	if s.summaryCache != nil && len(ids) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.summaryCache.BatchDelete(ctx, ids); err != nil {
+			logger.Warn("批量删除摘要缓存失败",
+				zap.Uints("source_ids", ids),
+				zap.Error(err),
+			)
 		}
 	}
 

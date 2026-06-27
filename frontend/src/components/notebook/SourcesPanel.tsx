@@ -82,6 +82,14 @@ export default function SourcesPanel() {
   const [reimporting, setReimporting] = useState(false);
   const [reimportResult, setReimportResult] = useState<{ count: number; message: string } | null>(null);
 
+  // Batch delete / delete failed state
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const [deleteFailedLoading, setDeleteFailedLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Import selected search results state
+  const [importingSelected, setImportingSelected] = useState(false);
+
   // 折叠状态
   const [expandedVectorized, setExpandedVectorized] = useState(true);
   const [expandedUnvectorized, setExpandedUnvectorized] = useState(true);
@@ -161,17 +169,26 @@ export default function SourcesPanel() {
     const selectedIds = notebook.sources.filter(s => s.selected).map(s => s.id);
     if (selectedIds.length === 0 || !currentNotebookId) return;
 
+    setBatchDeleting(true);
+    setDeleteError(null);
     try {
       // 先删除已存在的 sources
       await batchRemoveSources(currentNotebookId, selectedIds);
     } catch (err) {
       console.error('Batch delete failed:', err);
+      setDeleteError('删除失败，请重试');
+      // 3秒后自动清除错误提示
+      setTimeout(() => setDeleteError(null), 3000);
+    } finally {
+      setBatchDeleting(false);
     }
   };
 
   const handleDeleteFailed = async () => {
     if (!currentNotebookId) return;
 
+    setDeleteFailedLoading(true);
+    setDeleteError(null);
     try {
       const count = await deleteFailedSources(currentNotebookId);
       if (count > 0) {
@@ -179,6 +196,10 @@ export default function SourcesPanel() {
       }
     } catch (err) {
       console.error('Delete failed sources failed:', err);
+      setDeleteError('清除失效资料失败，请重试');
+      setTimeout(() => setDeleteError(null), 3000);
+    } finally {
+      setDeleteFailedLoading(false);
     }
   };
 
@@ -332,6 +353,8 @@ export default function SourcesPanel() {
       .filter((_, i) => selectedResults.has(i))
       .map(r => ({ title: r.title, url: r.url }));
     if (items.length === 0 || !currentNotebookId) return;
+
+    setImportingSelected(true);
     try {
       await importSearchResults(currentNotebookId, items);
       // 导入成功后关闭搜索面板并清空输入
@@ -339,6 +362,8 @@ export default function SourcesPanel() {
       setImportInput('');
     } catch (err) {
       console.error('Import search results failed:', err);
+    } finally {
+      setImportingSelected(false);
     }
   };
 
@@ -674,8 +699,17 @@ export default function SourcesPanel() {
                   size="sm"
                   className="w-full text-sm"
                   onClick={handleImportSelected}
+                  disabled={importingSelected}
                 >
-                  <Plus size={14} /> 导入选中 ({selectedResults.size})
+                  {importingSelected ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" /> 导入中...
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={14} /> 导入选中 ({selectedResults.size})
+                    </>
+                  )}
                 </Button>
               </div>
             )}
@@ -700,13 +734,15 @@ export default function SourcesPanel() {
               </button>
             )}
             {failedCount > 0 && (
-              <button onClick={handleDeleteFailed} className="flex items-center gap-1 text-xs text-warning hover:text-warning/80 transition-colors cursor-pointer">
-                <AlertCircle size={11} /> 清除失效 ({failedCount})
+              <button onClick={handleDeleteFailed} disabled={deleteFailedLoading} className="flex items-center gap-1 text-xs text-warning hover:text-warning/80 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                {deleteFailedLoading ? <Loader2 size={11} className="animate-spin" /> : <AlertCircle size={11} />}
+                {deleteFailedLoading ? '清除中...' : `清除失效 (${failedCount})`}
               </button>
             )}
             {(selectedVectorizedCount > 0 || selectedUnvectorizedCount > 0) && (
-              <button onClick={handleBatchDelete} className="flex items-center gap-1 text-xs text-error hover:text-error/80 transition-colors cursor-pointer">
-                <Trash2 size={11} /> 删除选中 ({selectedVectorizedCount + selectedUnvectorizedCount})
+              <button onClick={handleBatchDelete} disabled={batchDeleting} className="flex items-center gap-1 text-xs text-error hover:text-error/80 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                {batchDeleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                {batchDeleting ? '删除中...' : `删除选中 (${selectedVectorizedCount + selectedUnvectorizedCount})`}
               </button>
             )}
           </div>
@@ -719,6 +755,13 @@ export default function SourcesPanel() {
             reimportResult.count > 0 ? 'bg-success/5 text-success' : 'bg-warning/5 text-warning'
           )}>
             {reimportResult.message}
+          </div>
+        )}
+
+        {/* Delete error notification */}
+        {deleteError && (
+          <div className="px-3 py-2 text-xs bg-error/5 text-error">
+            {deleteError}
           </div>
         )}
       </div>

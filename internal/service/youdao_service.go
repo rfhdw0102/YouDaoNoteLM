@@ -11,6 +11,7 @@ import (
 	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/repository"
 	externalYoudao "YoudaoNoteLm/internal/service/external/youdao"
+	"YoudaoNoteLm/pkg/cache"
 	"YoudaoNoteLm/pkg/logger"
 
 	"github.com/google/uuid"
@@ -23,8 +24,10 @@ type youdaoService struct {
 	sourceRepo   repository.SourceRepository
 	ingestionSvc rag.IngestionService
 	structurer   MarkdownStructurer // LLM 结构化服务
-	cancelFuncs  sync.Map           // taskID -> context.CancelFunc
-	cookiesPath  string             // youdaonote cookies 文件路径（用于 .note 格式转换）
+	configSvc    ConfigService      // 用于获取用户 LLM 配置（摘要生成）
+	summaryCache *cache.SourceSummaryCache
+	cancelFuncs  sync.Map // taskID -> context.CancelFunc
+	cookiesPath  string   // youdaonote cookies 文件路径（用于 .note 格式转换）
 }
 
 // NewYoudaoService 创建有道云笔记服务
@@ -35,6 +38,8 @@ func NewYoudaoService(
 	ingestionSvc rag.IngestionService,
 	cookiesPath string,
 	structurer MarkdownStructurer,
+	configSvc ConfigService,
+	summaryCache *cache.SourceSummaryCache,
 ) YoudaoService {
 	return &youdaoService{
 		cli:          cli,
@@ -43,6 +48,8 @@ func NewYoudaoService(
 		ingestionSvc: ingestionSvc,
 		cookiesPath:  cookiesPath,
 		structurer:   structurer,
+		configSvc:    configSvc,
+		summaryCache: summaryCache,
 	}
 }
 
@@ -56,6 +63,11 @@ func (s *youdaoService) getAPIKey(userID uint) (string, error) {
 		return "", fmt.Errorf("请先绑定有道云笔记账号")
 	}
 	return binding.APIKey, nil
+}
+
+// generateAndSaveSummary 生成资料摘要并保存到 MySQL 和 Redis
+func (s *youdaoService) generateAndSaveSummary(sourceID uint, userID uint, content string) {
+	doGenerateAndSaveSummary(s.sourceRepo, s.configSvc, s.summaryCache, sourceID, userID, content)
 }
 
 // Bind 绑定有道 API Key
@@ -287,6 +299,9 @@ func (s *youdaoService) ImportNote(userID uint, notebookID uint, fileID string) 
 			zap.Duration("elapsed", time.Since(stepStart)),
 		)
 	}
+
+	// 5. 生成摘要（异步，不阻塞主流程）
+	go s.generateAndSaveSummary(source.ID, userID, content)
 
 	logger.Info("有道笔记导入完成",
 		zap.Uint("user_id", userID),
@@ -639,6 +654,9 @@ func (s *youdaoService) processSingleNote(taskCtx context.Context, apiKey string
 			zap.Duration("elapsed", time.Since(stepStart)),
 		)
 	}
+
+	// 生成摘要（异步，不阻塞主流程）
+	go s.generateAndSaveSummary(sourceID, existing.UserID, content)
 
 	logger.Info("有道笔记导入完成",
 		zap.Uint("source_id", sourceID),

@@ -28,6 +28,8 @@ export default function HomePage() {
   const [renameValue, setRenameValue] = useState('');
   const [error, setError] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const filtered = notebooks.filter((n) =>
     n.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -156,7 +158,7 @@ export default function HomePage() {
               <Edit3 size={14} /> 重命名
             </button>
             <div className="border-t border-border my-0.5" />
-            <button onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); if (menuNotebookId) { deleteNotebook(menuNotebookId); setMenuNotebookId(null); } }}
+            <button onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); if (menuNotebookId) { setDeleteConfirmId(menuNotebookId); setMenuNotebookId(null); } }}
               className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-error hover:bg-error/5 transition-colors cursor-pointer">
               <Trash2 size={14} /> 删除
             </button>
@@ -197,6 +199,67 @@ export default function HomePage() {
             {error}
             <button onClick={() => setError('')} className="ml-3 text-error/60 hover:text-error cursor-pointer">✕</button>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete confirmation modal */}
+      <AnimatePresence>
+        {deleteConfirmId && (
+          <>
+            <div className="fixed inset-0 bg-black/50 z-50" onClick={() => !deleting && setDeleteConfirmId(null)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[400px] bg-bg-card rounded-2xl border border-border-light shadow-2xl p-6"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-error/10 flex items-center justify-center">
+                  <Trash2 size={20} className="text-error" />
+                </div>
+                <h3 className="text-lg font-semibold text-text-primary">确认删除笔记本</h3>
+              </div>
+              <div className="mb-6 p-4 rounded-xl bg-warning/5 border border-warning/20">
+                <p className="text-sm text-warning font-medium mb-2">⚠️ 此操作不可逆！</p>
+                <p className="text-sm text-text-secondary">
+                  删除后，该笔记本下的所有资料、对话和笔记都将被永久删除，且无法恢复。
+                </p>
+              </div>
+              <div className="flex justify-end gap-3">
+                <Button
+                  variant="ghost"
+                  onClick={() => setDeleteConfirmId(null)}
+                  disabled={deleting}
+                >
+                  取消
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={async () => {
+                    setDeleting(true);
+                    try {
+                      await deleteNotebook(deleteConfirmId);
+                      setDeleteConfirmId(null);
+                    } catch (err) {
+                      setError(getErrorMessage(err, '删除失败'));
+                    } finally {
+                      setDeleting(false);
+                    }
+                  }}
+                  disabled={deleting}
+                >
+                  {deleting ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      删除中...
+                    </>
+                  ) : (
+                    '确认删除'
+                  )}
+                </Button>
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </div>

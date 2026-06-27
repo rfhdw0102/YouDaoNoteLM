@@ -174,6 +174,7 @@ func (a *App) initDependencies() {
 	redisCache := cache.New(a.redis)
 	importTaskCache := cache.NewImportTaskCache(redisCache)
 	audioPreviewCache := cache.NewAudioPreviewCache(redisCache)
+	sourceSummaryCache := cache.NewSourceSummaryCache(a.redis)
 
 	// 创建 ConfigService（配置路由降级，管理 ASR/Search/LLM/Embedding 等动态服务）
 	configSvc := service.NewConfigService(sysConfigRepo, userConfigRepo, llmConfigRepo, redisCache, minioStorage, a.cfg.Security.EncryptionKey)
@@ -192,14 +193,14 @@ func (a *App) initDependencies() {
 	}
 
 	// 创建笔记本和资料来源服务（需要依赖 IngestionService 来删除向量数据）
-	notebookSvc := service.NewNotebookService(notebookRepo, sourceRepo, conversationRepo, messageRepo, ingestionSvc, chatCache)
-	sourceSvc := service.NewSourceService(sourceRepo, minioStorage, ingestionSvc)
+	notebookSvc := service.NewNotebookService(notebookRepo, sourceRepo, conversationRepo, messageRepo, ingestionSvc, chatCache, sourceSummaryCache)
+	sourceSvc := service.NewSourceService(sourceRepo, minioStorage, ingestionSvc, sourceSummaryCache)
 
 	// 创建导入服务（ASR 通过 ConfigService 动态获取，RAG 通过 IngestionService）
 	importerSvc := service.NewImporterService(
 		configSvc, markitdownClient, minioStorage,
 		sourceRepo, importTaskCache, audioPreviewCache,
-		ingestionSvc, structurer,
+		ingestionSvc, structurer, sourceSummaryCache,
 	)
 
 	// 创建 RAGRetriever
@@ -241,7 +242,7 @@ func (a *App) initDependencies() {
 		logger.Warn("youdaonote CLI 不可用，有道云笔记导入功能将无法使用", zap.Error(err))
 	}
 	youdaoBindingRepo := repository.NewYoudaoBindingRepository(a.mysqlDB)
-	youdaoSvc := service.NewYoudaoService(youdaoCLI, youdaoBindingRepo, sourceRepo, ingestionSvc, a.cfg.External.Youdao.CookiesPath, structurer)
+	youdaoSvc := service.NewYoudaoService(youdaoCLI, youdaoBindingRepo, sourceRepo, ingestionSvc, a.cfg.External.Youdao.CookiesPath, structurer, configSvc, sourceSummaryCache)
 
 	// 创建搜索 Agent（依赖 youdaoSvc、youdaoCLI 和 importerSvc）
 	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc, youdaoSvc, youdaoCLI)
@@ -255,7 +256,7 @@ func (a *App) initDependencies() {
 	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory, a.cfg.Security.EncryptionKey)
 
 	// 创建 ChatAgentService 和 ConversationService
-	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache, a.cfg.Security.EncryptionKey)
+	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache, sourceRepo, sourceSummaryCache, a.cfg.Security.EncryptionKey)
 	convSvc := service.NewConversationService(conversationRepo, messageRepo, chatCache)
 	logger.Info("ChatAgentService 初始化成功")
 	logger.Info("ConversationService 初始化成功")
