@@ -104,6 +104,13 @@ jobs:
       url: ${{ vars.STAGING_URL }}
 
     steps:
+      - name: Debug secret presence
+        run: |
+          echo "SSH_HOST set: ${{ secrets.SSH_HOST != '' }}"
+          echo "SSH_USERNAME set: ${{ secrets.SSH_USERNAME != '' }}"
+          echo "SSH_PRIVATE_KEY set: ${{ secrets.SSH_PRIVATE_KEY != '' }}"
+          echo "STAGING_URL set: ${{ vars.STAGING_URL != '' }}"
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
