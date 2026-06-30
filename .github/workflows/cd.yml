@@ -111,6 +111,20 @@ jobs:
           echo "SSH_PRIVATE_KEY set: ${{ secrets.SSH_PRIVATE_KEY != '' }}"
           echo "STAGING_URL set: ${{ vars.STAGING_URL != '' }}"
 
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Copy docker-compose.yml to server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          source: "docker-compose.yml"
+          target: "/home/flandern/youdaonotelm"
+          overwrite: true
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
@@ -124,9 +138,8 @@ jobs:
             # 创建目录（如果不存在）
             mkdir -p "$DEPLOY_DIR/configs"
 
-            # 更新 docker-compose.yml
-            curl -fsSL "https://raw.githubusercontent.com/rfhdw0102/YouDaoNoteLM/develop/docker-compose.yml" -o "$DEPLOY_DIR/docker-compose.yml"
-            echo "✅ docker-compose.yml updated"
+            # docker-compose.yml 已由 scp-action 推送，无需从 GitHub 下载
+            echo "✅ docker-compose.yml in place"
 
             cd "$DEPLOY_DIR"
 
@@ -211,6 +224,20 @@ jobs:
       url: ${{ vars.PRODUCTION_URL }}
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Copy docker-compose.yml to server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.PRODUCTION_SSH_HOST }}
+          username: ${{ secrets.PRODUCTION_SSH_USERNAME }}
+          key: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          port: 22
+          source: "docker-compose.yml"
+          target: "/home/flandern/youdaonotelm"
+          overwrite: true
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
@@ -224,9 +251,8 @@ jobs:
             # 创建目录（如果不存在）
             mkdir -p "$DEPLOY_DIR/configs"
 
-            # 更新 docker-compose.yml
-            curl -fsSL "https://raw.githubusercontent.com/rfhdw0102/YouDaoNoteLM/main/docker-compose.yml" -o "$DEPLOY_DIR/docker-compose.yml"
-            echo "✅ docker-compose.yml updated"
+            # docker-compose.yml 已由 scp-action 推送，无需从 GitHub 下载
+            echo "✅ docker-compose.yml in place"
 
             cd "$DEPLOY_DIR"
 
