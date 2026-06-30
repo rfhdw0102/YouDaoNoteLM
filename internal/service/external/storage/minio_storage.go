@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,6 +23,8 @@ type MinioStorage struct {
 	client         *minio.Client
 	bucket         string
 	publicEndpoint string // 公网访问地址，用于生成外网可访问的预签名URL
+	accessKey      string
+	secretKey      string
 }
 
 // NewMinIOStorage 创建 MinIO 存储
@@ -36,7 +37,7 @@ func NewMinIOStorage(endpoint, accessKey, secretKey, bucket, publicEndpoint stri
 		return nil, fmt.Errorf("MinIO 初始化失败: %w", err)
 	}
 
-	return &MinioStorage{client: client, bucket: bucket, publicEndpoint: publicEndpoint}, nil
+	return &MinioStorage{client: client, bucket: bucket, publicEndpoint: publicEndpoint, accessKey: accessKey, secretKey: secretKey}, nil
 }
 
 // Upload 上传文件到 MinIO
@@ -94,24 +95,31 @@ func (s *MinioStorage) Delete(filePath string) error {
 
 // GetPresignedURL 获取临时访问 URL
 func (s *MinioStorage) GetPresignedURL(filePath string, expiry time.Duration) (string, error) {
+	// 如果配置了公网地址，使用公网 endpoint 生成预签名 URL（确保签名正确）
+	if s.publicEndpoint != "" {
+		publicHost := strings.TrimPrefix(s.publicEndpoint, "http://")
+		publicHost = strings.TrimPrefix(publicHost, "https://")
+
+		publicClient, err := minio.New(publicHost, &minio.Options{
+			Creds:  credentials.NewStaticV4(s.accessKey, s.secretKey, ""),
+			Secure: false,
+		})
+		if err != nil {
+			return "", fmt.Errorf("创建公网 MinIO 客户端失败: %w", err)
+		}
+
+		presignedURL, err := publicClient.PresignedGetObject(context.Background(), s.bucket, filePath, expiry, nil)
+		if err != nil {
+			return "", fmt.Errorf("生成预签名URL失败: %w", err)
+		}
+		return presignedURL.String(), nil
+	}
+
+	// 使用默认 endpoint
 	presignedURL, err := s.client.PresignedGetObject(context.Background(), s.bucket, filePath, expiry, nil)
 	if err != nil {
 		return "", fmt.Errorf("生成预签名URL失败: %w", err)
 	}
-
-	// 如果配置了公网地址，替换预签名URL中的host，使外网服务（如阿里云ASR）可以访问
-	if s.publicEndpoint != "" {
-		parsedURL, err := url.Parse(presignedURL.String())
-		if err != nil {
-			return "", fmt.Errorf("解析预签名URL失败: %w", err)
-		}
-		// 确保 publicEndpoint 不带协议前缀，作为 host 使用
-		publicHost := strings.TrimPrefix(s.publicEndpoint, "http://")
-		publicHost = strings.TrimPrefix(publicHost, "https://")
-		parsedURL.Host = publicHost
-		presignedURL = parsedURL
-	}
-
 	return presignedURL.String(), nil
 }
 

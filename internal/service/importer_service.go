@@ -556,6 +556,7 @@ func (s *importerService) ConfirmAudio(userID uint, previewID string, editedCont
 			zap.Uint("source_id", source.ID),
 			zap.Duration("elapsed", time.Since(stepStart)),
 		)
+		source.Vectorized = true
 	}
 
 	// 生成摘要（异步，不阻塞主流程）
