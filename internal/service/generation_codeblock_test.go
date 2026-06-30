@@ -12,19 +12,19 @@ func TestMergeCodeBlockLines(t *testing.T) {
 		want  []string // expected merged lines (non-empty)
 	}{
 		{
-			name: "code block preserved as single unit",
+			name:  "code block preserved as single unit",
 			input: "some text\n```go\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n```\nmore text",
-			want: []string{"some text", "```go\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n```", "more text"},
+			want:  []string{"some text", "```go\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n```", "more text"},
 		},
 		{
-			name: "multiple code blocks",
+			name:  "multiple code blocks",
 			input: "# Title\n```python\ndef foo():\n    pass\n```\nSome paragraph\n```js\nconsole.log(42)\n```",
-			want: []string{"# Title", "```python\ndef foo():\n    pass\n```", "Some paragraph", "```js\nconsole.log(42)\n```"},
+			want:  []string{"# Title", "```python\ndef foo():\n    pass\n```", "Some paragraph", "```js\nconsole.log(42)\n```"},
 		},
 		{
-			name: "code block with blank line inside",
+			name:  "code block with blank line inside",
 			input: "```go\nfunc a() {\n\n}\n```",
-			want: []string{"```go\nfunc a() {\n\n}\n```"},
+			want:  []string{"```go\nfunc a() {\n\n}\n```"},
 		},
 		{
 			name:  "no code blocks",
@@ -37,14 +37,14 @@ func TestMergeCodeBlockLines(t *testing.T) {
 			want:  []string{},
 		},
 		{
-			name: "unclosed code block emitted",
+			name:  "unclosed code block emitted",
 			input: "```go\nfunc main() {\n\tfmt.Println(\"hi\")\n}",
-			want: []string{"```go\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"},
+			want:  []string{"```go\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"},
 		},
 		{
-			name: "code block after heading",
+			name:  "code block after heading",
 			input: "# Go语言\n```go\npackage main\n\nfunc main() {\n\tprintln(42)\n}\n```\n- key point",
-			want: []string{"# Go语言", "```go\npackage main\n\nfunc main() {\n\tprintln(42)\n}\n```", "- key point"},
+			want:  []string{"# Go语言", "```go\npackage main\n\nfunc main() {\n\tprintln(42)\n}\n```", "- key point"},
 		},
 	}
 
@@ -277,7 +277,7 @@ func TestRenderStyledPPTSlidesWithCodeBlocks(t *testing.T) {
 		}
 	}
 
-	html := renderStyledPPTSlides(plan)
+	html := renderStyledPPTSlides(plan, pptStyleTheme{})
 
 	// Verify code block is rendered as <pre> element
 	if !strings.Contains(html, `<pre class="ppt-code-block"><code>`) {
