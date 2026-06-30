@@ -143,8 +143,8 @@ jobs:
 
             cd "$DEPLOY_DIR"
 
-            # Docker Hub 登录
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            # 镜像为公开且服务器已配阿里云加速器，无需 docker login
+            # （docker login 直连 registry-1.docker.io 会超时）
 
             # 保存当前镜像版本（用于回滚）
             OLD_APP_IMAGE=$(docker inspect --format='{{.Config.Image}}' youdaonotelm-app 2>/dev/null || echo "")
@@ -256,8 +256,8 @@ jobs:
 
             cd "$DEPLOY_DIR"
 
-            # Docker Hub 登录
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            # 镜像为公开且服务器已配阿里云加速器，无需 docker login
+            # （docker login 直连 registry-1.docker.io 会超时）
 
             # 保存当前镜像版本（用于回滚）
             OLD_APP_IMAGE=$(docker inspect --format='{{.Config.Image}}' youdaonotelm-app 2>/dev/null || echo "")
