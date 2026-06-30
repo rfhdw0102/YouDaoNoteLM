@@ -125,7 +125,7 @@ jobs:
             mkdir -p "$DEPLOY_DIR/configs"
 
             # 更新 docker-compose.yml
-            curl -fsSL "https://raw.githubusercontent.com/Flandern1211/YoudaoNoteLM/develop/docker-compose.yml" -o "$DEPLOY_DIR/docker-compose.yml"
+            curl -fsSL "https://raw.githubusercontent.com/rfhdw0102/YouDaoNoteLM/develop/docker-compose.yml" -o "$DEPLOY_DIR/docker-compose.yml"
             echo "✅ docker-compose.yml updated"
 
             cd "$DEPLOY_DIR"
@@ -225,7 +225,7 @@ jobs:
             mkdir -p "$DEPLOY_DIR/configs"
 
             # 更新 docker-compose.yml
-            curl -fsSL "https://raw.githubusercontent.com/Flandern1211/YoudaoNoteLM/main/docker-compose.yml" -o "$DEPLOY_DIR/docker-compose.yml"
+            curl -fsSL "https://raw.githubusercontent.com/rfhdw0102/YouDaoNoteLM/main/docker-compose.yml" -o "$DEPLOY_DIR/docker-compose.yml"
             echo "✅ docker-compose.yml updated"
 
             cd "$DEPLOY_DIR"
