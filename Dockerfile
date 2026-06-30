@@ -23,13 +23,13 @@ RUN apk add --no-cache tzdata ca-certificates
 
 WORKDIR /app
 
-# 复制依赖文件和 vendor 目录
+# 复制依赖文件（vendor 不提交到仓库，构建时从模块代理下载）
 COPY go.mod go.sum ./
-COPY vendor/ ./vendor/
+RUN go mod download
 
 # 复制源码
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor -ldflags="-s -w" -o server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o server ./cmd/server
 
 # ========== 阶段3: 最终镜像 ==========
 FROM nginx:1.27-bookworm
