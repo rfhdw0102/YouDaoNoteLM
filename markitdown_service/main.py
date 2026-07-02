@@ -75,7 +75,8 @@ async def convert(file: UploadFile = File(...)):
             result = md.convert(stream)
             markdown_text = result.markdown if hasattr(result, 'markdown') else str(result)
         except Exception as e:
-            raise HTTPException(status_code=400, detail="文件格式不支持或无法转换")
+            logger.error(f"文件转换失败: {file.filename}, 错误: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=400, detail=f"文件格式不支持或无法转换: {str(e)}")
 
         return {"filename": file.filename, "markdown": markdown_text}
 

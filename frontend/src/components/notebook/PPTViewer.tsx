@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Maximize2, Minimize2, Download, ArrowLeft, AlertCircle } from 'lucide-react';
+import { Maximize2, Minimize2, Download, ArrowLeft } from 'lucide-react';
 import Button from '../ui/Button';
 import { exportGenerationFile, downloadBlob } from '../../api/generation';
 
@@ -118,6 +118,9 @@ export default function PPTViewer({ content, onClose }: PPTViewerProps) {
         <Button variant="ghost" size="sm" onClick={handleDownload} disabled={exporting}>
           <Download size={14} /> {exporting ? '导出中...' : '导出 PPTX'}
         </Button>
+        {exportError && (
+          <span className="text-xs text-red-400">{exportError}</span>
+        )}
       </div>
 
       {/* PPT 缩略预览区 - 只提供缩略提示，点击进入全屏 */}

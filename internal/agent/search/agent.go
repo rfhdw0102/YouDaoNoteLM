@@ -294,6 +294,14 @@ func (a *SearchAgent) ExecuteStream(ctx context.Context, userID, notebookID uint
 				continue
 			}
 
+			// 调试日志：记录事件详情
+			logger.Debug("搜索Agent事件",
+				zap.String("tool_name", event.Output.MessageOutput.ToolName),
+				zap.String("role", string(msg.Role)),
+				zap.Int("tool_calls_count", len(msg.ToolCalls)),
+				zap.Int("content_length", len(msg.Content)),
+			)
+
 			// 统计搜索轮数
 			if event.Output.MessageOutput.ToolName == "web_search" {
 				searchRounds++

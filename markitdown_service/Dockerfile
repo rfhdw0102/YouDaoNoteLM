@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir fastapi uvicorn markitdown requests
+RUN pip install --no-cache-dir fastapi uvicorn "markitdown[docx,pptx,pdf]" requests python-multipart
 
 COPY main.py .
 

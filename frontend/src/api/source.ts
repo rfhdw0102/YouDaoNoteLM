@@ -95,3 +95,15 @@ export async function reimportSources(sourceIds: number[]): Promise<ApiResponse<
   const res = await client.post<ApiResponse<{ reimported_count: number }>>('/sources/reimport', { source_ids: sourceIds });
   return res.data;
 }
+
+// 11. Save note as source
+export async function createSourceFromNote(nbId: number, title: string, content: string): Promise<ApiResponse<SourceData>> {
+  const res = await client.post<ApiResponse<SourceData>>(`/notebooks/${nbId}/sources/from-note`, { title, content });
+  return res.data;
+}
+
+// 12. Delete source by note title
+export async function deleteSourceByNote(nbId: number, title: string): Promise<ApiResponse> {
+  const res = await client.post<ApiResponse>(`/notebooks/${nbId}/sources/delete-by-note`, { title });
+  return res.data;
+}

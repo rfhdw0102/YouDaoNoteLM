@@ -39,7 +39,7 @@ const typeColors: Record<NoteType, string> = {
 };
 
 export default function NotesPanel() {
-  const { currentNotebookId, getCurrentNotebook, deleteNote, renameNote, toggleNoteSource, addNote, generateNote, generatingType, generationError, clearGenerationError } = useNotebookStore();
+  const { currentNotebookId, getCurrentNotebook, deleteNote, renameNote, toggleNoteSource, generateNote, generatingType, generationError, clearGenerationError } = useNotebookStore();
   const notebook = getCurrentNotebook();
 
   const [searchQuery, setSearchQuery] = useState('');

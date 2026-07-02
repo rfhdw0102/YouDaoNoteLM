@@ -48,19 +48,13 @@ Thumbs.db
 .claude/
 .superpowers
 claude.md
-/configs/config.yaml
-/uploads/
-
 
 # docs
 docs/
-/docs/
 
-# Uploads
-/uploads/
-
-# Config
+# Config (真实配置文件，不提交到仓库)
 /configs/config.yaml
+/configs/youdao_cookies.json
 
 # OS files
 .DS_Store
@@ -144,17 +138,5 @@ __pycache__/
 # Test screenshots
 frontend/test-screenshots/
 
-# Docker
-docker-compose.yml
-docker-entrypoint.sh
-.dockerignore
-Dockerfile
-nginx.conf
-configs/config.docker.yaml.example
-
-# GitHub
-.github/
-Dockerfile
-nginx.conf
-
-.github
+# Docker (仅排除构建产物，不排除源文件)
+# configs/config.docker.yaml.example

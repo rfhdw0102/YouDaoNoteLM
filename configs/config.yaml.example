@@ -1,12 +1,13 @@
+# YouDaoNoteLM 配置文件示例
+# 复制此文件为 config.yaml 并修改对应的值
+# cp config.yaml.example config.yaml
+
+# 服务器配置
 app:
   name: "youdao-api"
   version: "1.0.0"
   mode: "debug"  # debug, release, test
   port: 8080
-
-# 安全配置
-security:
-  encryption_key: "your-32-byte-encryption-key-here!"  # API Key 加密密钥，必须是32字节
 
 # 数据库配置
 database:
@@ -14,51 +15,23 @@ database:
     host: "localhost"
     port: 3306
     username: "root"
-    password: "your_password"
-    database: "your_database"
+    password: "your_mysql_password"
+    database: "youdao"
     max_idle_conns: 10
     max_open_conns: 100
   redis:
     host: "localhost"
     port: 6379
-    password: ""
+    password: "your_redis_password"
     db: 15
     pool_size: 10
 
 # JWT 配置
 jwt:
-  secret: "YouDaoNoteBookLM-API-Web-wangzhiwei-zhaojingchao-renfuhang"  # 请修改为随机生成的密钥
+  secret: "your-random-jwt-secret-key-here"  # 请修改为随机生成的密钥
   access_token_exp: "15m"     # Access Token 过期时间：15 分钟
   refresh_token_exp: "24h"    # Refresh Token 过期时间：1 天
   issuer: "youdaonotelm"      # Token 签发者
-
-external:
-  markitdown:
-    url: "http://localhost:8085"
-  asr:
-    provider: "aliyun_nls"
-    params:
-      access_key_id: "your_key_id"
-      access_key_secret: "your_key_secret"
-      app_key: "your_app_key"
-  minio:
-    endpoint: "localhost:9000"
-    access_key: "minioadmin"
-    secret_key: "minioadmin"
-    bucket: "youdaonotelm"
-  milvus:
-    address: "localhost:19530"
-    username: ""
-    password: ""
-  bocha:
-    base_url: "https://api.bochaai.com"
-    endpoint: "/v1/web-search"
-    api_key: ""
-    timeout_seconds: 15
-    default_count: 5
-    summary: true
-    cache_ttl_seconds: 300
-    max_count: 10
 
 # 日志配置
 log:
@@ -69,7 +42,20 @@ log:
   max_age: 28      # 保留旧文件的最大天数
   compress: true   # 是否压缩
 
-#邮箱配置
+# 邮箱配置
+email:
+  host: "smtp.qq.com"
+  port: 587
+  username: "your_email@qq.com"
+  password: "your_email_password"
+  from: "your_email@qq.com"
+
+# Milvus 向量数据库配置
+milvus:
+  host: "localhost"
+  port: 19530
+
+# CORS 配置
 cors:
   enabled: true
   allow_origins:
@@ -91,27 +77,14 @@ cors:
   allow_credentials: true
   max_age: 86400
 
-email:
-  host: "smtp.qq.com"
-  port: 587
-  username: ""
-  password: ""
-  from: ""
-
-
-# Milvus 向量数据库配置
-milvus:
-  host: "60.205.184.232"
-  port: 19530
-
 # 外部服务配置
 external:
   markitdown:
-    url: "http://localhost:8081"       # MarkItDown 文档转换服务地址
+    url: "http://localhost:8085"       # MarkItDown 文档转换服务地址
   minio:
-    endpoint: "60.205.184.232:9003"
+    endpoint: "localhost:9000"
     access_key: "minioadmin"
-    secret_key: "12345678"
+    secret_key: "your_minio_password"
     bucket: "youdaonotelm"
   youdao:
     cli_path: "youdaonote"  # CLI 路径，默认在 PATH 中查找，也可指定绝对路径
@@ -121,7 +94,7 @@ external:
   bocha:
     base_url: "https://api.bochaai.com"
     endpoint: "/v1/web-search"
-    api_key: ""
+    api_key: "your_bocha_api_key"
     timeout_seconds: 15
     default_count: 5
     summary: true

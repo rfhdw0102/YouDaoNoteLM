@@ -209,7 +209,6 @@ export default function MindmapViewer({ content }: MindmapViewerProps) {
   const tree = parseMindmap(content);
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const containerRef = useState<HTMLDivElement | null>(null);
 
   if (!tree) {
     return (

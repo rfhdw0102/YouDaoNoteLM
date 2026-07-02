@@ -2,10 +2,28 @@ import { create } from 'zustand';
 import type { User } from '../types';
 import * as authApi from '../api/auth';
 import * as userApi from '../api/user';
+import { doRefreshToken } from '../api/client';
 
 // 定时刷新用户信息的间隔（6 小时），用于更新 MinIO 预签名头像 URL（有效期 24 小时）
 const PROFILE_REFRESH_INTERVAL = 6 * 60 * 60 * 1000;
+// Token 自动续期间隔（12 分钟，在 15 分钟过期前刷新）
+const TOKEN_REFRESH_INTERVAL = 12 * 60 * 1000;
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
+let tokenRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+function startTokenAutoRefresh() {
+  if (tokenRefreshTimer) clearInterval(tokenRefreshTimer);
+  tokenRefreshTimer = setInterval(async () => {
+    try {
+      const newToken = await doRefreshToken();
+      if (newToken) {
+        sessionStorage.setItem('access_token', newToken);
+      }
+    } catch {
+      // 刷新失败不影响当前会话，下次请求时会重试
+    }
+  }, TOKEN_REFRESH_INTERVAL);
+}
 
 function mapUser(u: any): User {
   return {
@@ -42,6 +60,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       try {
         const user = JSON.parse(userStr);
         set({ user, token, isAuthenticated: true });
+        // 启动 token 自动续期
+        startTokenAutoRefresh();
         // Silently refresh user profile from server in background (updates avatar presigned URL)
         userApi.getProfile().then((res) => {
           if (res.code === 0) {
@@ -79,6 +99,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     localStorage.setItem('refresh_token', refresh_token);
     localStorage.setItem('user', JSON.stringify(user));
     set({ user, token: access_token, isAuthenticated: true });
+    // 启动 token 自动续期
+    startTokenAutoRefresh();
     // 登录后启动定时刷新，保持头像 URL 有效
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(() => {
@@ -130,6 +152,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
     // 清除定时刷新
     if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    if (tokenRefreshTimer) { clearInterval(tokenRefreshTimer); tokenRefreshTimer = null; }
 
     // 先清除本地状态，确保 UI 立即响应
     sessionStorage.removeItem('access_token');

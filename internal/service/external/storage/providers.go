@@ -22,7 +22,8 @@ func init() {
 			}
 			secretKey := cfg.GetExtraString("secret_key")
 			bucket := cfg.GetExtraString("bucket")
-			return NewMinIOStorage(endpoint, accessKey, secretKey, bucket)
+			publicEndpoint := cfg.GetExtraString("public_endpoint")
+			return NewMinIOStorage(endpoint, accessKey, secretKey, bucket, publicEndpoint)
 		}, map[string]string{
 			"endpoint":   "MinIO 地址",
 			"access_key": "Access Key",

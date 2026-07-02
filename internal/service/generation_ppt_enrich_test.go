@@ -306,6 +306,3 @@ func slideTitles(slides []enrichedPPTSlide) []string {
 	}
 	return titles
 }
-
-// ensure at compile time that sort is used (it may be by the test runner)
-var _ = sort.Strings

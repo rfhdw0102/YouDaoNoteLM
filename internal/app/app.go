@@ -156,6 +156,7 @@ func (a *App) initDependencies() {
 		a.cfg.External.MinIO.AccessKey,
 		a.cfg.External.MinIO.SecretKey,
 		a.cfg.External.MinIO.Bucket,
+		a.cfg.External.MinIO.PublicEndpoint,
 	)
 	if err != nil {
 		logger.Fatal("MinIO 初始化失败，文件上传功能将不可用", zap.Error(err))
