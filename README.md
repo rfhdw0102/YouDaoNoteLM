@@ -28,8 +28,8 @@
 ```bash
 # 1. 创建目录并下载编排文件
 mkdir -p youdaonotelm/configs && cd youdaonotelm
-curl -fsSL 'https://raw.githubusercontent.com/Flandern1211/YoudaoNoteLM/develop/docker-compose.yml' -o docker-compose.yml
-curl -fsSL 'https://raw.githubusercontent.com/Flandern1211/YoudaoNoteLM/develop/configs/docker_config.yaml.example' -o configs/docker_config.yaml
+curl -fsSL 'https://raw.githubusercontent.com/rfhdw0102/YouDaoNoteLM/develop/docker-compose.yml' -o docker-compose.yml
+curl -fsSL 'https://raw.githubusercontent.com/rfhdw0102/YouDaoNoteLM/develop/configs/docker_config.yaml.example' -o configs/docker_config.yaml
 
 # 2. 创建 .env（参照下方说明填写密码、密钥、服务器IP等）
 vim .env
