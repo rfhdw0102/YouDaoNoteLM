@@ -1,206 +1,159 @@
-# YouDaoNoteLM 部署指南
+# YouDaoNoteLM
 
-本项目是一个基于 RAG 的有道云笔记知识问答系统，采用前后端一体的 Docker 部署方案。
-本文档面向**部署人员**，目标是在一台干净的 Linux 服务器上把项目跑起来并通过健康检查。
+基于 RAG 的有道云笔记知识问答系统，前后端一体，纯 Docker 部署。
 
 ---
 
-## 一、架构与服务拓扑
+## 一、快速开始
 
-整个系统由一组 Docker 容器组成，全部通过 `docker compose` 编排：
+### 前置准备
 
-| 服务 | 容器名 | 作用 | 宿主机端口 |
-|------|--------|------|-----------|
-| **app** | youdaonotelm-app | Nginx(8080) + Go 后端(8081) + 前端静态资源 + 有道 CLI | `18080` |
-| **mysql** | youdaonotelm-mysql | 业务数据库 | 不暴露 |
-| **redis** | youdaonotelm-redis | 缓存 / 会话 | 不暴露 |
-| **minio** | youdaonotelm-minio | 对象存储（笔记附件、音频等） | `19000` / `19001` |
-| **etcd** | youdaonotelm-etcd | Milvus 依赖 | 不暴露 |
-| **milvus-minio** | youdaonotelm-milvus-minio | Milvus 内部存储 | 不暴露 |
-| **milvus** | youdaonotelm-milvus | 向量数据库 | 不暴露 |
-| **markitdown** | youdaonotelm-markitdown | 文档转 Markdown 服务 | `8085` |
+- **服务器**：Linux，≥ 4 核 CPU、≥ 8 GB 内存、≥ 40 GB 磁盘
+- **软件**：Docker ≥ 20.10、docker compose v2
+- **端口放行**（安全组/防火墙）：
+
+| 端口 | 用途 | 公网 |
+|------|------|------|
+| 8080 | 应用访问 | ✅ 必须 |
+| 9000 | MinIO API（文件上传/下载） | ✅ 必须 |
+| 9001 | MinIO 控制台 | ⚠️ 可选 |
+| 22 | SSH | ✅ |
+
+> 若端口冲突，可在 `.env` 中修改 `APP_PORT`、`MINIO_API_PORT`、`MINIO_CONSOLE_PORT`。
+
+### 部署步骤
+
+服务器上只需 `docker-compose.yml` + 配置文件，镜像直接从 Docker Hub 拉取，**无需克隆源码仓库**。
+
+```bash
+# 1. 创建目录并下载编排文件
+mkdir -p youdaonotelm/configs && cd youdaonotelm
+curl -fsSL 'https://raw.githubusercontent.com/Flandern1211/YoudaoNoteLM/develop/docker-compose.yml' -o docker-compose.yml
+curl -fsSL 'https://raw.githubusercontent.com/Flandern1211/YoudaoNoteLM/develop/configs/docker_config.yaml.example' -o configs/docker_config.yaml
+
+# 2. 创建 .env（参照下方说明填写密码、密钥、服务器IP等）
+vim .env
+
+# 3. 编辑 configs/docker_config.yaml
+#    security.encryption_key → 32 字节随机串（与 .env 的 ENCRYPTION_KEY 一致）
+#    external.minio.public_endpoint → 你的服务器 IP:端口
+vim configs/docker_config.yaml
+
+# 4. 从 Docker Hub 拉取镜像并启动
+docker compose pull
+docker compose up -d
+
+# 5. 验证
+curl -i http://localhost:8080/api/v1/health
+# 期望返回 HTTP 200
+```
+
+> 💡 如需本地二次开发，注释 `.env` 中 `DOCKER_IMAGE` / `MARKITDOWN_IMAGE` 两行，然后 `docker compose build` 构建本地镜像。
+
+### 访问入口
+
+- **应用首页**：`http://<服务器IP>:8080`
+- **MinIO 控制台**：`http://<服务器IP>:9001`（账号见 `.env`）
+
+---
+
+## 二、架构与服务
+
+| 服务 | 容器名 | 作用 | 端口（容器内） |
+|------|--------|------|---------------|
+| **app** | youdaonotelm-app | Nginx(8080) → Go 后端(8081) + 前端静态资源 | 8080 |
+| **mysql** | youdaonotelm-mysql | 业务数据库 | 3306（不暴露） |
+| **redis** | youdaonotelm-redis | 缓存 / 会话 | 6379（不暴露） |
+| **minio** | youdaonotelm-minio | 对象存储（附件、音频等） | 9000 / 9001 |
+| **etcd** | youdaonotelm-etcd | Milvus 依赖 | 2379（不暴露） |
+| **milvus-minio** | youdaonotelm-milvus-minio | Milvus 内部存储 | 9000（不暴露） |
+| **milvus** | youdaonotelm-milvus | 向量数据库 | 19530（不暴露） |
+| **markitdown** | youdaonotelm-markitdown | 文档转 Markdown | 8085 |
 
 > 容器内部：Nginx 监听 `8080`，反向代理 `/api/` 到 Go 后端的 `8081`，前端静态文件由 Nginx 直接提供。
-> 宿主机访问入口统一是 `http://<服务器IP>:18080`。
 
 ### 部署目录结构（服务器上）
 
 ```
-/home/flandern/youdaonotelm/        # 部署根目录（可改）
-├── docker-compose.yml
-├── .env                            # 端口、密码等环境变量
+youdaonotelm/                     # 部署根目录
+├── docker-compose.yml            # 服务编排（从 GitHub 下载，无需修改）
+├── .env                          # 环境变量配置（密码、端口等，需自行创建）
 └── configs/
-    ├── docker_config.yaml          # 应用配置（挂载为容器内 /app/configs/config.yaml）
-    └── youdao_cookies.json         # 有道云笔记登录 Cookie
+    ├── docker_config.yaml        # 应用配置（从 docker_config.yaml.example 复制后修改）
+    └── youdao_cookies.json       # 有道云笔记 Cookie（可选，需自行创建）
 ```
 
 ---
 
-## 二、前置准备
+## 三、配置详解
 
-### 1. 服务器要求
-- **系统**：Linux（推荐 Ubuntu 20.04+ / CentOS 7+）
-- **配置**：≥ 4 核 CPU、≥ 8 GB 内存、≥ 40 GB 磁盘（Milvus 较吃资源）
-- **已安装**：Docker ≥ 20.10、docker compose v2（`docker compose version` 能看到版本号）
-- **权限**：以 `root` 或具备 docker 权限的用户登录
+### `.env` — 环境变量
 
-### 2. 端口放行（安全组 / 防火墙）
+| 变量 | 说明 | 是否必填 |
+|------|------|---------|
+| `DOCKER_IMAGE` | 应用镜像，默认从 Docker Hub 拉取 `flandern/youdaonote:latest`；本地构建时注释此行即可 | 可选 |
+| `MARKITDOWN_IMAGE` | MarkItDown 镜像，默认从 Docker Hub 拉取 `flandern/markitdown:latest`；本地构建时注释此行即可 | 可选 |
+| `APP_PORT` | 宿主机端口，默认 `8080` | 可选 |
+| `MYSQL_ROOT_PASSWORD` | MySQL root 密码 | **必填** |
+| `REDIS_PASSWORD` | Redis 密码 | **必填** |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | MinIO 管理员账号 | **必填** |
+| `MYSQL_PASSWORD` | 应用连接 MySQL 的密码（通常与 `MYSQL_ROOT_PASSWORD` 一致） | **必填** |
+| `JWT_SECRET` | JWT 签名密钥 | **必填** |
+| `EMAIL_PASSWORD` | 邮箱 SMTP 密码 | **必填** |
+| `ENCRYPTION_KEY` | API Key 加密密钥，必须恰好 **32 字节** | **必填** |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | 应用连接 MinIO 的密钥（通常与 `MINIO_ROOT_USER/PASSWORD` 一致） | **必填** |
+| `MINIO_PUBLIC_ENDPOINT` | MinIO 公网地址，供前端直连上传下载，格式 `服务器IP:端口` | **必填** |
+| `BOCHA_API_KEY` | 博查搜索 API Key，留空禁用联网搜索 | 可选 |
 
-| 端口 | 用途 | 是否必须对公网开放 |
-|------|------|------------------|
-| 18080 | 应用访问 | ✅ 必须 |
-| 19000 | MinIO API（文件上传/下载） | ✅ 必须（前端直连） |
-| 19001 | MinIO 控制台 | ⚠️ 建议仅限管理 IP，或不开 |
-| 8085 | MarkItDown | ❌ 仅容器内网使用，可不开放 |
-| 22 | SSH | ✅ |
+### `configs/docker_config.yaml` — 应用配置
 
-### 3. 必备配置文件
-从仓库获取以下两个文件并放到服务器的 `configs/` 目录：
-- `configs/docker_config.yaml`（应用主配置）
-- `configs/youdao_cookies.json`（有道云笔记 Cookie，见 [附录 A](#附录-a-youdao_cookiesjson-说明)）
+- 大部分字段保持默认值即可
+- **必须修改**：
+  - `external.minio.public_endpoint` → `"你的服务器IP:端口"`
+  - `security.encryption_key` → 32 字节随机字符串（**与 `.env` 中的 `ENCRYPTION_KEY` 一致**）
+- 敏感字段（密码/密钥）已留空，由 `.env` 中的同名变量自动覆盖
 
----
-
-## 三、部署方式（二选一）
-
-### 方式 A：本地一键远程部署（推荐）
-
-在**本地开发机**执行 `deploy.sh`，通过 SSH 把配置推送到服务器并拉起服务：
-
-```bash
-# 1. 修改 deploy.sh 顶部的三个变量，改成你自己的服务器
-SERVER="你的服务器IP"
-SERVER_USER="root"
-DEPLOY_DIR="/home/flandern/youdaonotelm"
-
-# 2. 确保本地能免密 SSH 登录服务器
-ssh root@你的服务器IP   # 能直接进去即可
-
-# 3. 执行
-bash deploy.sh
-```
-
-脚本会自动完成：创建目录 → 生成 `docker-compose.yml` 与 `.env` → 上传配置 → 修正 MinIO 公网端点 → 拉取镜像 → `docker compose up -d` → 健康检查。
-
-### 方式 B：在服务器上直接部署
-
-把 `server-setup.sh` 传到服务器后直接运行（脚本内已内嵌 `docker-compose.yml` 与 `.env`）：
-
-```bash
-# 1. 上传脚本和配置
-scp server-setup.sh root@<服务器IP>:/root/
-scp -r configs/ root@<服务器IP>:/root/configs/
-
-# 2. 登录服务器执行
-ssh root@<服务器IP>
-bash /root/server-setup.sh
-```
-
-> ⚠️ 无论哪种方式，**部署前必须修改脚本里的硬编码 IP/密码**（见下节）。
+> **配置优先级**：`docker_config.yaml` 中的空字段会被 `.env` 中同名环境变量覆盖（通过 `pkg/config/loader.go` 的 `os.Getenv` 逻辑）。非空字段以 yaml 为准。
 
 ---
 
-## 四、部署前必改项
+## 四、重要提示（部署前必读）
 
-以下值在 `deploy.sh` / `server-setup.sh` / `.env` 中以**示例值**存在，正式部署请替换为你自己的：
+### ⚠️ 修改默认密码/密钥
 
-### 1. 服务器 IP
-脚本中所有 `60.205.184.232` 需替换为你的服务器公网 IP。最关键的一处是 **MinIO 公网端点**——前端通过它访问上传的文件：
+`.env` 中的默认值仅作示例，**生产环境必须全部更换**：
 
-```bash
-# deploy.sh 里的这行会把 docker_config.yaml 中的 public_endpoint 改成服务器IP:19000
-ssh ... "sed -i 's|public_endpoint:.*|public_endpoint: \"你的IP:19000\"|' .../docker_config.yaml"
-```
+| 变量 | 默认值 |
+|------|--------|
+| `MYSQL_ROOT_PASSWORD` / `MYSQL_PASSWORD` | `20041211wzwaicjW.` |
+| `REDIS_PASSWORD` | `redis123` |
+| `MINIO_ROOT_PASSWORD` / `MINIO_SECRET_KEY` | `minio123` |
+| `JWT_SECRET` | `YouDaoNoteBookLM-API-Web-...` |
+| `EMAIL_PASSWORD` | `koptculidhqpdcjb` |
+| `ENCRYPTION_KEY` | `YouDaoNoteLM-AES-Key-32Bytes!!` |
 
-如果你用方式 B，记得手工把 `configs/docker_config.yaml` 里的 `public_endpoint` 改成 `你的IP:19000`。
+### ⚠️ `encryption_key` 硬性约束
 
-### 2. 密码与密钥（务必更换）
-`.env` 中的默认密码仅作示例，**生产环境必须改强**：
+- 必须恰好 **32 字节**，否则应用启动失败
+- **首次部署后不要随意更改**，否则历史加密的 API Key 将无法解密
 
-| 变量 | 默认示例值 | 说明 |
-|------|-----------|------|
-| `MYSQL_ROOT_PASSWORD` | `20041211wzwaicjW.` | MySQL root 密码 |
-| `REDIS_PASSWORD` | `redis123` | Redis 密码 |
-| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | `minioadmin` / `minio123` | MinIO 管理员账号 |
+### ⚠️ 配置一致性
 
-> 改了 `.env` 里的密码后，**必须同步修改 `configs/docker_config.yaml` 中对应的密码字段**（`database.mysql.password`、`database.redis.password`、`external.minio.access_key/secret_key`），因为应用读的是 yaml 配置，不是 `.env`。
+`.env` 和 `configs/docker_config.yaml` 中以下值必须保持一致：
 
-### 3. encryption_key（API Key 加密密钥）
-`docker_config.yaml` 中：
-```yaml
-security:
-  encryption_key: "YouDaoNoteLM32ByteEncryptKey!!!!"
-```
-- 用于 AES-256-GCM 加密用户存入数据库的 LLM API Key。
-- **硬性约束：必须恰好 32 字节**，否则应用启动时校验失败。
-- 生产环境请换成 32 字节高熵随机串。
-- ⚠️ **首次部署后不要随便改它**：一旦更换，历史加密的 API Key 将无法解密。换 key 需配套数据迁移。
-
-### 4. JWT secret
-`jwt.secret` 建议改成一段随机字符串，用于签发登录 Token。
+| 配置项 | `.env` | `docker_config.yaml` |
+|--------|--------|---------------------|
+| MinIO 公网端点 | `MINIO_PUBLIC_ENDPOINT` | `external.minio.public_endpoint` |
+| 加密密钥 | `ENCRYPTION_KEY` | `security.encryption_key` |
+| MinIO 密钥 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `external.minio.access_key` / `secret_key` |
 
 ---
 
-## 五、启动与验证
-
-### 1. 启动
-```bash
-cd /home/flandern/youdaonotelm
-docker compose up -d
-```
-
-### 2. 查看状态
-```bash
-docker compose ps
-# 期望所有服务均为 Up / (healthy)
-```
-
-### 3. 健康检查
-```bash
-curl -i http://localhost:18080/api/v1/health
-# 期望返回 HTTP 200
-```
-
-### 4. 访问入口
-- 应用首页：`http://<服务器IP>:18080`
-- MinIO 控制台：`http://<服务器IP>:19001`（账号见 `.env`）
-- MinIO API：`http://<服务器IP>:19000`
-
----
-
-## 六、常见问题排查
-
-### 1. 健康检查返回非 200 / 应用起不来
-```bash
-cd /home/flandern/youdaonotelm
-docker compose logs --tail=100 app     # 看后端日志
-docker compose logs --tail=50 mysql   # 看依赖是否就绪
-```
-常见原因：
-- `encryption_key` 不是 32 字节 → 启动报错 `security.encryption_key 必须为32字节`。
-- `docker_config.yaml` 里的 MySQL/Redis 密码与 `.env` 不一致 → 连接失败。
-- Milvus 未就绪就启动 app → 重启 app 即可：`docker compose restart app`。
-
-### 2. 前端能打开，但上传/播放文件 404
-检查 `docker_config.yaml` 的 `external.minio.public_endpoint` 是否为 `<服务器IP>:19000`，以及安全组是否放行了 `19000`。
-
-### 3. 端口冲突
-默认选了 `18080 / 19000 / 19001 / 8085` 避开常见端口。如仍冲突，改 `.env` 里的 `APP_PORT / MINIO_API_PORT / MINIO_CONSOLE_PORT`，并同步改 `public_endpoint`。
-
-### 4. 完全重来
-```bash
-docker compose down -v        # 注意 -v 会删除所有数据卷（数据丢失！）
-docker compose up -d
-```
-
----
-
-## 七、日常运维命令
+## 五、日常运维
 
 ```bash
-# 启停
-docker compose start
-docker compose stop
+# 启停所有服务
+docker compose start / stop / restart
 
 # 重启单个服务
 docker compose restart app
@@ -211,9 +164,36 @@ docker compose logs -f app
 # 升级镜像
 docker compose pull && docker compose up -d
 
+# 完全重来（⚠️ -v 会删除所有数据卷）
+docker compose down -v && docker compose up -d
+
 # 查看数据卷占用
 docker system df
 ```
+
+---
+
+## 六、常见问题
+
+### 健康检查返回非 200
+
+```bash
+docker compose logs --tail=100 app    # 查看后端日志
+docker compose logs --tail=50 mysql   # 查看数据库是否就绪
+```
+
+常见原因：
+- `encryption_key` 不是 32 字节
+- MySQL/Redis 密码与 `.env` 不一致
+- Milvus 未就绪 → 重启 app：`docker compose restart app`
+
+### 前端能打开，但上传/播放文件 404
+
+检查 `docker_config.yaml` 中 `external.minio.public_endpoint` 是否正确，以及安全组是否放行了 MinIO 端口。
+
+### 端口冲突
+
+修改 `.env` 中的 `APP_PORT`、`MINIO_API_PORT`、`MINIO_CONSOLE_PORT`，并同步修改 `MINIO_PUBLIC_ENDPOINT`。
 
 ---
 
