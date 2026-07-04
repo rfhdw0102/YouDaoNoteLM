@@ -34,9 +34,9 @@ curl -fsSL 'https://raw.githubusercontent.com/rfhdw0102/YouDaoNoteLM/develop/con
 # 2. 创建 .env（参照下方说明填写密码、密钥、服务器IP等）
 vim .env
 
-# 3. 编辑 configs/docker_config.yaml
-#    security.encryption_key → 32 字节随机串（与 .env 的 ENCRYPTION_KEY 一致）
-#    external.minio.public_endpoint → 你的服务器 IP:端口
+# 3. configs/docker_config.yaml 通常无需修改
+#    敏感字段（密码、密钥、MinIO 公网端点等）已留空，由 .env 中同名变量自动覆盖
+#    如需调整非敏感字段（日志级别、连接池大小、CORS 等）再编辑此文件
 vim configs/docker_config.yaml
 
 # 4. 从 Docker Hub 拉取镜像并启动
@@ -102,16 +102,17 @@ youdaonotelm/                     # 部署根目录
 | `EMAIL_PASSWORD` | 邮箱 SMTP 密码 | **必填** |
 | `ENCRYPTION_KEY` | API Key 加密密钥，必须恰好 **32 字节** | **必填** |
 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | 应用连接 MinIO 的密钥（通常与 `MINIO_ROOT_USER/PASSWORD` 一致） | **必填** |
-| `MINIO_PUBLIC_ENDPOINT` | MinIO 公网地址，供前端直连上传下载，格式 `服务器IP:端口` | **必填** |
+| `MINIO_PUBLIC_ENDPOINT` | MinIO 公网地址，供阿里云 ASR 下载音频文件，格式 `服务器IP:端口` | **必填** |
 | `BOCHA_API_KEY` | 博查搜索 API Key，留空禁用联网搜索 | 可选 |
 
 ### `configs/docker_config.yaml` — 应用配置
 
-- 大部分字段保持默认值即可
-- **必须修改**：
-  - `external.minio.public_endpoint` → `"你的服务器IP:端口"`
-  - `security.encryption_key` → 32 字节随机字符串（**与 `.env` 中的 `ENCRYPTION_KEY` 一致**）
-- 敏感字段（密码/密钥）已留空，由 `.env` 中的同名变量自动覆盖
+- 大部分字段保持默认值即可，**通常无需手动修改**
+- 敏感字段（密码、密钥、MinIO 公网端点等）已留空，由 `.env` 中同名变量自动覆盖：
+  - `security.encryption_key` ← `ENCRYPTION_KEY`
+  - `external.minio.access_key` / `secret_key` ← `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`
+  - MinIO 公网端点 ← `MINIO_PUBLIC_ENDPOINT`（yaml 中无此字段，仅由环境变量注入，见 `pkg/config/loader.go`）
+- 如需调整非敏感字段（日志级别、连接池大小、CORS 等）再编辑此文件
 
 > **配置优先级**：`docker_config.yaml` 中的空字段会被 `.env` 中同名环境变量覆盖（通过 `pkg/config/loader.go` 的 `os.Getenv` 逻辑）。非空字段以 yaml 为准。
 
@@ -137,15 +138,20 @@ youdaonotelm/                     # 部署根目录
 - 必须恰好 **32 字节**，否则应用启动失败
 - **首次部署后不要随意更改**，否则历史加密的 API Key 将无法解密
 
-### ⚠️ 配置一致性
+### ⚠️ 敏感字段只在 `.env` 中设置
 
-`.env` 和 `configs/docker_config.yaml` 中以下值必须保持一致：
+以下字段在 `configs/docker_config.yaml` 中**留空**，由 `.env` 中同名环境变量覆盖（见 `pkg/config/loader.go`）。**只需在 `.env` 中填写一次**，无需在 yaml 中重复填写：
 
-| 配置项 | `.env` | `docker_config.yaml` |
-|--------|--------|---------------------|
-| MinIO 公网端点 | `MINIO_PUBLIC_ENDPOINT` | `external.minio.public_endpoint` |
+| 配置项 | `.env` 变量 | yaml 字段（留空） |
+|--------|-------------|------------------|
+| MySQL 密码 | `MYSQL_PASSWORD` | `database.mysql.password` |
+| Redis 密码 | `REDIS_PASSWORD` | `database.redis.password` |
+| JWT 密钥 | `JWT_SECRET` | `jwt.secret` |
+| 邮箱密码 | `EMAIL_PASSWORD` | `email.password` |
 | 加密密钥 | `ENCRYPTION_KEY` | `security.encryption_key` |
 | MinIO 密钥 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `external.minio.access_key` / `secret_key` |
+| MinIO 公网端点 | `MINIO_PUBLIC_ENDPOINT` | yaml 中无此字段，仅由环境变量注入 |
+| 博查 API Key | `BOCHA_API_KEY` | `external.bocha.api_key` |
 
 ---
 
@@ -189,7 +195,7 @@ docker compose logs --tail=50 mysql   # 查看数据库是否就绪
 
 ### 前端能打开，但上传/播放文件 404
 
-检查 `docker_config.yaml` 中 `external.minio.public_endpoint` 是否正确，以及安全组是否放行了 MinIO 端口。
+检查 `.env` 中 `MINIO_PUBLIC_ENDPOINT` 是否正确，以及安全组是否放行了 MinIO 端口。
 
 ### 端口冲突
 
