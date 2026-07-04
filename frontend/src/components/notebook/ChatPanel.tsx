@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Send, Plus, MessageSquare, Trash2, Save, Loader2,
+  Send, Plus, MessageSquare, Trash2, Loader2,
   ChevronDown, Sparkles, Edit3, Square, X, Copy, Check,
   Bot, Settings
 } from 'lucide-react';
@@ -12,7 +12,7 @@ import { useNotebookStore } from '../../stores/useNotebookStore';
 import { cn } from '../../utils/cn';
 import { listLLMConfigs } from '../../api/userConfig';
 import type { UserLLMConfig } from '../../api/userConfig';
-import type { NoteType, Reference } from '../../types';
+import type { Reference } from '../../types';
 import type { Root, Text } from 'mdast';
 
 // Reference popover component
@@ -114,8 +114,27 @@ function ReferencePopover({ references, startIndex = 1 }: { references: Referenc
                 <button
                   onClick={async (e) => {
                     e.stopPropagation();
+                    // 优先使用 Clipboard API（HTTPS 环境）
+                    if (navigator.clipboard && window.isSecureContext) {
+                      try {
+                        await navigator.clipboard.writeText(ref.chunkContent);
+                        return;
+                      } catch (err) {
+                        console.warn('Clipboard API failed, falling back to execCommand:', err);
+                      }
+                    }
+                    // Fallback：使用 textarea + execCommand（兼容 HTTP 环境）
                     try {
-                      await navigator.clipboard.writeText(ref.chunkContent);
+                      const textarea = document.createElement('textarea');
+                      textarea.value = ref.chunkContent;
+                      textarea.style.position = 'fixed';
+                      textarea.style.left = '-9999px';
+                      textarea.style.top = '-9999px';
+                      document.body.appendChild(textarea);
+                      textarea.focus();
+                      textarea.select();
+                      document.execCommand('copy');
+                      document.body.removeChild(textarea);
                     } catch (err) {
                       console.error('Failed to copy:', err);
                     }
@@ -285,7 +304,7 @@ export default function ChatPanel() {
   const {
     currentNotebookId, currentConversationId,
     notebooks, streamingContent, createConversation, setCurrentConversation, deleteConversation,
-    renameConversation, sendMessage, stopGeneration, fetchMessages, addNote
+    renameConversation, sendMessage, stopGeneration, fetchMessages
   } = useNotebookStore();
 
   const notebook = notebooks.find((n) => n.id === currentNotebookId);
@@ -351,9 +370,29 @@ export default function ChatPanel() {
   }, [showModelList]);
 
   const handleCopy = useCallback(async (content: string) => {
+    // 优先使用 Clipboard API（HTTPS 环境）
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(content);
+        return true;
+      } catch (err) {
+        console.warn('Clipboard API failed, falling back to execCommand:', err);
+      }
+    }
+
+    // Fallback：使用 textarea + execCommand（兼容 HTTP 环境）
     try {
-      await navigator.clipboard.writeText(content);
-      return true;
+      const textarea = document.createElement('textarea');
+      textarea.value = content;
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const success = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return success;
     } catch (err) {
       console.error('Failed to copy:', err);
       return false;
@@ -391,20 +430,6 @@ export default function ChatPanel() {
       e.preventDefault();
       handleSend();
     }
-  };
-
-  const handleSaveAsNote = (content: string) => {
-    const note = {
-      id: `note-${crypto.randomUUID()}`,
-      title: content.slice(0, 20).replace(/[#*\n]/g, ''),
-      type: 'note' as NoteType,
-      content,
-      isSource: false,
-      notebookId: currentNotebookId,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    addNote(currentNotebookId, note);
   };
 
   const handleStartRenameConv = (id: string, title: string) => {
@@ -597,12 +622,6 @@ export default function ChatPanel() {
                 {!msg.isStreaming && (
                   <div className="flex items-center gap-2 mt-2 pt-2 border-t border-border">
                     <CopyButton content={msg.content} onCopy={handleCopy} variant="dark" />
-                    <button
-                      onClick={() => handleSaveAsNote(msg.content)}
-                      className="flex items-center gap-1 text-xs text-text-muted hover:text-accent transition-colors cursor-pointer"
-                    >
-                      <Save size={11} /> 保存为笔记
-                    </button>
                   </div>
                 )}
               </div>

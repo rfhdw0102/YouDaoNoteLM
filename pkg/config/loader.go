@@ -56,6 +56,18 @@ func Load(configPath string) (*Config, error) {
 	if val := os.Getenv("MINIO_PUBLIC_ENDPOINT"); val != "" {
 		config.External.MinIO.PublicEndpoint = val
 	}
+	if val := os.Getenv("ENCRYPTION_KEY"); val != "" {
+		config.Security.EncryptionKey = val
+	}
+	if val := os.Getenv("MINIO_ACCESS_KEY"); val != "" {
+		config.External.MinIO.AccessKey = val
+	}
+	if val := os.Getenv("MINIO_SECRET_KEY"); val != "" {
+		config.External.MinIO.SecretKey = val
+	}
+	if val := os.Getenv("BOCHA_API_KEY"); val != "" {
+		config.External.Bocha.APIKey = val
+	}
 	// 设置默认发件人地址
 	if config.Email.From == "" {
 		config.Email.From = config.Email.Username
