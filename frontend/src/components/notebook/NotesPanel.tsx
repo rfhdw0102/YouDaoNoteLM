@@ -73,7 +73,34 @@ export default function NotesPanel() {
   };
 
   const handleCopy = (content: string) => {
-    navigator.clipboard.writeText(content);
+    // 优先使用 Clipboard API（HTTPS 环境）
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(content).catch(() => {
+        // Fallback
+        const textarea = document.createElement('textarea');
+        textarea.value = content;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        textarea.style.top = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      });
+      return;
+    }
+    // Fallback：使用 textarea + execCommand（兼容 HTTP 环境）
+    const textarea = document.createElement('textarea');
+    textarea.value = content;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
   };
 
   const handleDownload = async (note: Note) => {
