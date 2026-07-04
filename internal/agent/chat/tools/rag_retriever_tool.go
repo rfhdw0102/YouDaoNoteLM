@@ -60,24 +60,39 @@ func (t *RAGRetrieverTool) InvokableRun(ctx context.Context, argumentsInJSON str
 		zap.Uints("sourceIDs", t.sourceIDs),
 	)
 
-	var params struct {
-		Query string `json:"query"`
-		TopK  int    `json:"top_k"`
+	var rawParams struct {
+		Query string      `json:"query"`
+		TopK  interface{} `json:"top_k"`
 	}
-	if err := json.Unmarshal([]byte(argumentsInJSON), &params); err != nil {
+	if err := json.Unmarshal([]byte(argumentsInJSON), &rawParams); err != nil {
 		logger.Error("[RAGRetrieverTool] 参数解析失败",
 			zap.String("arguments", argumentsInJSON),
 			zap.Error(err),
 		)
 		return "", fmt.Errorf("解析参数失败: %w", err)
 	}
-	if params.Query == "" {
+	if rawParams.Query == "" {
 		logger.Warn("[RAGRetrieverTool] query 参数为空")
 		return "错误：query 参数不能为空", nil
 	}
-	if params.TopK <= 0 || params.TopK > 10 {
-		params.TopK = 5
+
+	// 兼容 top_k 为数字或字符串的情况
+	topK := 5
+	switch v := rawParams.TopK.(type) {
+	case float64:
+		topK = int(v)
+	case string:
+		if parsed, err := fmt.Sscanf(v, "%d", &topK); err == nil && parsed > 0 {
+			// ok
+		}
 	}
+	if topK <= 0 || topK > 10 {
+		topK = 5
+	}
+	params := struct {
+		Query string
+		TopK  int
+	}{Query: rawParams.Query, TopK: topK}
 
 	logger.Info("[RAGRetrieverTool] 开始检索",
 		zap.String("query", params.Query),
