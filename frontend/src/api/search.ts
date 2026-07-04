@@ -1,4 +1,4 @@
-import client from './client';
+import client, { doRefreshToken } from './client';
 import type { ApiResponse } from './auth';
 
 export interface SearchResultItem {
@@ -54,7 +54,7 @@ export async function search(nbId: number, query: string): Promise<ApiResponse<S
 }
 
 // 1b. Intelligent search (SSE 流式)
-export async function searchStream(
+async function doSearchStream(
   nbId: number,
   query: string,
   onEvent: (event: SearchStreamEvent) => void,
@@ -98,6 +98,10 @@ export async function searchStream(
             // 忽略 JSON 解析错误
             continue;
           }
+          // 检查是否是 token 错误
+          if (event.type === 'error' && (event.error_code === 1005 || event.error_code === 1006)) {
+            throw { isTokenError: true, event };
+          }
           // onEvent 可能会抛出异常（如错误事件），需要向上传播
           onEvent(event);
         }
@@ -105,6 +109,41 @@ export async function searchStream(
     }
   } finally {
     reader.releaseLock();
+  }
+}
+
+export async function searchStream(
+  nbId: number,
+  query: string,
+  onEvent: (event: SearchStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  try {
+    await doSearchStream(nbId, query, onEvent, signal);
+  } catch (error: any) {
+    // 如果是 token 错误，尝试刷新 token 后重试
+    if (error?.isTokenError) {
+      const newToken = await doRefreshToken();
+      if (newToken) {
+        // 刷新成功，重试请求
+        await doSearchStream(nbId, query, onEvent, signal);
+        return;
+      }
+      // 刷新失败，抛出原始错误事件
+      if (error.event) {
+        onEvent(error.event);
+        return;
+      }
+    }
+    // HTTP 401 错误也尝试刷新 token
+    if (error?.message?.includes('HTTP 401')) {
+      const newToken = await doRefreshToken();
+      if (newToken) {
+        await doSearchStream(nbId, query, onEvent, signal);
+        return;
+      }
+    }
+    throw error;
   }
 }
 

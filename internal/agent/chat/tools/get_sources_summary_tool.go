@@ -67,10 +67,11 @@ func (t *GetSourcesSummaryTool) InvokableRun(ctx context.Context, argumentsInJSO
 		zap.Uints("availableSourceIDs", t.sourceIDs),
 	)
 
-	var params struct {
-		SourceIDs []uint `json:"source_ids"`
+	// 先用 interface{} 接收，兼容字符串和数字两种格式
+	var rawParams struct {
+		SourceIDs []interface{} `json:"source_ids"`
 	}
-	if err := json.Unmarshal([]byte(argumentsInJSON), &params); err != nil {
+	if err := json.Unmarshal([]byte(argumentsInJSON), &rawParams); err != nil {
 		logger.Error("[GetSourcesSummaryTool] 参数解析失败",
 			zap.String("arguments", argumentsInJSON),
 			zap.Error(err),
@@ -78,8 +79,26 @@ func (t *GetSourcesSummaryTool) InvokableRun(ctx context.Context, argumentsInJSO
 		return "", fmt.Errorf("解析参数失败: %w", err)
 	}
 
+	// 将 source_ids 转换为 []uint，兼容字符串和数字
+	var sourceIDs []uint
+	for _, v := range rawParams.SourceIDs {
+		switch id := v.(type) {
+		case float64: // JSON 数字默认解析为 float64
+			sourceIDs = append(sourceIDs, uint(id))
+		case string: // LLM 可能返回字符串
+			var parsed uint
+			if _, err := fmt.Sscanf(id, "%d", &parsed); err == nil {
+				sourceIDs = append(sourceIDs, parsed)
+			} else {
+				logger.Warn("[GetSourcesSummaryTool] 无法解析 source_id", zap.String("value", id))
+			}
+		default:
+			logger.Warn("[GetSourcesSummaryTool] 未知的 source_id 类型", zap.Any("value", v))
+		}
+	}
+
 	// 如果未指定 source_ids，使用所有已选定的资料
-	targetIDs := params.SourceIDs
+	targetIDs := sourceIDs
 	if len(targetIDs) == 0 {
 		targetIDs = t.sourceIDs
 	}
