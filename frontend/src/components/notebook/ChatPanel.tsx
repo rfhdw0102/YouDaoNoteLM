@@ -114,8 +114,27 @@ function ReferencePopover({ references, startIndex = 1 }: { references: Referenc
                 <button
                   onClick={async (e) => {
                     e.stopPropagation();
+                    // 优先使用 Clipboard API（HTTPS 环境）
+                    if (navigator.clipboard && window.isSecureContext) {
+                      try {
+                        await navigator.clipboard.writeText(ref.chunkContent);
+                        return;
+                      } catch (err) {
+                        console.warn('Clipboard API failed, falling back to execCommand:', err);
+                      }
+                    }
+                    // Fallback：使用 textarea + execCommand（兼容 HTTP 环境）
                     try {
-                      await navigator.clipboard.writeText(ref.chunkContent);
+                      const textarea = document.createElement('textarea');
+                      textarea.value = ref.chunkContent;
+                      textarea.style.position = 'fixed';
+                      textarea.style.left = '-9999px';
+                      textarea.style.top = '-9999px';
+                      document.body.appendChild(textarea);
+                      textarea.focus();
+                      textarea.select();
+                      document.execCommand('copy');
+                      document.body.removeChild(textarea);
                     } catch (err) {
                       console.error('Failed to copy:', err);
                     }
@@ -351,9 +370,29 @@ export default function ChatPanel() {
   }, [showModelList]);
 
   const handleCopy = useCallback(async (content: string) => {
+    // 优先使用 Clipboard API（HTTPS 环境）
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(content);
+        return true;
+      } catch (err) {
+        console.warn('Clipboard API failed, falling back to execCommand:', err);
+      }
+    }
+
+    // Fallback：使用 textarea + execCommand（兼容 HTTP 环境）
     try {
-      await navigator.clipboard.writeText(content);
-      return true;
+      const textarea = document.createElement('textarea');
+      textarea.value = content;
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const success = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return success;
     } catch (err) {
       console.error('Failed to copy:', err);
       return false;
