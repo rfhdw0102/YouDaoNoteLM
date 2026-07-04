@@ -94,32 +94,23 @@ func (s *MinioStorage) Delete(filePath string) error {
 }
 
 // GetPresignedURL 获取临时访问 URL
+// 关键原则：SDK client 永远连接内部 endpoint（s.client，容器内可达），
+// publicEndpoint 仅用于 URL 重写——替换生成 URL 的 host，供浏览器/外部服务访问。
+// 这样 SDK 内部的 GetBucketLocation 走内部网络，不会 dial 公网地址导致超时。
 func (s *MinioStorage) GetPresignedURL(filePath string, expiry time.Duration) (string, error) {
-	// 如果配置了公网地址，使用公网 endpoint 生成预签名 URL（确保签名正确）
-	if s.publicEndpoint != "" {
-		publicHost := strings.TrimPrefix(s.publicEndpoint, "http://")
-		publicHost = strings.TrimPrefix(publicHost, "https://")
-
-		publicClient, err := minio.New(publicHost, &minio.Options{
-			Creds:  credentials.NewStaticV4(s.accessKey, s.secretKey, ""),
-			Secure: false,
-		})
-		if err != nil {
-			return "", fmt.Errorf("创建公网 MinIO 客户端失败: %w", err)
-		}
-
-		presignedURL, err := publicClient.PresignedGetObject(context.Background(), s.bucket, filePath, expiry, nil)
-		if err != nil {
-			return "", fmt.Errorf("生成预签名URL失败: %w", err)
-		}
-		return presignedURL.String(), nil
-	}
-
-	// 使用默认 endpoint
+	// 1. 用内部 client 生成预签名 URL（SDK 内部 GetBucketLocation 走内部网络）
 	presignedURL, err := s.client.PresignedGetObject(context.Background(), s.bucket, filePath, expiry, nil)
 	if err != nil {
 		return "", fmt.Errorf("生成预签名URL失败: %w", err)
 	}
+
+	// 2. 若配置了公网 endpoint，把 URL 中的 host 替换为公网地址（仅字符串重写，SDK 不连接此地址）
+	if s.publicEndpoint != "" {
+		publicHost := strings.TrimPrefix(s.publicEndpoint, "http://")
+		publicHost = strings.TrimPrefix(publicHost, "https://")
+		presignedURL.Host = publicHost
+	}
+
 	return presignedURL.String(), nil
 }
 

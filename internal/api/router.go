@@ -4,6 +4,7 @@ import (
 	"YoudaoNoteLm/internal/api/v1/admin"
 	"YoudaoNoteLm/internal/api/v1/auth"
 	"YoudaoNoteLm/internal/api/v1/chat"
+	"YoudaoNoteLm/internal/api/v1/file"
 	"YoudaoNoteLm/internal/api/v1/generation"
 	"YoudaoNoteLm/internal/api/v1/importn"
 	"YoudaoNoteLm/internal/api/v1/notebook"
@@ -16,6 +17,7 @@ import (
 	"YoudaoNoteLm/internal/middleware"
 	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/service"
+	externalStorage "YoudaoNoteLm/internal/service/external/storage"
 
 	"github.com/gin-gonic/gin"
 )
@@ -35,6 +37,7 @@ type Router struct {
 	providerCtrl   *providers.Controller
 	youdaoCtrl     *youdao.Controller
 	userConfigCtrl *userconfig.Controller
+	fileCtrl       *file.Controller
 }
 
 // NewRouter 创建路由。
@@ -56,6 +59,7 @@ func NewRouter(
 	configService service.ConfigService,
 	youdaoService service.YoudaoService,
 	ingestionService rag.IngestionService,
+	storage externalStorage.FileStorage,
 ) *Router {
 	return &Router{
 		userCtrl:       user.NewController(userService, tokenBlacklist),
@@ -71,6 +75,7 @@ func NewRouter(
 		providerCtrl:   providers.NewController(configService),
 		youdaoCtrl:     youdao.NewController(youdaoService),
 		userConfigCtrl: userconfig.NewController(userConfigService, tokenBlacklist, ingestionService),
+		fileCtrl:       file.NewController(storage),
 	}
 }
 
@@ -97,6 +102,9 @@ func (r *Router) Setup(engine *gin.Engine) {
 		r.sourceCtrl.RegisterRoutes(v1)
 		r.searchCtrl.RegisterRoutes(v1)
 		r.generationCtrl.RegisterRoutes(v1, r.tokenBlacklist)
+
+		// 文件代理路由（公开，头像降级访问）
+		r.fileCtrl.RegisterRoutes(v1)
 
 		// 导入路由（需认证）
 		r.importCtrl.RegisterRoutes(v1, r.tokenBlacklist)
