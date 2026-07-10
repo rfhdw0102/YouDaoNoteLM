@@ -29,9 +29,11 @@ type MinioStorage struct {
 
 // NewMinIOStorage 创建 MinIO 存储
 func NewMinIOStorage(endpoint, accessKey, secretKey, bucket, publicEndpoint string) (FileStorage, error) {
+	// 根据内部 endpoint 的 scheme 决定 Secure（支持 https://minio:9000）
+	secure := strings.HasPrefix(strings.ToLower(endpoint), "https://")
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
-		Secure: false,
+		Secure: secure,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("MinIO 初始化失败: %w", err)
@@ -109,6 +111,13 @@ func (s *MinioStorage) GetPresignedURL(filePath string, expiry time.Duration) (s
 		publicHost := strings.TrimPrefix(s.publicEndpoint, "http://")
 		publicHost = strings.TrimPrefix(publicHost, "https://")
 		presignedURL.Host = publicHost
+		// scheme 跟随 publicEndpoint，避免 HTTPS 公网地址生成 http:// 链接导致混合内容拦截
+		switch {
+		case strings.HasPrefix(strings.ToLower(s.publicEndpoint), "https://"):
+			presignedURL.Scheme = "https"
+		case strings.HasPrefix(strings.ToLower(s.publicEndpoint), "http://"):
+			presignedURL.Scheme = "http"
+		}
 	}
 
 	return presignedURL.String(), nil

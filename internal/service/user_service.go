@@ -13,7 +13,6 @@ import (
 	"io"
 	"mime/multipart"
 	"path/filepath"
-	"time"
 
 	bizerrors "YoudaoNoteLm/pkg/errors"
 	"go.uber.org/zap"
@@ -191,19 +190,15 @@ func (s *userService) UploadAvatar(id uint, file *multipart.FileHeader) (string,
 		return "", err
 	}
 
-	// 生成预签名 URL 返回给前端
-	presignedURL, err := s.storage.GetPresignedURL(objectName, 24*time.Hour)
-	if err != nil {
-		logger.Warn("生成头像预签名 URL 失败，降级使用代理 URL", zap.Error(err))
-		return s.avatarProxyURL(objectName), nil
-	}
-
+	// 头像始终走后端代理 URL（/api/v1/files/avatar/*），由后端从 MinIO 拉取返回。
+	// 代理路由走容器内部 endpoint，不依赖 MINIO_PUBLIC_ENDPOINT，避免公网地址配错导致头像显示失败。
 	logger.Info("头像上传成功", zap.Uint("user_id", id), zap.String("object", objectName))
-	return presignedURL, nil
+	return s.avatarProxyURL(objectName), nil
 }
 
-// avatarProxyURL 构建后端代理 URL（presign 失败时的降级方案）
-// 浏览器通过此路径访问，后端负责从 MinIO 拉取并返回内容，避免返回 raw objectName 导致 404
+// avatarProxyURL 构建后端代理 URL（头像访问的默认方案）
+// 浏览器通过此路径访问，后端负责从 MinIO 拉取并返回内容。
+// 代理路由走容器内部 endpoint，不依赖 MINIO_PUBLIC_ENDPOINT，保证无论公网地址如何配置头像都能显示。
 // objectName 形如 "avatars/1.png"，路由使用通配符 *objectName 捕获整段路径
 func (s *userService) avatarProxyURL(objectName string) string {
 	return "/api/v1/files/avatar/" + objectName
@@ -263,14 +258,9 @@ func (s *userService) DeleteAccount(id uint, req *request.DeleteAccountRequest) 
 // GetUserResponse 获取用户响应
 func (s *userService) GetUserResponse(user *entity.User) *dto.UserResponse {
 	avatarURL := user.Avatar
-	// 如果头像是 MinIO 对象路径，生成预签名 URL
+	// 头像走后端代理 URL，不依赖 MINIO_PUBLIC_ENDPOINT，保证显示稳定
 	if user.Avatar != "" && s.storage != nil {
-		if presignedURL, err := s.storage.GetPresignedURL(user.Avatar, 24*time.Hour); err == nil {
-			avatarURL = presignedURL
-		} else {
-			logger.Warn("生成头像预签名 URL 失败，降级使用代理 URL", zap.String("path", user.Avatar), zap.Error(err))
-			avatarURL = s.avatarProxyURL(user.Avatar)
-		}
+		avatarURL = s.avatarProxyURL(user.Avatar)
 	}
 
 	return &dto.UserResponse{
