@@ -20,26 +20,42 @@ import (
 
 // MinioStorage MinIO 存储实现（导出，供外部包类型断言使用）
 type MinioStorage struct {
-	client         *minio.Client
+	client         *minio.Client // 内部 endpoint，用于上传/下载/删除
+	presignClient  *minio.Client // 公网 endpoint，用于生成预签名 URL（签名 host 与公网访问一致）
 	bucket         string
-	publicEndpoint string // 公网访问地址，用于生成外网可访问的预签名URL
+	publicEndpoint string
 	accessKey      string
 	secretKey      string
 }
 
 // NewMinIOStorage 创建 MinIO 存储
 func NewMinIOStorage(endpoint, accessKey, secretKey, bucket, publicEndpoint string) (FileStorage, error) {
-	// 根据内部 endpoint 的 scheme 决定 Secure（支持 https://minio:9000）
-	secure := strings.HasPrefix(strings.ToLower(endpoint), "https://")
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
-		Secure: secure,
+		Secure: false,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("MinIO 初始化失败: %w", err)
 	}
 
-	return &MinioStorage{client: client, bucket: bucket, publicEndpoint: publicEndpoint, accessKey: accessKey, secretKey: secretKey}, nil
+	// 若配置了公网 endpoint，创建专用 presign client：直接用公网地址生成 presign URL，
+	// 签名计算的 host 与外部访问一致，避免 host 重写导致 SignatureDoesNotMatch。
+	// 设 Region 避免 PresignedGetObject 内部 GetBucketLocation 调用（纯本地签名，不 dial 公网）。
+	var presignClient *minio.Client
+	if publicEndpoint != "" {
+		pubHost := strings.TrimPrefix(strings.TrimPrefix(publicEndpoint, "https://"), "http://")
+		pubSecure := strings.HasPrefix(strings.ToLower(publicEndpoint), "https://")
+		presignClient, err = minio.New(pubHost, &minio.Options{
+			Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+			Secure: pubSecure,
+			Region: "us-east-1",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("MinIO presign client 初始化失败: %w", err)
+		}
+	}
+
+	return &MinioStorage{client: client, presignClient: presignClient, bucket: bucket, publicEndpoint: publicEndpoint, accessKey: accessKey, secretKey: secretKey}, nil
 }
 
 // Upload 上传文件到 MinIO
@@ -96,30 +112,22 @@ func (s *MinioStorage) Delete(filePath string) error {
 }
 
 // GetPresignedURL 获取临时访问 URL
-// 关键原则：SDK client 永远连接内部 endpoint（s.client，容器内可达），
-// publicEndpoint 仅用于 URL 重写——替换生成 URL 的 host，供浏览器/外部服务访问。
-// 这样 SDK 内部的 GetBucketLocation 走内部网络，不会 dial 公网地址导致超时。
+// 优先用公网 presign client 生成：签名 host 与外部访问一致，避免 host 重写破坏 S3 签名。
+// presignClient 设了 Region，PresignedGetObject 不会 dial 公网（纯本地签名计算）。
 func (s *MinioStorage) GetPresignedURL(filePath string, expiry time.Duration) (string, error) {
-	// 1. 用内部 client 生成预签名 URL（SDK 内部 GetBucketLocation 走内部网络）
+	if s.presignClient != nil {
+		presignedURL, err := s.presignClient.PresignedGetObject(context.Background(), s.bucket, filePath, expiry, nil)
+		if err != nil {
+			return "", fmt.Errorf("生成预签名URL失败: %w", err)
+		}
+		return presignedURL.String(), nil
+	}
+
+	// 降级：无公网 endpoint 时用内部 client 生成（仅内部访问场景）
 	presignedURL, err := s.client.PresignedGetObject(context.Background(), s.bucket, filePath, expiry, nil)
 	if err != nil {
 		return "", fmt.Errorf("生成预签名URL失败: %w", err)
 	}
-
-	// 2. 若配置了公网 endpoint，把 URL 中的 host 替换为公网地址（仅字符串重写，SDK 不连接此地址）
-	if s.publicEndpoint != "" {
-		publicHost := strings.TrimPrefix(s.publicEndpoint, "http://")
-		publicHost = strings.TrimPrefix(publicHost, "https://")
-		presignedURL.Host = publicHost
-		// scheme 跟随 publicEndpoint，避免 HTTPS 公网地址生成 http:// 链接导致混合内容拦截
-		switch {
-		case strings.HasPrefix(strings.ToLower(s.publicEndpoint), "https://"):
-			presignedURL.Scheme = "https"
-		case strings.HasPrefix(strings.ToLower(s.publicEndpoint), "http://"):
-			presignedURL.Scheme = "http"
-		}
-	}
-
 	return presignedURL.String(), nil
 }
 
