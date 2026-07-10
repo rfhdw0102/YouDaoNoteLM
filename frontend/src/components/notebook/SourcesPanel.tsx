@@ -1013,7 +1013,7 @@ export default function SourcesPanel() {
       {/* Import Modal */}
       <Modal open={showImportModal} onClose={() => setShowImportModal(false)} title="导入资料" size="md">
         <ImportModalContent
-          onFileImport={(file) => { importFile(currentNotebookId, file).then(() => setShowImportModal(false)).catch(console.error); }}
+          onFileImport={(file) => importFile(currentNotebookId, file).then(() => setShowImportModal(false)).catch(console.error)}
           onAudioImport={async (file) => {
             try {
               await previewAudio(currentNotebookId, file);
@@ -1069,7 +1069,7 @@ export default function SourcesPanel() {
 }
 
 function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudaoImport }: {
-  onFileImport: (file: File) => void;
+  onFileImport: (file: File) => Promise<void>;
   onAudioImport: (file: File) => void;
   onUrlImport: (url: string) => void;
   onYoudaoImport: (fileIds: string[], fileNames: Record<string, string>) => Promise<void>;
@@ -1089,9 +1089,9 @@ function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudao
     try {
       const ext = '.' + file.name.split('.').pop()?.toLowerCase();
       if (audioExts.includes(ext)) {
-        onAudioImport(file);
+        await onAudioImport(file);
       } else {
-        onFileImport(file);
+        await onFileImport(file);
       }
     } finally {
       setUploading(false);

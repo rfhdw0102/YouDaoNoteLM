@@ -86,8 +86,10 @@ export default function ProfilePage() {
       const res = await uploadAvatar(file);
       if (res.code === 0) {
         // 上传接口已在服务端更新头像，只需更新本地状态（不回传 URL 到 PUT /user/profile）
+        // 加 cache-buster 避免浏览器命中旧缓存（objectName 固定为 avatars/{id}.{ext}，URL 不变）
+        const avatarUrl = res.data.avatar + (res.data.avatar.includes('?') ? '&' : '?') + 't=' + Date.now();
         useAuthStore.setState((state) => {
-          const updated = state.user ? { ...state.user, avatar: res.data.avatar } : null;
+          const updated = state.user ? { ...state.user, avatar: avatarUrl } : null;
           if (updated) localStorage.setItem('user', JSON.stringify(updated));
           return { user: updated };
         });
