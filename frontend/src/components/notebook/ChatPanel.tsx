@@ -616,20 +616,6 @@ export default function ChatPanel() {
                     {msg.isStreaming && (
                       <span className="inline-block w-0.5 h-3 bg-accent ml-0.5 animate-pulse" />
                     )}
-                    {/* 引用来源列表：直接显示内容，避免用户只能看到序号 */}
-                    {!msg.isStreaming && msg.references && msg.references.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-border space-y-1.5">
-                        <div className="text-[10px] text-text-muted uppercase tracking-wider mb-1">引用来源</div>
-                        {msg.references.map((ref, idx) => (
-                          <div key={idx} className="text-xs bg-bg-secondary/40 rounded-lg px-2.5 py-1.5">
-                            <div className="font-medium text-accent truncate">{idx + 1}. {ref.sourceName}</div>
-                            {ref.chunkContent && (
-                              <div className="text-text-muted mt-1 line-clamp-3 whitespace-pre-wrap">{ref.chunkContent}</div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 )}
 
