@@ -102,7 +102,7 @@ youdaonotelm/                     # 部署根目录
 | `EMAIL_PASSWORD` | 邮箱 SMTP 密码 | **必填** |
 | `ENCRYPTION_KEY` | API Key 加密密钥，必须恰好 **32 字节** | **必填** |
 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | 应用连接 MinIO 的密钥（通常与 `MINIO_ROOT_USER/PASSWORD` 一致） | **必填** |
-| `MINIO_PUBLIC_ENDPOINT` | MinIO 公网地址，供阿里云 ASR 下载音频文件，格式 `服务器IP:端口` | **必填** |
+| `MINIO_PUBLIC_ENDPOINT` | MinIO 公网地址，用于预签名 URL 的 host 重写（SDK 不连接此地址），供浏览器/阿里云 ASR 访问，格式 `服务器IP:端口` | **必填** |
 | `BOCHA_API_KEY` | 博查搜索 API Key，留空禁用联网搜索 | 可选 |
 
 ### `configs/docker_config.yaml` — 应用配置
@@ -111,7 +111,7 @@ youdaonotelm/                     # 部署根目录
 - 敏感字段（密码、密钥、MinIO 公网端点等）已留空，由 `.env` 中同名变量自动覆盖：
   - `security.encryption_key` ← `ENCRYPTION_KEY`
   - `external.minio.access_key` / `secret_key` ← `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`
-  - MinIO 公网端点 ← `MINIO_PUBLIC_ENDPOINT`（yaml 中无此字段，仅由环境变量注入，见 `pkg/config/loader.go`）
+  - MinIO 公网端点 ← `MINIO_PUBLIC_ENDPOINT`（对应 yaml 的 `external.minio.public_endpoint`，环境变量优先级更高，见 `pkg/config/loader.go`）
 - 如需调整非敏感字段（日志级别、连接池大小、CORS 等）再编辑此文件
 
 > **配置优先级**：`docker_config.yaml` 中的空字段会被 `.env` 中同名环境变量覆盖（通过 `pkg/config/loader.go` 的 `os.Getenv` 逻辑）。非空字段以 yaml 为准。
@@ -150,7 +150,7 @@ youdaonotelm/                     # 部署根目录
 | 邮箱密码 | `EMAIL_PASSWORD` | `email.password` |
 | 加密密钥 | `ENCRYPTION_KEY` | `security.encryption_key` |
 | MinIO 密钥 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `external.minio.access_key` / `secret_key` |
-| MinIO 公网端点 | `MINIO_PUBLIC_ENDPOINT` | yaml 中无此字段，仅由环境变量注入 |
+| MinIO 公网端点 | `MINIO_PUBLIC_ENDPOINT` | `external.minio.public_endpoint`（环境变量优先） |
 | 博查 API Key | `BOCHA_API_KEY` | `external.bocha.api_key` |
 
 ---
