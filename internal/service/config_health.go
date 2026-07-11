@@ -364,7 +364,11 @@ func (h *ConfigHealthChecker) testASR(config *entity.UserConfig) *HealthCheckRes
 			}
 			return &HealthCheckResult{Healthy: false, Message: "连接失败", Detail: err.Error()}
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				logger.Warn("关闭 HTTP 响应体失败", zap.String("url", url), zap.Error(err))
+			}
+		}()
 
 		if resp.StatusCode == 401 || resp.StatusCode == 403 {
 			return &HealthCheckResult{
@@ -391,7 +395,13 @@ func (h *ConfigHealthChecker) testASR(config *entity.UserConfig) *HealthCheckRes
 		// 解析 extra_config
 		var extraConfig map[string]interface{}
 		if config.ExtraConfig != "" {
-			json.Unmarshal([]byte(config.ExtraConfig), &extraConfig)
+			if err := json.Unmarshal([]byte(config.ExtraConfig), &extraConfig); err != nil {
+				return &HealthCheckResult{
+					Healthy: false,
+					Message: "阿里云 ASR 扩展配置格式错误",
+					Detail:  err.Error(),
+				}
+			}
 		}
 
 		accessKeyID := config.APIKey
