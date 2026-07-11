@@ -9,15 +9,28 @@ import (
 
 // captureGenerationModel records prompts and returns mock outputs.
 // It is safe for concurrent access when used with the concurrent enrich.
+//
+// Output resolution order:
+//  1. If responder is set, it decides the output per-prompt (use this for
+//     tests that need deterministic behavior under concurrent enrichment,
+//     since a shared FIFO outputs queue is order-dependent and flaky).
+//  2. Otherwise, outputs are consumed FIFO.
+//  3. If outputs is empty, a default valid single-slide JSON is returned.
 type captureGenerationModel struct {
-	mu      sync.Mutex
-	prompts []GenerationPrompt
-	outputs []string
+	mu        sync.Mutex
+	prompts   []GenerationPrompt
+	outputs   []string
+	responder func(GenerationPrompt) string
 }
 
 func (m *captureGenerationModel) Generate(ctx context.Context, prompt GenerationPrompt) (string, error) {
 	m.mu.Lock()
 	m.prompts = append(m.prompts, prompt)
+	if m.responder != nil {
+		out := m.responder(prompt)
+		m.mu.Unlock()
+		return out, nil
+	}
 	if len(m.outputs) > 0 {
 		output := m.outputs[0]
 		m.outputs = m.outputs[1:]
@@ -87,11 +100,18 @@ func TestPPTContentEnrichBatchesSlides(t *testing.T) {
 }
 
 func TestPPTContentEnrichKeepsSuccessfulBatches(t *testing.T) {
+	// Responder routes by batch content (the slide title appears in
+	// prompt.Context via renderPPTPlanForPrompt), so behavior is deterministic
+	// regardless of which concurrent worker calls Generate first.
+	// Batch 0 (slides titled "Slide 01".."Slide 04") always returns invalid
+	// JSON, failing on both the initial call and the retry.
+	// Batch 1 (slide titled "Slide 05") returns valid JSON on the first call.
 	model := &captureGenerationModel{
-		outputs: []string{
-			`{"slides":[`,
-			`{"slides":[`,
-			`{"slides":[{"title":"Slide 05","paragraphs":["expanded five"]}]}`,
+		responder: func(prompt GenerationPrompt) string {
+			if strings.Contains(prompt.Context, "Slide 05") {
+				return `{"slides":[{"title":"Slide 05","paragraphs":["expanded five"]}]}`
+			}
+			return `{"slides":[`
 		},
 	}
 	agent := &pptGenerationAgent{
@@ -122,16 +142,17 @@ func TestPPTContentEnrichKeepsSuccessfulBatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enrichPPTContent returned error: %v", err)
 	}
-	// 5 slides / batch_size(4) = 2 batches (4+1). Batches run concurrently.
-	// Each batch: 1 initial call + 1 retry = 2 calls per batch = 4 total calls.
-	// With 3 mock outputs, the 4th call gets the default valid output.
-	// Both batches succeed: batch 0 gets output[2] on retry, batch 1 gets default on retry.
+	// 5 slides / batch_size(4) = 2 batches (4+1). Batch 0 fails initial + retry
+	// (2 calls); batch 1 succeeds on first call (1 call). Total = 3 calls.
 	generated := model.prompts
-	if len(generated) < 3 {
-		t.Fatalf("Generate calls = %d, want at least 3", len(generated))
+	if len(generated) != 3 {
+		t.Fatalf("Generate calls = %d, want 3", len(generated))
 	}
-	if len(got.richContent.Slides) == 0 {
-		t.Fatalf("rich slides = %d, want at least 1", len(got.richContent.Slides))
+	if len(got.richContent.Slides) != 1 {
+		t.Fatalf("rich slides = %d, want 1", len(got.richContent.Slides))
+	}
+	if got.richContent.Slides[0].Title != "Slide 05" {
+		t.Fatalf("kept slide title = %q, want Slide 05", got.richContent.Slides[0].Title)
 	}
 }
 

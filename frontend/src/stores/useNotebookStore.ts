@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { isAxiosError } from 'axios';
 import type { Notebook, Source, Conversation, Note, NoteType, ChatMessage, Reference } from '../types';
 import * as notebookApi from '../api/notebook';
 import * as sourceApi from '../api/source';
@@ -244,9 +245,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       } else {
         throw new Error(res.message);
       }
-    } catch (err: any) {
-      if (err?.response?.status === 409) {
-        throw new Error(err.response.data?.message || '已存在同名笔记本');
+    } catch (err: unknown) {
+      if (isAxiosError(err) && err.response?.status === 409) {
+        throw new Error(err.response.data?.message || '已存在同名笔记本', { cause: err });
       }
       throw err;
     }
@@ -283,9 +284,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       } else {
         throw new Error(res.message);
       }
-    } catch (err: any) {
-      if (err?.response?.status === 409) {
-        throw new Error(err.response.data?.message || '已存在同名笔记本');
+    } catch (err: unknown) {
+      if (isAxiosError(err) && err.response?.status === 409) {
+        throw new Error(err.response.data?.message || '已存在同名笔记本', { cause: err });
       }
       throw err;
     }
@@ -628,7 +629,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         errorMessage: res.message || '导入失败',
       });
       throw new Error(res.message);
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Mark placeholder as error (only if not already marked)
       const currentNotebook = get().notebooks.find(n => n.id === notebookId);
       const placeholderSource = currentNotebook?.sources.find(s => s.id === tempId);
@@ -671,7 +672,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
             content: preview.transcribed_text,
             previewId: preview.preview_id,
           });
-        }).catch((err: any) => {
+        }).catch((err: unknown) => {
           get().updateSource(notebookId, tempId, {
             status: 'error',
             errorMessage: getErrorMessage(err, '音频转写失败'),
@@ -685,7 +686,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         errorMessage: res.message || '音频转写失败',
       });
       throw new Error(res.message);
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Mark placeholder as error (only if not already marked)
       const currentNotebook = get().notebooks.find(n => n.id === notebookId);
       const placeholderSource = currentNotebook?.sources.find(s => s.id === tempId);
@@ -759,7 +760,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         });
       }
       throw new Error(res.message);
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Network or other error — mark placeholder as error if not already marked
       const nb = get().notebooks.find(n => n.id === notebookId);
       const placeholder = nb?.sources.find(s => s.previewId === previewId);
