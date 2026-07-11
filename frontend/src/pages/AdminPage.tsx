@@ -495,9 +495,10 @@ function ConfigManagement() {
   };
 
   // 获取可添加的 provider（排除已添加的）
+  // 前端限定只展示博查搜索
   const getAvailableProviders = (): ProviderInfo[] => {
     const existingKeys = configs.map(c => c.config_key);
-    return providers.filter(p => !existingKeys.includes(p.provider));
+    return providers.filter(p => !existingKeys.includes(p.provider) && p.provider === 'bocha');
   };
 
   // 获取所有已知的字段（用于没有 provider 匹配时的兜底显示）

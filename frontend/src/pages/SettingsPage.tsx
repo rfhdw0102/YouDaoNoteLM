@@ -594,12 +594,15 @@ export default function SettingsPage() {
   ];
 
   // 从 API 获取的动态 provider 列表（只返回已实现的）
+  // 前端限定只展示博查搜索
   const getProviderOptions = (): { value: string; label: string }[] => {
     if (providers.length > 0) {
-      return providers.map(p => ({
-        value: p.provider,
-        label: p.display_name,
-      }));
+      return providers
+        .filter(p => p.provider === 'bocha')
+        .map(p => ({
+          value: p.provider,
+          label: p.display_name,
+        }));
     }
     return [];
   };
