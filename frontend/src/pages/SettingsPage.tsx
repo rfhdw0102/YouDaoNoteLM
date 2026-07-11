@@ -34,6 +34,25 @@ const DEFAULT_API_URLS: Record<string, string> = {
   minimax: 'https://api.minimax.chat/v1',
 };
 
+// Provider 文档链接映射（用户配置时引导其获取对应密钥/参数）
+const PROVIDER_DOCS: Record<string, { label: string; url: string; description: string }> = {
+  aliyun_nls: {
+    label: '阿里云语音开通指引',
+    url: 'https://help.aliyun.com/zh/vms/getting-started/new-guidelines',
+    description: '如何获取 Access Key ID / Access Key Secret / App Key',
+  },
+  volcengine: {
+    label: '火山引擎 Embedding 文档',
+    url: 'https://www.volcengine.com/docs/search?q=embedding&c=-1',
+    description: '如何获取 API Key、接入点 ID 及向量维度',
+  },
+  bocha: {
+    label: '博查搜索 API 文档',
+    url: 'https://bocha-ai.feishu.cn/wiki/HmtOw1z6vik14Fkdu5uc9VaInBb',
+    description: '如何获取博查搜索 API Key',
+  },
+};
+
 export default function SettingsPage() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<ConfigTab>('llm');
@@ -76,6 +95,11 @@ export default function SettingsPage() {
   // 获取当前选中 provider 的配置要求
   const getSelectedProviderInfo = (): ProviderInfo | undefined => {
     return providers.find(p => p.provider === formData.provider);
+  };
+
+  // 获取当前选中 provider 的文档链接
+  const getProviderDoc = (): { label: string; url: string; description: string } | undefined => {
+    return PROVIDER_DOCS[formData.provider];
   };
 
   // 获取字段的中文标签
@@ -797,10 +821,18 @@ export default function SettingsPage() {
                     </Button>
                   </div>
                 </div>
-                <div className="mt-4 p-3 bg-bg-tertiary rounded-lg">
+                <div className="mt-4 p-3 bg-bg-tertiary rounded-lg space-y-1">
                   <p className="text-xs text-text-muted">
-                    💡 如何获取 API Key：登录有道云笔记网页版，在设置中找到 API Key 选项
+                    💡 如何获取 API Key：前往网易开放平台登录后申请 API Key
                   </p>
+                  <a
+                    href="https://mopen.163.com/#/login"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-accent hover:underline inline-block"
+                  >
+                    网易开放平台 (mopen.163.com) →
+                  </a>
                 </div>
               </motion.div>
             )}
@@ -865,6 +897,24 @@ export default function SettingsPage() {
                         </select>
                       </div>
                     </div>
+                    {getProviderDoc() && (
+                      <div className="p-3 bg-accent/5 border border-accent/20 rounded-lg flex items-start gap-2">
+                        <BookOpen size={14} className="text-accent mt-0.5 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-xs text-text-secondary">
+                            {getProviderDoc()!.description}
+                          </p>
+                          <a
+                            href={getProviderDoc()!.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-accent hover:underline mt-1 inline-block"
+                          >
+                            {getProviderDoc()!.label} →
+                          </a>
+                        </div>
+                      </div>
+                    )}
                     {providerNeedsConfig() ? (
                       <>
                         {getConfigFields().map(field => {
@@ -1060,8 +1110,26 @@ export default function SettingsPage() {
                     </select>
                   </div>
                 </div>
-                {formData.provider && providerNeedsConfig() ? (
-                  <>
+                    {getProviderDoc() && (
+                      <div className="p-3 bg-accent/5 border border-accent/20 rounded-lg flex items-start gap-2">
+                        <BookOpen size={14} className="text-accent mt-0.5 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-xs text-text-secondary">
+                            {getProviderDoc()!.description}
+                          </p>
+                          <a
+                            href={getProviderDoc()!.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-accent hover:underline mt-1 inline-block"
+                          >
+                            {getProviderDoc()!.label} →
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                    {formData.provider && providerNeedsConfig() ? (
+                      <>
                     {getConfigFields().map(field => {
                       const required = isFieldRequired(field);
                       const label = getFieldLabel(field);

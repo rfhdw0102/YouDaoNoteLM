@@ -141,12 +141,15 @@ func (s *aliyunNLSASRService) submitTask(audioURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("序列化任务参数失败: %w", err)
 	}
-	postRequest.FormParams["Task"] = string(task)
+	// json.Marshal 默认 HTML 转义会把 file_link 里的 & 转成 \u0026，
+	// 导致阿里云拉取音频时 URL 查询参数分隔符损坏（FILE_403_FORBIDDEN）。还原 & 确保 file_link 完整。
+	taskStr := strings.ReplaceAll(string(task), `\u0026`, "&")
+	postRequest.FormParams["Task"] = taskStr
 
 	logger.Info("提交ASR任务",
 		zap.String("domain", nlsDomain),
 		zap.String("scheme", string(postRequest.Scheme)),
-		zap.String("params", string(task)),
+		zap.String("params", taskStr),
 	)
 
 	postResponse, err := s.client.ProcessCommonRequest(postRequest)

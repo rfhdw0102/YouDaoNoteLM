@@ -194,12 +194,19 @@ func (s *userService) UploadAvatar(id uint, file *multipart.FileHeader) (string,
 	// 生成预签名 URL 返回给前端
 	presignedURL, err := s.storage.GetPresignedURL(objectName, 24*time.Hour)
 	if err != nil {
-		logger.Warn("生成头像预签名 URL 失败，返回 objectName", zap.Error(err))
-		return objectName, nil
+		logger.Warn("生成头像预签名 URL 失败，降级使用代理 URL", zap.Error(err))
+		return s.avatarProxyURL(objectName), nil
 	}
 
 	logger.Info("头像上传成功", zap.Uint("user_id", id), zap.String("object", objectName))
 	return presignedURL, nil
+}
+
+// avatarProxyURL 构建后端代理 URL（presign 失败时的降级方案）
+// 浏览器通过此路径访问，后端负责从 MinIO 拉取并返回内容，避免返回 raw objectName 导致 404
+// objectName 形如 "avatars/1.png"，路由使用通配符 *objectName 捕获整段路径
+func (s *userService) avatarProxyURL(objectName string) string {
+	return "/api/v1/files/avatar/" + objectName
 }
 
 // ChangePassword 修改密码
@@ -261,7 +268,8 @@ func (s *userService) GetUserResponse(user *entity.User) *dto.UserResponse {
 		if presignedURL, err := s.storage.GetPresignedURL(user.Avatar, 24*time.Hour); err == nil {
 			avatarURL = presignedURL
 		} else {
-			logger.Warn("生成头像预签名 URL 失败", zap.String("path", user.Avatar), zap.Error(err))
+			logger.Warn("生成头像预签名 URL 失败，降级使用代理 URL", zap.String("path", user.Avatar), zap.Error(err))
+			avatarURL = s.avatarProxyURL(user.Avatar)
 		}
 	}
 
