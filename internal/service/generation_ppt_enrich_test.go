@@ -18,14 +18,13 @@ type captureGenerationModel struct {
 func (m *captureGenerationModel) Generate(ctx context.Context, prompt GenerationPrompt) (string, error) {
 	m.mu.Lock()
 	m.prompts = append(m.prompts, prompt)
-	m.mu.Unlock()
 	if len(m.outputs) > 0 {
-		m.mu.Lock()
 		output := m.outputs[0]
 		m.outputs = m.outputs[1:]
 		m.mu.Unlock()
 		return output, nil
 	}
+	m.mu.Unlock()
 	return `{"slides":[{"title":"Slide","paragraphs":["expanded paragraph"]}]}`, nil
 }
 
