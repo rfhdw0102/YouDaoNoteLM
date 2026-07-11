@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<note>
+  <note-info>
+    <list id="list1" type="unordered"/>
+    <list id="list2" type="ordered"/>
+  </note-info>
+  <body>
+    <heading level="1">有道云笔记示例</heading>
+    <para>这是一篇有道云笔记的示例文档。</para>
+
+    <heading level="2">功能列表</heading>
+    <list-item list-id="list1">支持标题转换</list-item>
+    <list-item list-id="list1">支持列表转换</list-item>
+    <list-item list-id="list1">支持代码块转换</list-item>
+
+    <heading level="2">代码示例</heading>
+    <code>
+      <language>python</language>
+      <text>def hello():
+    print("Hello, World!")</text>
+    </code>
+
+    <heading level="2">待办事项</heading>
+    <todo state="done">完成转换脚本开发</todo>
+    <todo state="done">编写测试用例</todo>
+    <todo state="todo">集成到主项目</todo>
+
+    <heading level="2">引用示例</heading>
+    <quote>这是一段引用文本</quote>
+
+    <horizontal-line/>
+
+    <para>更多内容...</para>
+  </body>
+</note>

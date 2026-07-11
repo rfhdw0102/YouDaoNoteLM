@@ -1,0 +1,65 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# 构建产物
+*.exe
+*.test
+server
+
+# 文档
+docs/
+*.md
+!README.md
+
+# 临时文件
+*.tmp
+*.bak
+*.cache
+
+# 测试文件
+tests/
+cmd/test_*/
+cmd/seed_*/
+*_test.go
+
+# Docker 文件（避免递归）
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# 配置中的敏感文件（运行时通过 volume 挂载）
+.env
+
+# 上传文件
+uploads/
+
+# 调试文件
+configs/debug_*
+
+# 其他
+ffmpeg.zip
+markitdown_service
+*.wav
+*.mp3
+*.flac
+*.m4a
+response*.json
+test_output.txt
+test_result.txt
+
+# 前端相关
+frontend/node_modules
+frontend/dist
+frontend/.git
+frontend/.github
+frontend/.idea
+frontend/*.md
+frontend/.gitignore
+frontend/.env*

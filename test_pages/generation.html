@@ -1,0 +1,941 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Generation API Test</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #667085;
+      --line: #d8dee8;
+      --accent: #0f766e;
+      --accent-dark: #0b5f59;
+      --danger: #b42318;
+      --code: #111827;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(1480px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 20px 0 28px;
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .hint {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(360px, 480px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    label {
+      display: grid;
+      gap: 5px;
+      font-weight: 600;
+      color: #344054;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid #cfd6e2;
+      border-radius: 6px;
+      padding: 9px 10px;
+      color: var(--text);
+      background: #fff;
+      font: inherit;
+      outline: none;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+    }
+
+    textarea {
+      min-height: 220px;
+      resize: vertical;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+
+    .checkboxes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .checkboxes label {
+      display: flex;
+      grid-template-columns: none;
+      gap: 7px;
+      align-items: center;
+      font-weight: 600;
+    }
+
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    button {
+      border: 0;
+      border-radius: 6px;
+      padding: 9px 13px;
+      color: white;
+      background: var(--accent);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: var(--accent-dark);
+    }
+
+    button.secondary {
+      color: #344054;
+      background: #eef2f6;
+    }
+
+    button.secondary:hover {
+      background: #e3e8ef;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+
+    .status {
+      min-height: 22px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .status.error {
+      color: var(--danger);
+    }
+
+    .helper {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 400;
+    }
+
+    .inline-tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .output-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .source-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    pre {
+      margin: 0;
+      min-height: 280px;
+      max-height: 620px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      background: #0f172a;
+      color: #e5e7eb;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .preview {
+      min-height: 280px;
+      max-height: 620px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 14px;
+      background: #fff;
+    }
+
+    .preview h1,
+    .preview h2,
+    .preview h3 {
+      margin: 10px 0 6px;
+    }
+
+    .preview section {
+      margin: 0 0 12px;
+      padding: 12px;
+      border-radius: 6px;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .meta div {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      background: #fbfcfe;
+    }
+
+    .meta span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .meta strong {
+      display: block;
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 980px) {
+      .layout,
+      .output-grid,
+      .meta,
+      .row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Generation API Test</h1>
+        <p class="hint">POST /api/v1/generations and /api/v1/generations/export</p>
+      </div>
+      <div class="status" id="status">Idle</div>
+    </header>
+
+    <div class="layout">
+      <section>
+        <div class="stack">
+          <div class="row">
+            <label>
+              API Base URL
+              <input id="baseUrl" value="http://localhost:8080">
+            </label>
+            <label>
+              Type
+              <select id="type">
+                <option value="mindmap">mindmap</option>
+                <option value="ppt">ppt</option>
+                <option value="quiz">quiz</option>
+                <option value="note" selected>note</option>
+              </select>
+            </label>
+          </div>
+
+          <label>
+            Bearer Token
+            <input id="token" placeholder="粘贴 access_token，不要带 Bearer 前缀">
+          </label>
+
+          <label>
+            Prompt
+            <input id="prompt" value="请基于笔记生成结构化学习内容">
+          </label>
+
+          <div class="row">
+            <label>
+              Notebook ID
+              <input id="notebookId" type="number" min="0" value="0">
+            </label>
+            <label>
+              Source IDs
+              <input id="sourceIds" placeholder="例如 1,2,3">
+            </label>
+          </div>
+
+          <label>
+            Markdown
+            <textarea id="markdown"># 光合作用
+
+## 光反应
+叶绿素吸收光能，将水分解并产生 ATP 和 NADPH。
+
+## 卡尔文循环
+二氧化碳被固定，最终合成糖类。
+
+## 影响因素
+光照强度、二氧化碳浓度和温度都会影响光合作用效率。</textarea>
+          </label>
+
+          <label>
+            Options JSON
+            <textarea id="options" style="min-height: 92px;">{
+  "inline_top_k": 4,
+  "top_k": 5,
+  "search_count": 3
+}</textarea>
+          </label>
+
+          <div class="checkboxes">
+            <label><input id="useWeb" type="checkbox"> use_web</label>
+            <label><input id="allowDegrade" type="checkbox" checked> allow_degrade</label>
+          </div>
+
+          <label>
+            Export Title
+            <input id="exportTitle" placeholder="Optional filename title, for example lesson-note">
+          </label>
+
+          <label id="pptTemplateField">
+            PPT Template
+            <select id="pptTemplate">
+              <option value="" selected>dynamic-html</option>
+              <option value="classic">classic</option>
+              <option value="clean">clean</option>
+              <option value="business">business</option>
+            </select>
+            <span class="helper" id="pptTemplateHint">Leave empty to let backend map generated HTML directly into editable PPT blocks.</span>
+          </label>
+
+          <div class="inline-tools">
+            <button id="loadHtmlPptSampleBtn" class="secondary" type="button">Load Real HTML PPT Sample</button>
+            <span class="helper">Injects the photosynthesis HTML test case directly into preview and export flow.</span>
+          </div>
+
+          <div class="actions">
+            <button id="sendBtn" type="button">Send Request</button>
+            <button id="exportBtn" class="secondary" type="button" disabled>Export Result</button>
+            <button id="copyBtn" class="secondary" type="button">Copy Request JSON</button>
+            <button id="copyExportBtn" class="secondary" type="button" disabled>Copy Export JSON</button>
+            <button id="clearBtn" class="secondary" type="button">Clear Output</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="meta">
+          <div><span>HTTP</span><strong id="httpStatus">-</strong></div>
+          <div><span>Code</span><strong id="bizCode">-</strong></div>
+          <div><span>Agent</span><strong id="agent">-</strong></div>
+          <div><span>Fallback</span><strong id="fallback">-</strong></div>
+        </div>
+
+        <div class="output-grid">
+          <div>
+            <h2>Response JSON</h2>
+            <pre id="responseJson">{}</pre>
+          </div>
+          <div>
+            <h2>Content Preview</h2>
+            <div class="preview" id="preview"></div>
+          </div>
+        </div>
+
+        <div class="source-grid">
+          <div>
+            <h2>References</h2>
+            <pre id="references">[]</pre>
+          </div>
+          <div>
+            <h2>Search Results</h2>
+            <pre id="searchResults">[]</pre>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    const state = {
+      lastRequest: null,
+      lastResponse: null
+    };
+
+    const pptTemplateLabels = {
+      "": "dynamic-html: backend maps generated HTML into editable PPT blocks",
+      classic: "classic: warm editorial style with numbered learning cards",
+      clean: "clean: white-panel minimal style with quiet focus notes",
+      business: "business: muted teal executive style for formal reports"
+    };
+
+    const realHtmlPptSample = `<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>光合作用 · 学习课件</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #eef3e8; font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; display: flex; flex-direction: column; align-items: center; padding: 2rem 1rem; }
+    .slider { max-width: 1100px; width: 100%; display: flex; flex-direction: column; gap: 1.8rem; }
+    section { background: #ffffff; border-radius: 32px; box-shadow: 0 12px 30px rgba(60, 80, 40, 0.12); padding: 2.8rem 3.2rem; border: 1px solid rgba(140, 180, 100, 0.2); }
+    section:first-child { background: linear-gradient(145deg, #f6fbf0 0%, #e9f2db 100%); border-bottom: 4px solid #8bb86b; }
+    h1 { font-size: 2.6rem; font-weight: 700; color: #1e3a0e; margin-bottom: 0.6rem; line-height: 1.2; }
+    h2 { font-size: 1.5rem; font-weight: 600; color: #2d5a1a; margin-bottom: 1.4rem; border-left: 5px solid #7bb05c; padding-left: 1rem; }
+    section:first-child h1 { font-size: 3rem; margin-bottom: 0.3rem; }
+    section:first-child h2 { border-left: none; padding-left: 0; font-size: 1.3rem; color: #41692b; font-weight: 500; margin-bottom: 0.8rem; }
+    ul { list-style: none; padding-left: 0.5rem; }
+    li { padding: 0.5rem 0 0.5rem 2rem; font-size: 1.1rem; line-height: 1.6; color: #1f2f16; border-bottom: 1px solid #f0f5ea; }
+    li:last-child { border-bottom: none; }
+    .highlight { background: #faffed; border-left: 4px solid #7bb05c; padding: 0.8rem 1.4rem; border-radius: 12px; margin: 1.2rem 0; color: #1a3a0a; font-weight: 500; }
+    .row { display: flex; flex-wrap: wrap; gap: 1.2rem; margin-top: 1rem; }
+    .card { background: #f9fcf6; border-radius: 20px; padding: 1.4rem 1.8rem; flex: 1 1 200px; border: 1px solid #dce8d0; }
+    .dir-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-top: 0.8rem; }
+    .dir-item { background: #f4f9ee; padding: 0.8rem 1rem; border-radius: 16px; text-align: center; font-weight: 600; color: #1e4a0c; border: 1px solid #d4e4c4; }
+    .footnote { margin-top: 1.2rem; font-size: 0.9rem; color: #5a7350; background: #f2f8ec; padding: 0.6rem 1.4rem; border-radius: 40px; display: inline-block; }
+    .evidence { background: #f0f6ea; border-radius: 16px; padding: 1rem 1.6rem; margin-top: 1.4rem; font-size: 0.95rem; color: #2d4d1e; border: 1px dashed #b8d4a0; }
+  </style>
+</head>
+<body>
+<div class="slider">
+  <section>
+    <h1>光合作用</h1>
+    <h2>从光能到化学能的生命引擎</h2>
+    <ul>
+      <li>基于笔记整理的学习材料</li>
+      <li>核心内容：光反应 · 卡尔文循环 · 影响因素</li>
+      <li>适用对象：中学生物 / 大学通识 · 自学复习</li>
+    </ul>
+    <div class="footnote">绿色植物 · 藻类 · 光合细菌</div>
+  </section>
+  <section>
+    <h2>目录</h2>
+    <div class="dir-list">
+      <div class="dir-item">背景与目标</div>
+      <div class="dir-item">概念框架</div>
+      <div class="dir-item">机制与流程</div>
+      <div class="dir-item">案例与应用</div>
+      <div class="dir-item">易错辨析</div>
+      <div class="dir-item">总结复盘</div>
+    </div>
+    <div class="evidence">素材来源：本地笔记 · 光反应、卡尔文循环、影响因素；联网参考补充实验背景。</div>
+  </section>
+  <section>
+    <h2>概念框架 · 光合作用三大模块</h2>
+    <div class="row">
+      <div class="card"><h3>☀️ 光反应</h3><p>在类囊体膜上发生，依赖光照。</p></div>
+      <div class="card"><h3>卡尔文循环</h3><p>在叶绿体基质中进行，不直接需光。</p></div>
+      <div class="card"><h3>影响因素</h3><p>光照强度、CO₂浓度、温度协同调控光合速率。</p></div>
+    </div>
+    <div class="highlight">光合作用总反应式：6CO₂ + 12H₂O → C₆H₁₂O₆ + 6O₂ + 6H₂O（光能驱动）</div>
+  </section>
+</div>
+</body>
+</html>`;
+
+    function parseNumber(value) {
+      const n = Number(value);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    }
+
+    function parseSourceIds(value) {
+      return value
+        .split(",")
+        .map((item) => Number(item.trim()))
+        .filter((item) => Number.isInteger(item) && item > 0);
+    }
+
+    function parseOptions() {
+      const raw = $("options").value.trim();
+      if (!raw) return {};
+      return JSON.parse(raw);
+    }
+
+    function buildPayload() {
+      const payload = {
+        notebook_id: parseNumber($("notebookId").value),
+        markdown: $("markdown").value,
+        type: $("type").value,
+        prompt: $("prompt").value,
+        options: parseOptions(),
+        source_ids: parseSourceIds($("sourceIds").value),
+        use_web: $("useWeb").checked,
+        allow_degrade: $("allowDegrade").checked
+      };
+
+      if (payload.notebook_id === 0) delete payload.notebook_id;
+      if (payload.source_ids.length === 0) delete payload.source_ids;
+      if (!payload.prompt.trim()) delete payload.prompt;
+      return payload;
+    }
+
+    function setStatus(message, isError = false) {
+      $("status").textContent = message;
+      $("status").classList.toggle("error", isError);
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function renderMarkdown(value) {
+      const lines = String(value || "").split(/\r?\n/);
+      let html = "";
+      let inList = false;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          continue;
+        }
+
+        if (trimmed.startsWith("### ")) {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          html += `<h3>${escapeHtml(trimmed.slice(4))}</h3>`;
+        } else if (trimmed.startsWith("## ")) {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          html += `<h2>${escapeHtml(trimmed.slice(3))}</h2>`;
+        } else if (trimmed.startsWith("# ")) {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          html += `<h1>${escapeHtml(trimmed.slice(2))}</h1>`;
+        } else if (trimmed.startsWith("- ")) {
+          if (!inList) {
+            html += "<ul>";
+            inList = true;
+          }
+          html += `<li>${escapeHtml(trimmed.slice(2))}</li>`;
+        } else {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          html += `<p>${escapeHtml(trimmed)}</p>`;
+        }
+      }
+
+      if (inList) html += "</ul>";
+      return html;
+    }
+
+    function renderContent(data) {
+      const content = data && data.content ? String(data.content) : "";
+      if (!content) {
+        $("preview").innerHTML = "";
+        return;
+      }
+
+      if (content.includes("<section") || content.includes("<h1") || content.includes("<ul")) {
+        $("preview").innerHTML = content;
+        return;
+      }
+
+      if (content.trim().startsWith("{") || content.trim().startsWith("[")) {
+        try {
+          $("preview").innerHTML = `<pre>${escapeHtml(JSON.stringify(JSON.parse(content), null, 2))}</pre>`;
+          return;
+        } catch (_) {
+          $("preview").innerHTML = `<pre>${escapeHtml(content)}</pre>`;
+          return;
+        }
+      }
+
+      $("preview").innerHTML = renderMarkdown(content);
+    }
+
+    function updateMeta(httpStatus, body) {
+      const data = body && body.data ? body.data : {};
+      $("httpStatus").textContent = httpStatus || "-";
+      $("bizCode").textContent = body && body.code !== undefined ? body.code : "-";
+      $("agent").textContent = data.meta && data.meta.agent ? data.meta.agent : "-";
+      $("fallback").textContent = data.meta && data.meta.fallback_used !== undefined ? String(data.meta.fallback_used) : "-";
+    }
+
+    function renderSources(data) {
+      $("references").textContent = JSON.stringify((data && data.references) || [], null, 2);
+      $("searchResults").textContent = JSON.stringify((data && data.search_results) || [], null, 2);
+    }
+
+    function getGenerationData() {
+      return state.lastResponse && state.lastResponse.data ? state.lastResponse.data : null;
+    }
+
+    function getCurrentExportType() {
+      const data = getGenerationData();
+      return data && data.type ? String(data.type) : $("type").value;
+    }
+
+    function hasExportableContent() {
+      const data = getGenerationData();
+      return Boolean(data && String(data.content || "").trim());
+    }
+
+    function setExportReady(ready) {
+      $("exportBtn").disabled = !ready;
+      $("copyExportBtn").disabled = !ready;
+      updatePPTTemplateUI();
+    }
+
+    function updatePPTTemplateUI() {
+      const isPPT = getCurrentExportType() === "ppt";
+      $("pptTemplateField").classList.toggle("hidden", !isPPT);
+      $("pptTemplate").disabled = !isPPT;
+      const selected = $("pptTemplate").value;
+      $("pptTemplateHint").textContent = isPPT
+        ? selected
+          ? `${pptTemplateLabels[selected] || selected}. Export payload includes template="${selected}".`
+          : "dynamic-html: backend maps generated HTML into editable PPT blocks. Export payload omits template to use dynamic HTML layout."
+        : "Only sent when exporting ppt. Leave empty to use dynamic HTML layout.";
+    }
+
+    function buildExportPayload() {
+      const data = getGenerationData();
+      const content = data && data.content ? String(data.content) : "";
+      if (!content.trim()) {
+        throw new Error("Generate content before exporting");
+      }
+
+      const payload = {
+        type: data.type || $("type").value,
+        content
+      };
+      const title = $("exportTitle").value.trim();
+      if (title) payload.title = title;
+      if (payload.type === "ppt" && $("pptTemplate").value) {
+        payload.template = $("pptTemplate").value;
+      }
+      return payload;
+    }
+
+    function fallbackExportFilename(type) {
+      const extByType = {
+        note: "md",
+        mindmap: "md",
+        quiz: "json",
+        ppt: "pptx"
+      };
+      return `${type || "generation"}-export.${extByType[type] || "txt"}`;
+    }
+
+    function parseContentDispositionFilename(disposition) {
+      if (!disposition) return "";
+
+      const encodedMatch = disposition.match(/(?:^|;)\s*filename\*=([^;]+)/i);
+      if (encodedMatch) {
+        const encodedValue = encodedMatch[1].trim().replace(/^"|"$/g, "");
+        const parts = encodedValue.split("''");
+        const filename = parts.length > 1 ? parts.slice(1).join("''") : encodedValue;
+        try {
+          return decodeURIComponent(filename);
+        } catch (_) {
+          return filename;
+        }
+      }
+
+      const plainMatch = disposition.match(/(?:^|;)\s*filename=("[^"]+"|[^;]+)/i);
+      return plainMatch ? plainMatch[1].trim().replace(/^"|"$/g, "") : "";
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    async function readErrorMessage(resp) {
+      const text = await resp.text();
+      if (!text) return `Export failed: ${resp.status}`;
+
+      try {
+        const body = JSON.parse(text);
+        return body.message || body.error || `Export failed: ${resp.status}`;
+      } catch (_) {
+        return text;
+      }
+    }
+
+    async function readBusinessErrorFromBlob(blob) {
+      if (!String(blob.type || "").includes("application/json")) return "";
+
+      try {
+        const body = JSON.parse(await blob.text());
+        if (body && typeof body.code === "number" && body.code !== 0) {
+          return body.message || `Export failed: ${body.code}`;
+        }
+      } catch (_) {
+        return "";
+      }
+      return "";
+    }
+
+    async function sendRequest() {
+      const button = $("sendBtn");
+      button.disabled = true;
+      setExportReady(false);
+      setStatus("Sending...");
+
+      try {
+        const baseUrl = $("baseUrl").value.replace(/\/+$/, "");
+        const token = $("token").value.trim().replace(/^Bearer\s+/i, "");
+        const payload = buildPayload();
+        state.lastRequest = payload;
+
+        const headers = { "Content-Type": "application/json" };
+        if (token) headers.Authorization = `Bearer ${token}`;
+
+        const resp = await fetch(`${baseUrl}/api/v1/generations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload)
+        });
+
+        const text = await resp.text();
+        let body;
+        try {
+          body = text ? JSON.parse(text) : {};
+        } catch (_) {
+          body = { raw: text };
+        }
+
+        state.lastResponse = body;
+        $("responseJson").textContent = JSON.stringify(body, null, 2);
+        updateMeta(resp.status, body);
+        renderContent(body.data);
+        renderSources(body.data);
+
+        if (!resp.ok || (body && body.code && body.code !== 0)) {
+          setExportReady(false);
+          setStatus(body.message || `Request failed: ${resp.status}`, true);
+        } else {
+          setExportReady(hasExportableContent());
+          setStatus("Done");
+        }
+      } catch (err) {
+        $("responseJson").textContent = String(err && err.stack ? err.stack : err);
+        $("preview").innerHTML = "";
+        $("references").textContent = "[]";
+        $("searchResults").textContent = "[]";
+        updateMeta("-", {});
+        setExportReady(false);
+        setStatus(err.message || "Request failed", true);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function exportResult() {
+      const button = $("exportBtn");
+      button.disabled = true;
+      setStatus("Exporting...");
+
+      try {
+        const baseUrl = $("baseUrl").value.replace(/\/+$/, "");
+        const token = $("token").value.trim().replace(/^Bearer\s+/i, "");
+        const payload = buildExportPayload();
+        state.lastExportRequest = payload;
+
+        const headers = { "Content-Type": "application/json" };
+        if (token) headers.Authorization = `Bearer ${token}`;
+
+        const resp = await fetch(`${baseUrl}/api/v1/generations/export`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload)
+        });
+        if (!resp.ok) {
+          throw new Error(await readErrorMessage(resp));
+        }
+
+        const disposition = resp.headers.get("Content-Disposition") || "";
+        const blob = await resp.blob();
+        const businessError = await readBusinessErrorFromBlob(blob);
+        if (businessError) {
+          throw new Error(businessError);
+        }
+
+        const filename = parseContentDispositionFilename(disposition) || fallbackExportFilename(payload.type);
+        downloadBlob(blob, filename);
+        const templateLabel = payload.template ? ` with template ${payload.template}` : "";
+        setStatus(`Exported ${filename}${templateLabel}`);
+      } catch (err) {
+        setStatus(err.message || "Export failed", true);
+      } finally {
+        setExportReady(hasExportableContent());
+      }
+    }
+
+    async function copyRequest() {
+      try {
+        const payload = buildPayload();
+        await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+        setStatus("Request JSON copied");
+      } catch (err) {
+        setStatus(err.message || "Copy failed", true);
+      }
+    }
+
+    async function copyExportRequest() {
+      try {
+        const payload = buildExportPayload();
+        await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+        const templateLabel = payload.template ? ` (${payload.template})` : "";
+        setStatus(`Export JSON copied${templateLabel}`);
+      } catch (err) {
+        setStatus(err.message || "Copy export failed", true);
+      }
+    }
+
+    function clearOutput() {
+      state.lastResponse = null;
+      state.lastExportRequest = null;
+      $("responseJson").textContent = "{}";
+      $("preview").innerHTML = "";
+      $("references").textContent = "[]";
+      $("searchResults").textContent = "[]";
+      updateMeta("-", {});
+      setExportReady(false);
+      setStatus("Idle");
+    }
+
+    function loadRealHtmlPptSample() {
+      state.lastResponse = {
+        code: 0,
+        data: {
+          type: "ppt",
+          content: realHtmlPptSample,
+          meta: {
+            agent: "local-html-sample",
+            fallback_used: false
+          },
+          references: [],
+          search_results: []
+        }
+      };
+      $("type").value = "ppt";
+      $("exportTitle").value = "photosynthesis-html-sample";
+      $("responseJson").textContent = JSON.stringify(state.lastResponse, null, 2);
+      updateMeta(200, state.lastResponse);
+      renderContent(state.lastResponse.data);
+      renderSources(state.lastResponse.data);
+      setExportReady(true);
+      setStatus("Loaded real HTML PPT sample");
+    }
+
+    $("sendBtn").addEventListener("click", sendRequest);
+    $("exportBtn").addEventListener("click", exportResult);
+    $("copyBtn").addEventListener("click", copyRequest);
+    $("copyExportBtn").addEventListener("click", copyExportRequest);
+    $("clearBtn").addEventListener("click", clearOutput);
+    $("loadHtmlPptSampleBtn").addEventListener("click", loadRealHtmlPptSample);
+    $("type").addEventListener("change", updatePPTTemplateUI);
+    $("pptTemplate").addEventListener("change", updatePPTTemplateUI);
+    updatePPTTemplateUI();
+  </script>
+</body>
+</html>

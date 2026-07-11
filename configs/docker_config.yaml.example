@@ -1,0 +1,106 @@
+# YouDaoNoteLM Docker 配置文件
+# 敏感字段（密码、密钥等）由 .env 环境变量覆盖，留空则必须通过环境变量提供
+# 详见 pkg/config/loader.go 中的 env 覆盖逻辑
+
+# 服务器配置
+app:
+  name: "youdao-api"
+  version: "1.0.0"
+  mode: "debug"
+  port: 8081
+
+# 数据库配置
+database:
+  mysql:
+    host: "mysql"
+    port: 3306
+    username: "root"
+    password: ""                          # 由 MYSQL_PASSWORD 环境变量覆盖
+    database: "youdao"
+    max_idle_conns: 10
+    max_open_conns: 100
+  redis:
+    host: "redis"
+    port: 6379
+    password: ""                          # 由 REDIS_PASSWORD 环境变量覆盖
+    db: 15
+    pool_size: 10
+
+# JWT 配置
+jwt:
+  secret: ""                              # 由 JWT_SECRET 环境变量覆盖
+  access_token_exp: "15m"
+  refresh_token_exp: "24h"
+  issuer: "youdaonotelm"
+
+# 日志配置
+log:
+  level: "debug"
+  filename: "logs/app.log"
+  max_size: 100
+  max_backups: 3
+  max_age: 28
+  compress: true
+
+# 邮箱配置
+email:
+  host: "smtp.qq.com"
+  port: 587
+  username: "2129905621@qq.com"
+  password: ""                            # 由 EMAIL_PASSWORD 环境变量覆盖
+  from: "2129905621@qq.com"
+
+# Milvus 向量数据库配置
+milvus:
+  host: "milvus"
+  port: 19530
+
+# 安全配置（API Key 加密密钥，必须 32 字节）
+security:
+  encryption_key: ""                      # 由 ENCRYPTION_KEY 环境变量覆盖
+
+# 外部服务配置
+external:
+  markitdown:
+    url: "http://markitdown:8085"
+  minio:
+    endpoint: "minio:9000"                 # SDK 连接用（Docker 内部 DNS）
+    public_endpoint: ""                    # URL 重写用（浏览器/阿里云 ASR 访问），由 MINIO_PUBLIC_ENDPOINT 覆盖
+    access_key: ""                         # 由 MINIO_ACCESS_KEY 环境变量覆盖
+    secret_key: ""                         # 由 MINIO_SECRET_KEY 环境变量覆盖
+    bucket: "youdaonotelm"
+  bocha:
+    base_url: "https://api.bochaai.com"
+    endpoint: "/v1/web-search"
+    api_key: ""                           # 由 BOCHA_API_KEY 环境变量覆盖
+    timeout_seconds: 15
+    default_count: 5
+    summary: true
+    cache_ttl_seconds: 300
+    max_count: 10
+  youdao:
+    cli_path: "youdaonote"
+    converter_script_path: "/app/scripts/youdao/convert_to_markdown.py"
+    cookies_path: ""
+
+# CORS 配置
+cors:
+  enabled: true
+  allow_origins:
+    - "*"
+  allow_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "PATCH"
+    - "DELETE"
+    - "OPTIONS"
+  allow_headers:
+    - "Authorization"
+    - "Content-Type"
+    - "Origin"
+    - "Accept"
+  expose_headers:
+    - "Content-Length"
+  allow_credentials: true
+  max_age: 86400

@@ -1,0 +1,153 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+MindTrace
+
+# Test binary
+*.test
+
+# Go workspace
+go.work
+go.work.sum
+
+# Vendor directory (not vendoring — build uses go mod download)
+vendor/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+
+# Build output
+/build/
+/dist/
+/out/
+
+
+# claude
+.claude/
+.superpowers
+claude.md
+
+# docs
+docs/
+
+# Config (真实配置文件，不提交到仓库)
+/configs/config.yaml
+/configs/youdao_cookies.json
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ========== Frontend (./frontend/) ==========
+
+# Dependencies
+frontend/node_modules/
+ppt_exporter/node_modules/
+
+# Build output
+frontend/dist/
+frontend/dist-ssr/
+
+# Debug logs
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+frontend/lerna-debug.log*
+
+# Environment variables
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/*.local
+
+# Editor directories and files
+frontend/.vscode/*
+!frontend/.vscode/extensions.json
+frontend/.idea/
+frontend/*.suo
+frontend/*.ntvs*
+frontend/*.njsproj
+frontend/*.sln
+frontend/*.sw?
+
+# Cache
+frontend/.eslintcache
+frontend/*.tsbuildinfo
+
+# Testing
+frontend/coverage/
+/claude.md
+
+
+ffmpeg.zip
+
+
+CLAUDE.local.md
+
+# Audio files
+*.wav
+*.mp3
+*.flac
+*.m4a
+
+# Personal / non-project files
+*.docx
+
+# Test commands and integration tests
+cmd/test_*/
+cmd/seed_*/
+tests/integration/
+
+# Frontend dev docs (keep README.md only)
+frontend/*.md
+!frontend/README.md
+
+# GitHub docs (keep workflows)
+.github/*.md
+
+# Debug and temporary test files
+response*.json
+test_output.txt
+test_result.txt
+test_*.ps1
+tasks.md
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Test screenshots
+frontend/test-screenshots/
+
+# Docker (仅排除构建产物，不排除源文件)
+# configs/config.docker.yaml.example
+/configs/docker_config.yaml

@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login API Test</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f5f8;
+      --panel: #ffffff;
+      --line: #d7dde6;
+      --text: #17212f;
+      --muted: #667085;
+      --accent: #0b6bcb;
+      --accent-dark: #0957a6;
+      --danger: #b42318;
+      --success: #027a48;
+      --shadow: 0 18px 38px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(11, 107, 203, 0.12), transparent 28%),
+        linear-gradient(180deg, #f8fafc 0%, #edf2f7 100%);
+      color: var(--text);
+      font: 14px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 32px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.1;
+    }
+
+    .hint {
+      margin: 6px 0 0;
+      color: var(--muted);
+    }
+
+    .status {
+      min-height: 24px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(215, 221, 230, 0.9);
+      font-weight: 700;
+      color: var(--muted);
+      backdrop-filter: blur(12px);
+    }
+
+    .status.error {
+      color: var(--danger);
+      border-color: rgba(180, 35, 24, 0.25);
+      background: rgba(254, 242, 242, 0.92);
+    }
+
+    .status.success {
+      color: var(--success);
+      border-color: rgba(2, 122, 72, 0.25);
+      background: rgba(236, 253, 243, 0.92);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(360px, 460px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    section {
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid rgba(215, 221, 230, 0.9);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+      padding: 18px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      font-weight: 600;
+      color: #344054;
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid #cfd7e4;
+      border-radius: 12px;
+      padding: 11px 12px;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.98);
+      font: inherit;
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 4px rgba(11, 107, 203, 0.12);
+    }
+
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 11px 14px;
+      color: #fff;
+      background: var(--accent);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s ease, transform 0.15s ease;
+    }
+
+    button:hover {
+      background: var(--accent-dark);
+      transform: translateY(-1px);
+    }
+
+    button.secondary {
+      color: #344054;
+      background: #edf2f7;
+    }
+
+    button.secondary:hover {
+      background: #e2e8f0;
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.72;
+      transform: none;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .captcha-box {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: linear-gradient(180deg, #ffffff, #f8fafc);
+    }
+
+    .captcha-stage {
+      position: relative;
+      width: 300px;
+      max-width: 100%;
+      overflow: hidden;
+      border-radius: 12px;
+      border: 1px solid #cfd7e4;
+      background: #e5edf6;
+      user-select: none;
+    }
+
+    .captcha-bg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .captcha-slider-piece {
+      position: absolute;
+      top: 0;
+      left: 0;
+      border-radius: 10px;
+      cursor: grab;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.24);
+      touch-action: none;
+    }
+
+    .captcha-slider-piece.dragging {
+      cursor: grabbing;
+      box-shadow: 0 12px 30px rgba(11, 107, 203, 0.35);
+    }
+
+    .track {
+      position: relative;
+      width: 300px;
+      max-width: 100%;
+      height: 54px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #f8fafc, #eef2f7);
+      overflow: hidden;
+    }
+
+    .track-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 0;
+      background: linear-gradient(90deg, rgba(11, 107, 203, 0.16), rgba(11, 107, 203, 0.32));
+    }
+
+    .track-text {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: #516071;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      pointer-events: none;
+    }
+
+    .track-thumb {
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      border: 1px solid rgba(11, 107, 203, 0.18);
+      background: linear-gradient(180deg, #ffffff, #edf4ff);
+      display: grid;
+      place-items: center;
+      box-shadow: 0 10px 18px rgba(15, 23, 42, 0.12);
+      color: var(--accent);
+      font-weight: 900;
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .track-thumb.dragging {
+      cursor: grabbing;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .meta-card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: linear-gradient(180deg, #ffffff, #f8fafc);
+      padding: 14px;
+    }
+
+    .meta-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .meta-card strong {
+      display: block;
+      margin-top: 5px;
+      overflow-wrap: anywhere;
+      font-size: 13px;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 16px;
+    }
+
+    pre {
+      margin: 0;
+      min-height: 140px;
+      max-height: 320px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: #0f172a;
+      color: #e5e7eb;
+      font: 12px/1.5 Consolas, "Courier New", monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .token-card {
+      display: grid;
+      gap: 10px;
+    }
+
+    @media (max-width: 960px) {
+      .layout,
+      .row,
+      .meta {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Login API Test</h1>
+        <p class="hint">GET /api/v1/auth/captcha + POST /api/v1/auth/login</p>
+      </div>
+      <div class="status" id="status">Idle</div>
+    </header>
+
+    <div class="layout">
+      <section>
+        <div class="stack">
+          <div class="row">
+            <label>
+              API Base URL
+              <input id="baseUrl" value="http://localhost:8080">
+            </label>
+            <label>
+              Captcha X
+              <input id="captchaX" value="0" readonly>
+            </label>
+          </div>
+
+          <label>
+            Email
+            <input id="email" type="email" placeholder="Enter email">
+          </label>
+
+          <label>
+            Password
+            <input id="password" type="password" placeholder="Enter password">
+          </label>
+
+          <div class="captcha-box">
+            <div class="captcha-stage" id="captchaStage">
+              <img class="captcha-bg" id="captchaBg" alt="captcha background">
+              <img class="captcha-slider-piece" id="captchaPiece" alt="captcha slider piece">
+            </div>
+
+            <div class="track" id="track">
+              <div class="track-fill" id="trackFill"></div>
+              <div class="track-text" id="trackText">Drag the slider to set captcha_x</div>
+              <div class="track-thumb" id="trackThumb">&gt;</div>
+            </div>
+
+            <div class="note" id="captchaNote">Fetch captcha first, then drag the slider to the gap.</div>
+          </div>
+
+          <div class="actions">
+            <button id="refreshCaptchaBtn" type="button">Fetch Captcha</button>
+            <button id="loginBtn" type="button">Login For Token</button>
+            <button id="copyAccessBtn" class="secondary" type="button">Copy Access Token</button>
+            <button id="copyRefreshBtn" class="secondary" type="button">Copy Refresh Token</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="meta">
+          <div class="meta-card">
+            <span>captcha_id</span>
+            <strong id="captchaId">-</strong>
+          </div>
+          <div class="meta-card">
+            <span>HTTP / Code</span>
+            <strong id="resultCode">-</strong>
+          </div>
+        </div>
+
+        <div class="stack" style="margin-top: 14px;">
+          <div class="token-card">
+            <h2>Access Token</h2>
+            <pre id="accessToken"></pre>
+          </div>
+
+          <div class="token-card">
+            <h2>Refresh Token</h2>
+            <pre id="refreshToken"></pre>
+          </div>
+
+          <div class="token-card">
+            <h2>User</h2>
+            <pre id="userInfo">{}</pre>
+          </div>
+
+          <div class="token-card">
+            <h2>Raw Response</h2>
+            <pre id="responseJson">{}</pre>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    const state = {
+      dragging: false,
+      dragStartClientX: 0,
+      dragStartOffset: 0,
+      maxOffset: 0,
+      solvedX: 0,
+      captcha_id: "",
+      activePointerId: null,
+      captchaBgWidth: 300,
+      captchaSliderSize: 44,
+      captchaStartX: 0
+    };
+
+    function base64ToImageSrc(value) {
+      if (!value) return "";
+      if (value.startsWith("data:")) return value;
+      return `data:image/png;base64,${value}`;
+    }
+
+    function setStatus(message, type) {
+      const node = $("status");
+      node.textContent = message;
+      node.classList.toggle("error", type === "error");
+      node.classList.toggle("success", type === "success");
+    }
+
+    function setResultCode(httpStatus, code) {
+      const left = httpStatus === undefined || httpStatus === null ? "-" : String(httpStatus);
+      const right = code === undefined || code === null ? "-" : String(code);
+      $("resultCode").textContent = `${left} / ${right}`;
+    }
+
+    function setSliderOffset(offset) {
+      const bounded = Math.max(0, Math.min(state.maxOffset, offset));
+      state.solvedX = Math.round(bounded);
+      $("trackThumb").style.left = `${4 + bounded}px`;
+      $("trackFill").style.width = `${bounded + 48}px`;
+      $("captchaPiece").style.transform = `translateX(${bounded}px)`;
+      $("captchaX").value = String(state.solvedX);
+    }
+
+    function resetSlider() {
+      state.dragging = false;
+      state.activePointerId = null;
+      $("trackThumb").classList.remove("dragging");
+      $("captchaPiece").classList.remove("dragging");
+      $("trackText").textContent = "Drag the slider to set captcha_x";
+      setSliderOffset(0);
+    }
+
+    function updateTrackMetrics() {
+      const trackWidth = $("track").clientWidth;
+      const trackLimit = Math.max(0, trackWidth - 52);
+      const imageLimit = Math.max(0, state.captchaBgWidth - state.captchaSliderSize - state.captchaStartX);
+      state.maxOffset = Math.min(trackLimit, imageLimit);
+      setSliderOffset(Math.min(state.solvedX, state.maxOffset));
+    }
+
+    function beginDrag(clientX, pointerId) {
+      state.dragging = true;
+      state.activePointerId = pointerId;
+      state.dragStartClientX = clientX;
+      state.dragStartOffset = state.solvedX;
+      $("trackThumb").classList.add("dragging");
+      $("captchaPiece").classList.add("dragging");
+      $("trackText").textContent = "Release, then click login";
+    }
+
+    function moveDrag(clientX) {
+      if (!state.dragging) return;
+      const delta = clientX - state.dragStartClientX;
+      setSliderOffset(state.dragStartOffset + delta);
+    }
+
+    function endDrag() {
+      state.dragging = false;
+      state.activePointerId = null;
+      $("trackThumb").classList.remove("dragging");
+      $("captchaPiece").classList.remove("dragging");
+      $("trackText").textContent = state.solvedX > 0 ? "captcha_x is ready" : "Drag the slider to set captcha_x";
+    }
+
+    async function refreshCaptcha() {
+      const button = $("refreshCaptchaBtn");
+      button.disabled = true;
+      setStatus("Fetching captcha...");
+
+      try {
+        const baseUrl = $("baseUrl").value.trim().replace(/\/+$/, "");
+        const resp = await fetch(`${baseUrl}/api/v1/auth/captcha`, {
+          method: "GET"
+        });
+
+        const body = await resp.json();
+        $("responseJson").textContent = JSON.stringify(body, null, 2);
+        setResultCode(resp.status, body.code);
+
+        if (!resp.ok || body.code !== 0 || !body.data) {
+          throw new Error(body.message || `Fetch captcha failed: ${resp.status}`);
+        }
+
+        const data = body.data;
+        state.captcha_id = data.captcha_id || "";
+        state.captchaBgWidth = data.bg_width || 300;
+        state.captchaSliderSize = data.slider_size || 44;
+        state.captchaStartX = data.slider_start_x || 0;
+
+        $("captchaId").textContent = state.captcha_id || "-";
+        $("captchaBg").src = base64ToImageSrc(data.background);
+        $("captchaPiece").src = base64ToImageSrc(data.slider);
+        $("captchaPiece").style.width = `${state.captchaSliderSize}px`;
+        $("captchaPiece").style.height = `${state.captchaSliderSize}px`;
+        $("captchaPiece").style.top = `${data.slider_start_y || 0}px`;
+        $("captchaPiece").style.left = `${state.captchaStartX}px`;
+        $("captchaStage").style.width = `${state.captchaBgWidth}px`;
+        $("track").style.width = `${state.captchaBgWidth}px`;
+
+        updateTrackMetrics();
+        resetSlider();
+        $("captchaNote").textContent = "Captcha loaded. Drag the slider until the piece matches the gap.";
+        setStatus("Captcha ready", "success");
+      } catch (err) {
+        $("captchaId").textContent = "-";
+        resetSlider();
+        setStatus(err.message || "Fetch captcha failed", "error");
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function buildLoginPayload() {
+      return {
+        email: $("email").value.trim(),
+        password: $("password").value,
+        captcha_id: state.captcha_id,
+        captcha_x: Number($("captchaX").value || 0)
+      };
+    }
+
+    async function login() {
+      const button = $("loginBtn");
+      button.disabled = true;
+      setStatus("Logging in...");
+
+      try {
+        const payload = buildLoginPayload();
+        if (!payload.email || !payload.password) {
+          throw new Error("Email and password are required");
+        }
+        if (!payload.captcha_id) {
+          throw new Error("Fetch captcha first");
+        }
+
+        const baseUrl = $("baseUrl").value.trim().replace(/\/+$/, "");
+        const resp = await fetch(`${baseUrl}/api/v1/auth/login`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const body = await resp.json();
+        $("responseJson").textContent = JSON.stringify(body, null, 2);
+        setResultCode(resp.status, body.code);
+
+        if (!resp.ok || body.code !== 0 || !body.data) {
+          throw new Error(body.message || `Login failed: ${resp.status}`);
+        }
+
+        const data = body.data;
+        $("accessToken").textContent = data.access_token || "";
+        $("refreshToken").textContent = data.refresh_token || "";
+        $("userInfo").textContent = JSON.stringify(data.user || {}, null, 2);
+        $("captchaNote").textContent = "This captcha is consumed. Fetch a new one before the next login attempt.";
+        state.captcha_id = "";
+        setStatus("Login succeeded, token received", "success");
+      } catch (err) {
+        $("accessToken").textContent = "";
+        $("refreshToken").textContent = "";
+        $("userInfo").textContent = "{}";
+        setStatus(err.message || "Login failed", "error");
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function copyText(id, label) {
+      const value = $(id).textContent.trim();
+      if (!value) {
+        setStatus(`${label} is empty`, "error");
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(value);
+        setStatus(`${label} copied`, "success");
+      } catch (err) {
+        setStatus(err.message || `${label} copy failed`, "error");
+      }
+    }
+
+    function wirePointerDrag() {
+      const thumb = $("trackThumb");
+
+      thumb.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        thumb.setPointerCapture(event.pointerId);
+        beginDrag(event.clientX, event.pointerId);
+      });
+
+      thumb.addEventListener("pointermove", (event) => {
+        if (!state.dragging || state.activePointerId !== event.pointerId) return;
+        moveDrag(event.clientX);
+      });
+
+      thumb.addEventListener("pointerup", (event) => {
+        if (state.activePointerId !== event.pointerId) return;
+        thumb.releasePointerCapture(event.pointerId);
+        endDrag();
+      });
+
+      thumb.addEventListener("pointercancel", (event) => {
+        if (state.activePointerId !== event.pointerId) return;
+        endDrag();
+      });
+    }
+
+    $("refreshCaptchaBtn").addEventListener("click", refreshCaptcha);
+    $("loginBtn").addEventListener("click", login);
+    $("copyAccessBtn").addEventListener("click", () => copyText("accessToken", "Access Token"));
+    $("copyRefreshBtn").addEventListener("click", () => copyText("refreshToken", "Refresh Token"));
+    window.addEventListener("resize", updateTrackMetrics);
+
+    wirePointerDrag();
+    updateTrackMetrics();
+    resetSlider();
+  </script>
+</body>
+</html>
