@@ -91,3 +91,19 @@ func (r *conversationRepository) Delete(id uint) error {
 func (r *conversationRepository) DeleteByNotebookID(notebookID uint) error {
 	return r.db.Where("notebook_id = ?", notebookID).Delete(&entity.Conversation{}).Error
 }
+
+// DeleteWithMessages 在事务中删除对话及其所有消息
+// 先软删消息，再软删对话，保证原子性
+func (r *conversationRepository) DeleteWithMessages(id uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 删消息
+		if err := tx.Where("conversation_id = ?", id).Delete(&entity.Message{}).Error; err != nil {
+			return err
+		}
+		// 删对话
+		if err := tx.Delete(&entity.Conversation{}, id).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}

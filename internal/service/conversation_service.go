@@ -14,6 +14,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// DefaultConversationTitle 默认对话标题
+const DefaultConversationTitle = "新对话"
+
 // conversationService 对话管理服务实现
 type conversationService struct {
 	conversationRepo repository.ConversationRepository
@@ -45,7 +48,7 @@ func (s *conversationService) CreateConversation(ctx context.Context, userID, no
 		Title:      title,
 	}
 	if conv.Title == "" {
-		conv.Title = "新对话"
+		conv.Title = DefaultConversationTitle
 	}
 
 	if err := s.conversationRepo.Create(conv); err != nil {
@@ -119,13 +122,8 @@ func (s *conversationService) DeleteConversation(ctx context.Context, userID, co
 		return bizerrors.ErrNotFound
 	}
 
-	// 先删除关联的消息
-	if err := s.messageRepo.DeleteByConversationID(conversationID); err != nil {
-		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "删除对话消息失败", err)
-	}
-
-	// 再删除对话
-	if err := s.conversationRepo.Delete(conversationID); err != nil {
+	// 在事务中删除消息和对话，保证原子性
+	if err := s.conversationRepo.DeleteWithMessages(conversationID); err != nil {
 		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "删除对话失败", err)
 	}
 

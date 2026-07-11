@@ -5,6 +5,7 @@ import "YoudaoNoteLm/internal/model/entity"
 // SourceRepository 资料来源仓储接口
 type SourceRepository interface {
 	FindByID(id uint) (*entity.Source, error)
+	FindByIDs(ids []uint) ([]*entity.Source, error)
 	Create(source *entity.Source) error
 	Update(source *entity.Source) error
 	UpdateContent(id uint, markdown string, status string) error

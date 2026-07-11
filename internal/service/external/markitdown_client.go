@@ -101,21 +101,17 @@ func (c *markitdownClient) ConvertFromURL(url string) (string, error) {
 
 	resp, err := c.httpClient.Post(c.baseURL+"/convert_url", writer.FormDataContentType(), formBody)
 	if err != nil {
-		return "", fmt.Errorf("请求MarkItDown URL转换失败: %w", err)
+		return "", fmt.Errorf("无法获取该网页内容")
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			return "", fmt.Errorf("MarkItDown URL转换返回错误 %d，且读取响应体失败: %w", resp.StatusCode, readErr)
-		}
-		return "", fmt.Errorf("MarkItDown URL转换返回错误 %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("无法获取该网页内容")
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("读取响应失败: %w", err)
+		return "", fmt.Errorf("无法获取该网页内容")
 	}
 
 	// MarkItDown Python 服务返回 {"url": "...", "markdown": "..."} 或 {"url": "...", "markdown": "", "message": "..."}
@@ -129,7 +125,7 @@ func (c *markitdownClient) ConvertFromURL(url string) (string, error) {
 
 	if result.Markdown == "" && result.Message != "" {
 		logger.Warn("MarkItDown URL转换无内容", zap.String("url", url), zap.String("message", result.Message))
-		return "", fmt.Errorf("%s", result.Message)
+		return "", fmt.Errorf("无法获取该网页内容")
 	}
 
 	logger.Info("MarkItDown URL转换成功", zap.String("url", url))

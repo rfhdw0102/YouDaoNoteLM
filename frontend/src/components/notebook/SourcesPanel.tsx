@@ -94,6 +94,10 @@ export default function SourcesPanel() {
   const [expandedVectorized, setExpandedVectorized] = useState(true);
   const [expandedUnvectorized, setExpandedUnvectorized] = useState(true);
 
+  // 拖拽上传状态
+  const [isDragging, setIsDragging] = useState(false);
+  const mainDragCounterRef = useRef(0);
+
   // 监听 store 中 audio source 状态变化，转写完成时自动更新预览面板
   useEffect(() => {
     if (!audioPreview || !audioTranscribing || !notebook) return;
@@ -552,8 +556,75 @@ export default function SourcesPanel() {
   }
 
   // ---- Main Panel ----
+
+  // 主面板拖拽处理
+  const handleMainDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    mainDragCounterRef.current++;
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleMainDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    mainDragCounterRef.current--;
+    if (mainDragCounterRef.current === 0) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleMainDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleMainDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    mainDragCounterRef.current = 0;
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (files.length === 0 || !currentNotebookId) return;
+
+    const audioExts = ['.mp3', '.wav'];
+    for (const file of Array.from(files)) {
+      const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+      if (audioExts.includes(ext)) {
+        try {
+          await previewAudio(currentNotebookId, file);
+        } catch (err) {
+          console.error('Audio import failed:', err);
+        }
+      } else {
+        try {
+          await importFile(currentNotebookId, file);
+        } catch (err) {
+          console.error('File import failed:', err);
+        }
+      }
+    }
+  };
+
   return (
-    <div className="h-full flex flex-col bg-bg-secondary/30">
+    <div
+      className="h-full flex flex-col bg-bg-secondary/30 relative"
+      onDragEnter={handleMainDragEnter}
+      onDragLeave={handleMainDragLeave}
+      onDragOver={handleMainDragOver}
+      onDrop={handleMainDrop}
+    >
+      {/* 拖拽遮罩 */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex flex-col items-center justify-center pointer-events-none">
+          <Upload size={48} className="text-accent mb-3" />
+          <p className="text-lg font-medium text-accent">松开鼠标上传文件</p>
+          <p className="text-sm text-text-muted mt-1">支持 PDF, DOCX, TXT, MD, HTML, MP3, WAV</p>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -1085,23 +1156,62 @@ function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudao
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [showYoudaoPanel, setShowYoudaoPanel] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
 
   const audioExts = ['.mp3', '.wav'];
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const processFiles = async (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
     setUploading(true);
+    setUploadProgress({ current: 0, total: fileArray.length });
+
     try {
-      const ext = '.' + file.name.split('.').pop()?.toLowerCase();
-      if (audioExts.includes(ext)) {
-        await onAudioImport(file);
-      } else {
-        await onFileImport(file);
+      for (let i = 0; i < fileArray.length; i++) {
+        setUploadProgress({ current: i + 1, total: fileArray.length });
+        const file = fileArray[i];
+        const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+        if (audioExts.includes(ext)) {
+          await onAudioImport(file);
+        } else {
+          await onFileImport(file);
+        }
       }
     } finally {
       setUploading(false);
+      setUploadProgress(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    await processFiles(files);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      await processFiles(files);
     }
   };
 
@@ -1165,20 +1275,32 @@ function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudao
       )}
 
       {tab === 'file' && (
-        <div className="border-2 border-dashed border-border-light rounded-xl p-8 text-center hover:border-accent/40 transition-colors">
-          <Upload size={32} className="mx-auto mb-3 text-text-muted" />
-          <p className="text-sm text-text-secondary mb-1">拖拽文件到此处，或点击选择</p>
+        <div
+          className={cn(
+            'border-2 border-dashed rounded-xl p-8 text-center transition-colors',
+            isDragging ? 'border-accent bg-accent/10' : 'border-border-light hover:border-accent/40'
+          )}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          <Upload size={32} className={cn('mx-auto mb-3', isDragging ? 'text-accent' : 'text-text-muted')} />
+          <p className="text-sm text-text-secondary mb-1">
+            {isDragging ? '松开鼠标上传文件' : '拖拽文件到此处，或点击选择'}
+          </p>
           <p className="text-xs text-text-muted">支持 PDF, DOCX, TXT, MD, HTML</p>
-          <p className="text-xs text-text-muted mt-1">音频支持 MP3, WAV</p>
+          <p className="text-xs text-text-muted mt-1">音频支持 MP3, WAV（支持多选）</p>
           {uploading ? (
-            <div className="mt-4 flex items-center justify-center gap-2">
+            <div className="mt-4 flex flex-col items-center justify-center gap-2">
               <Loader2 size={16} className="animate-spin text-accent" />
-              <span className="text-sm text-text-muted">上传中...</span>
+              <span className="text-sm text-text-muted">
+                {uploadProgress ? `上传中 (${uploadProgress.current}/${uploadProgress.total})...` : '上传中...'}
+              </span>
             </div>
           ) : (
             <>
               <Button size="sm" className="mt-4" onClick={() => fileInputRef.current?.click()}>选择文件</Button>
-              <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.md,.html,.pptx,.mp3,.wav" className="hidden" onChange={handleFileSelect} />
+              <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.txt,.md,.html,.pptx,.mp3,.wav" className="hidden" onChange={handleFileSelect} />
             </>
           )}
         </div>
