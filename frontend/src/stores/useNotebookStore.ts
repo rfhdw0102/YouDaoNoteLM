@@ -15,6 +15,7 @@ interface NotebookState {
   notebooks: Notebook[];
   currentNotebookId: string | null;
   currentConversationId: string | null;
+  streamingConversationId: string | null;  // 当前正在流式生成的会话 ID
   loading: boolean;
   streamingContent: string;  // For real-time display
   // Generation state
@@ -132,6 +133,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   notebooks: [],
   currentNotebookId: null,
   currentConversationId: null,
+  streamingConversationId: null,
   taskIdBySourceId: {},
   loading: false,
   streamingContent: '',
@@ -180,6 +182,14 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   setCurrentNotebook: async (id) => {
+    // 如果有正在流式生成的会话，先中断它
+    const { streamingConversationId, currentNotebookId: oldNotebookId } = get();
+    if (streamingConversationId && oldNotebookId) {
+      console.log('[Switch] 切换笔记本，中断旧会话流:', streamingConversationId);
+      // 同步中断，不阻塞后续流程
+      get().stopGeneration(oldNotebookId, streamingConversationId).catch(() => {});
+    }
+
     set({ currentNotebookId: id, currentConversationId: null });
 
     // Fetch sources and conversations
@@ -932,11 +942,15 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   setCurrentConversation: (id) => {
-    const notebookId = get().currentNotebookId;
-    if (notebookId) {
-      localStorage.setItem(`lastConversation_${notebookId}`, id);
+    const { currentNotebookId } = get();
+
+    // 先立即更新 UI 状态
+    if (currentNotebookId) {
+      localStorage.setItem(`lastConversation_${currentNotebookId}`, id);
     }
     set({ currentConversationId: id });
+
+    // 注意：流式生成的停止由 ChatPanel 的 useEffect 处理（会 await 确保完成后再拉取消息）
   },
 
   deleteConversation: async (notebookId, conversationId) => {
@@ -1037,6 +1051,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   sendMessage: async (notebookId, conversationId, content, sourceIds, llmConfigId) => {
+    // 标记当前正在流式生成的会话
+    set({ streamingConversationId: conversationId });
+
     // Add user message immediately
     const userMessageId = `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const userMessage: ChatMessage = {
@@ -1062,12 +1079,15 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
     try {
       console.log('Sending message to conversation:', conversationId);
-      const response = await chatApi.sendMessage(
+      const { response, abortController } = await chatApi.sendMessage(
         Number(conversationId),
         content,
         sourceIds,
         llmConfigId
       );
+
+      // Save abort controller for stopGeneration to use
+      currentStreamAbortController = abortController;
 
       console.log('Response status:', response.status, response.ok);
       console.log('Response headers:', Object.fromEntries(response.headers.entries()));
@@ -1091,6 +1111,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           // Update the assistant message with the response
           const assistantContent = jsonData.data.content || jsonData.data.message || '';
           set((state) => ({
+            streamingConversationId: null,
             notebooks: state.notebooks.map((n) =>
               n.id === notebookId
                 ? {
@@ -1119,7 +1140,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
       // SSE response - parse the stream
       let accumulatedContent = '';
-      const abortController = chatApi.parseSSEStream(response, {
+      chatApi.parseSSEStream(response, {
         onToken: (token) => {
           console.log('Token received:', token);
           accumulatedContent += token;
@@ -1196,6 +1217,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         onDone: () => {
           console.log('Stream completed');
           set((state) => ({
+            streamingConversationId: null,
             notebooks: state.notebooks.map((n) =>
               n.id === notebookId
                 ? {
@@ -1222,6 +1244,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           console.error('Stream error:', error);
           const friendlyMessage = getChatErrorMessage(error);
           set((state) => ({
+            streamingConversationId: null,
             notebooks: state.notebooks.map((n) =>
               n.id === notebookId
                 ? {
@@ -1243,12 +1266,11 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
             ),
           }));
         },
-      });
-      // Save abort controller for stopGeneration to use
-      currentStreamAbortController = abortController;
+      }, abortController);
     } catch (err) {
       console.error('Failed to send message:', err);
       set((state) => ({
+        streamingConversationId: null,
         notebooks: state.notebooks.map((n) =>
           n.id === notebookId
             ? {
@@ -1274,14 +1296,21 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
   stopGeneration: async (notebookId, conversationId) => {
     try {
+      console.log('[stopGeneration] 开始停止生成, conversationId:', conversationId);
       // Abort the frontend SSE stream first
       if (currentStreamAbortController) {
+        console.log('[stopGeneration] 调用 abort() 中断 SSE 连接');
         currentStreamAbortController.abort();
         currentStreamAbortController = null;
+      } else {
+        console.log('[stopGeneration] 没有活跃的 AbortController');
       }
+      console.log('[stopGeneration] 调用后端 /stop API');
       await chatApi.stopGeneration(Number(conversationId));
+      console.log('[stopGeneration] 后端 /stop API 调用成功');
       // Mark any streaming messages as done
       set((state) => ({
+        streamingConversationId: null,
         notebooks: state.notebooks.map((n) =>
           n.id === notebookId
             ? {
@@ -1301,7 +1330,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      console.error('Failed to stop generation:', err);
+      console.error('[stopGeneration] 停止生成失败:', err);
     }
   },
 
