@@ -715,30 +715,52 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   confirmAudio: async (previewId, notebookId, content) => {
-    const res = await importApi.confirmAudio({
-      preview_id: previewId,
-      content: content || undefined,
-      notebook_id: Number(notebookId),
-    });
-    if (res.code === 0) {
-      const source = toSource(res.data);
-      // Remove the pending placeholder (has previewId) and add the confirmed source
-      set((state) => ({
-        notebooks: state.notebooks.map((n) =>
-          n.id === notebookId
-            ? {
+    try {
+      const res = await importApi.confirmAudio({
+        preview_id: previewId,
+        content: content || undefined,
+        notebook_id: Number(notebookId),
+      });
+      if (res.code === 0) {
+        const source = toSource(res.data);
+        // Remove the pending placeholder (has previewId) and add the confirmed source
+        set((state) => ({
+          notebooks: state.notebooks.map((n) =>
+            n.id === notebookId
+              ? {
               ...n,
               sources: [
                 ...n.sources.filter((s) => s.previewId !== previewId),
                 source
               ]
             }
-            : n
-        ),
-      }));
-      return source;
+              : n
+          ),
+        }));
+        return source;
+      }
+      // API returned error code — mark placeholder as error so UI updates immediately
+      const nb = get().notebooks.find(n => n.id === notebookId);
+      const placeholder = nb?.sources.find(s => s.previewId === previewId);
+      if (placeholder && placeholder.status !== 'error') {
+        get().updateSource(notebookId, placeholder.id, {
+          status: 'error',
+          errorMessage: res.message || '导入失败',
+        });
+      }
+      throw new Error(res.message);
+    } catch (err: any) {
+      // Network or other error — mark placeholder as error if not already marked
+      const nb = get().notebooks.find(n => n.id === notebookId);
+      const placeholder = nb?.sources.find(s => s.previewId === previewId);
+      if (placeholder && placeholder.status !== 'error') {
+        get().updateSource(notebookId, placeholder.id, {
+          status: 'error',
+          errorMessage: getErrorMessage(err, '导入失败'),
+        });
+      }
+      throw err;
     }
-    throw new Error(res.message);
   },
 
   getImportTask: async (taskId) => {
