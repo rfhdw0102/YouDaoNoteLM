@@ -409,25 +409,35 @@ func (h *ConfigHealthChecker) testASR(config *entity.UserConfig) *HealthCheckRes
 			}
 		}
 
-		// 尝试创建 SDK 客户端验证凭证格式
+		// 创建 SDK 客户端，验证凭证格式（构造失败返回 nil）
 		client := asr.NewAliyunNLSASRService(accessKeyID, accessKeySecret, appKey)
 		if client == nil {
 			return &HealthCheckResult{
 				Healthy: false,
 				Message: "创建阿里云 ASR 客户端失败",
+				Detail:  "AccessKey 凭证格式非法或 SDK 初始化失败",
+			}
+		}
+
+		// 真实验证凭证：发送轻量请求到阿里云触发鉴权
+		if err := asr.ValidateAliyunCredentials(client); err != nil {
+			return &HealthCheckResult{
+				Healthy: false,
+				Message: "阿里云 ASR 凭证验证失败",
+				Detail:  err.Error(),
 			}
 		}
 
 		return &HealthCheckResult{
 			Healthy: true,
-			Message: "阿里云 ASR 配置格式正确，凭证已初始化",
+			Message: "阿里云 ASR 配置验证通过，AccessKey 凭证有效",
 		}
 	}
 
-	// 其他 ASR 服务：仅验证配置格式
+	// 其他 ASR 服务：仅验证配置格式（未实现真实连通性检查，不轻易放行）
 	return &HealthCheckResult{
-		Healthy: true,
-		Message: "ASR 配置格式正确",
+		Healthy: false,
+		Message: fmt.Sprintf("ASR 服务商 %s 暂不支持测试连接", config.Provider),
 	}
 }
 

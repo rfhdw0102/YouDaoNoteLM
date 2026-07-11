@@ -39,6 +39,7 @@ type aliyunNLSASRService struct {
 }
 
 // NewAliyunNLSASRService 创建阿里云 NLS ASR 服务
+// 构造失败（如 AccessKey 凭证格式非法）返回 nil，调用方应检查 nil
 func NewAliyunNLSASRService(accessKeyID, accessKeySecret, appKey string) ASRService {
 	// 创建 SDK 客户端
 	c := sdk.NewConfig()
@@ -51,12 +52,7 @@ func NewAliyunNLSASRService(accessKeyID, accessKeySecret, appKey string) ASRServ
 	client, err := sdk.NewClientWithOptions(nlsRegionID, c, credential)
 	if err != nil {
 		logger.Error("创建阿里云SDK客户端失败", zap.Error(err))
-		// 返回一个会报错的实例
-		return &aliyunNLSASRService{
-			accessKeyID:     accessKeyID,
-			accessKeySecret: accessKeySecret,
-			appKey:          appKey,
-		}
+		return nil
 	}
 
 	logger.Info("阿里云ASR SDK客户端创建成功",
@@ -70,6 +66,48 @@ func NewAliyunNLSASRService(accessKeyID, accessKeySecret, appKey string) ASRServ
 		appKey:          appKey,
 		client:          client,
 	}
+}
+
+// ValidateAliyunCredentials 验证阿里云 ASR 凭证是否有效
+// 通过发送一个轻量请求（GetTaskResult 携带假 TaskId）触发阿里云鉴权：
+//   - 鉴权失败（AccessKey 无效/签名不匹配） → 返回错误
+//   - 鉴权通过（即使返回业务错误如 TaskNotFound） → 返回 nil
+func ValidateAliyunCredentials(srv ASRService) error {
+	s, ok := srv.(*aliyunNLSASRService)
+	if !ok {
+		return fmt.Errorf("非阿里云 ASR 服务实例")
+	}
+	return s.validateCredentials()
+}
+
+func (s *aliyunNLSASRService) validateCredentials() error {
+	if s.client == nil {
+		return fmt.Errorf("阿里云 SDK 客户端未初始化")
+	}
+	req := requests.NewCommonRequest()
+	req.Domain = nlsDomain
+	req.Version = nlsAPIVersion
+	req.Product = nlsProduct
+	req.ApiName = "GetTaskResult"
+	req.Method = "GET"
+	req.Scheme = requests.HTTPS
+	// 假 TaskId，仅用于触发阿里云鉴权流程
+	req.QueryParams["TaskId"] = "000000000000000000000000"
+
+	_, err := s.client.ProcessCommonRequest(req)
+	if err != nil {
+		errStr := err.Error()
+		// 鉴权类错误 → AccessKey 凭证无效
+		if strings.Contains(errStr, "InvalidAccessKeyId") ||
+			strings.Contains(errStr, "SignatureDoesNotMatch") ||
+			strings.Contains(errStr, "Forbidden.AccessKeyDisabled") {
+			return fmt.Errorf("AccessKey 凭证无效: %s", errStr)
+		}
+		// 其他错误（网络不通、SDK 异常等）
+		return fmt.Errorf("连接阿里云失败: %w", err)
+	}
+	// 请求成功（HTTP 200），说明鉴权通过；TaskId 不存在的业务错误不影响凭证有效性判断
+	return nil
 }
 
 // SetStorage 设置文件存储（用于生成预签名 URL 给阿里云下载音频）

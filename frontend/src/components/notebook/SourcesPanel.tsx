@@ -478,6 +478,12 @@ export default function SourcesPanel() {
                   await confirmAudio(previewId, currentNotebookId, content);
                 } catch (err) {
                   console.error('Confirm audio failed:', err);
+                  // 清除 confirmedPreviewIds，让 UI 显示错误状态而非"导入中..."
+                  setConfirmedPreviewIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(previewId);
+                    return next;
+                  });
                 }
               }}
             >
