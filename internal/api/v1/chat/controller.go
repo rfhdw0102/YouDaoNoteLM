@@ -40,12 +40,7 @@ func (ctrl *Controller) Create(c *gin.Context) {
 		return
 	}
 
-	title := req.Title
-	if title == "" {
-		title = "新对话"
-	}
-
-	convID, err := ctrl.convService.CreateConversation(c.Request.Context(), userID, req.NotebookID, title)
+	convID, err := ctrl.convService.CreateConversation(c.Request.Context(), userID, req.NotebookID, req.Title)
 	if err != nil {
 		response.BizError(c, err)
 		return

@@ -64,13 +64,18 @@ func NewChatAgentService(
 
 // ProcessMessageWithAgent 使用 Agent 处理消息
 func (s *chatAgentService) ProcessMessageWithAgent(ctx context.Context, req *request.ProcessMessageRequest) (<-chan chat.StreamEvent, error) {
-	// 1. 准备/校验对话
+	// 1. 校验资料来源（在获取锁之前校验，避免浪费锁资源）
+	if len(req.SourceIDs) == 0 {
+		return nil, bizerrors.New(bizerrors.CodeBadRequest, "请先选中资料再进行提问")
+	}
+
+	// 2. 准备/校验对话
 	conversationID, err := s.prepareConversation(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. 获取并发锁
+	// 3. 获取并发锁
 	lockValue, err := s.acquireLock(ctx, conversationID)
 	if err != nil {
 		return nil, err
@@ -105,7 +110,7 @@ func (s *chatAgentService) prepareConversation(ctx context.Context, req *request
 		conv := &entity.Conversation{
 			NotebookID: req.NotebookID,
 			UserID:     req.UserID,
-			Title:      "新对话",
+			Title:      DefaultConversationTitle,
 		}
 		if err := s.conversationRepo.Create(conv); err != nil {
 			return 0, bizerrors.NewWithErr(bizerrors.CodeInternalError, "创建对话失败", err)
@@ -144,14 +149,7 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 		zap.String("content", req.Content),
 	)
 
-	// 1. 校验资料来源
-	if len(req.SourceIDs) == 0 {
-		eventCh <- chat.StreamEvent{Type: chat.EventToken, Content: "请先选中资料再进行提问"}
-		eventCh <- chat.StreamEvent{Type: chat.EventDone}
-		return
-	}
-
-	// 2. 获取 LLM 配置
+	// 1. 获取 LLM 配置
 	llmConfig, err := s.getLLMConfig(req.UserID, req.LLMConfigID)
 	if err != nil {
 		logger.Error("[Agent] 获取 LLM 配置失败", zap.Error(err))
@@ -159,7 +157,7 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 		return
 	}
 
-	// 3. 创建 ChatAgent
+	// 2. 创建 ChatAgent
 	chatAgent, err := s.createChatAgent(ctx, llmConfig, req.UserID, req.SourceIDs)
 	if err != nil {
 		logger.Error("[Agent] 创建 ChatAgent 失败", zap.Error(err))
@@ -167,13 +165,13 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 		return
 	}
 
-	// 4. 调用 Process，直接转发事件
+	// 3. 调用 Process，直接转发事件
 	fullContent := s.processAndForward(ctx, chatAgent, conversationID, req.Content, eventCh)
 
-	// 5. 保存结果
+	// 4. 保存结果
 	s.saveResults(ctx, conversationID, req.UserID, req.Content, fullContent, chatAgent.GetReferences())
 
-	// 6. 生成标题并发送给前端
+	// 5. 生成标题并发送给前端
 	if title := s.maybeGenerateTitle(ctx, conversationID, req.UserID, req.Content, fullContent); title != "" {
 		eventCh <- chat.StreamEvent{
 			Type:    chat.EventTitle,
@@ -253,11 +251,16 @@ func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entit
 // getSourceNames 获取资料 ID 到名称的映射
 func (s *chatAgentService) getSourceNames(sourceIDs []uint) map[uint]string {
 	names := make(map[uint]string, len(sourceIDs))
-	for _, id := range sourceIDs {
-		source, err := s.sourceRepo.FindByID(id)
-		if err == nil && source != nil {
-			names[id] = source.Name
-		}
+	if len(sourceIDs) == 0 {
+		return names
+	}
+	sources, err := s.sourceRepo.FindByIDs(sourceIDs)
+	if err != nil {
+		logger.Warn("[Agent] 批量查询资料名称失败，降级为空映射", zap.Error(err))
+		return names
+	}
+	for _, source := range sources {
+		names[source.ID] = source.Name
 	}
 	return names
 }
@@ -416,7 +419,7 @@ func (s *chatAgentService) maybeGenerateTitle(ctx context.Context, conversationI
 	}
 
 	conv, err := s.conversationRepo.FindByID(conversationID)
-	if err != nil || conv == nil || conv.Title != "新对话" {
+	if err != nil || conv == nil || conv.Title != DefaultConversationTitle {
 		return ""
 	}
 
