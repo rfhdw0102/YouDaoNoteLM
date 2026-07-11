@@ -128,6 +128,9 @@ tests/integration/
 frontend/*.md
 !frontend/README.md
 
+# GitHub docs (keep workflows)
+.github/*.md
+
 # Debug and temporary test files
 response*.json
 test_output.txt
