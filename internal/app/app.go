@@ -320,6 +320,7 @@ func (a *App) initDependencies() {
 		youdaoSvc,
 		ingestionSvc,
 		minioStorage,
+		userRepo,
 	)
 }
 

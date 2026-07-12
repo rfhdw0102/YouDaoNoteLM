@@ -6,10 +6,10 @@ import (
 )
 
 // RegisterRoutes 注册资料来源路由
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, statusCheck gin.HandlerFunc) {
 	// 用户级别的路由
 	userSources := r.Group("/sources")
-	userSources.Use(middleware.Auth(ctrl.tokenBlacklist))
+	userSources.Use(middleware.Auth(ctrl.tokenBlacklist), statusCheck)
 	{
 		userSources.POST("/reimport-all", ctrl.ReimportAll)
 		userSources.POST("/reimport", ctrl.ReimportSelected)
@@ -17,7 +17,7 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 
 	// 笔记本级别的路由
 	sources := r.Group("/notebooks/:nbId/sources")
-	sources.Use(middleware.Auth(ctrl.tokenBlacklist))
+	sources.Use(middleware.Auth(ctrl.tokenBlacklist), statusCheck)
 	{
 		sources.GET("", ctrl.List)
 		sources.GET("/:id", ctrl.GetByID)

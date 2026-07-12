@@ -10,6 +10,7 @@ import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Badge from '../components/ui/Badge';
 import AvatarImg from '../components/ui/AvatarImg';
+import { useAuthStore } from '../stores/useAuthStore';
 import * as adminApi from '../api/admin';
 import * as providersApi from '../api/providers';
 import type { AdminUser, SysConfig, ConfigStatus } from '../api/admin';
@@ -67,11 +68,13 @@ export default function AdminPage() {
 // ===== User Management Component =====
 
 function UserManagement() {
+  const currentUser = useAuthStore((s) => s.user);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -93,18 +96,42 @@ function UserManagement() {
   }, [page, keyword]);
 
   const handleToggleUser = async (userId: number, enabled: boolean) => {
+    setError(null);
     try {
       const res = await adminApi.updateUserStatus(userId, enabled);
       if (res.code === 0) {
         setUsers(users.map(u => u.id === userId ? { ...u, enabled } : u));
+      } else if (res.message) {
+        setError(res.message);
       }
-    } catch (error) {
-      console.error('Failed to update user status:', error);
+    } catch (err: any) {
+      const errData = err?.response?.data;
+      setError(errData?.message || '操作失败');
     }
   };
 
   return (
     <div className="space-y-4">
+      {/* Error message */}
+      {error && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 rounded-xl bg-error/5 border border-error/20 flex items-center gap-3"
+        >
+          <AlertCircle size={18} className="text-error flex-shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm text-error font-medium">{error}</p>
+          </div>
+          <button
+            onClick={() => setError(null)}
+            className="text-text-muted hover:text-text-primary cursor-pointer"
+          >
+            <X size={16} />
+          </button>
+        </motion.div>
+      )}
+
       {/* Search */}
       <div className="flex gap-4 mb-6">
         <div className="flex-1">
@@ -168,17 +195,27 @@ function UserManagement() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleToggleUser(user.id, !user.enabled)}
-                    className="cursor-pointer"
-                    title={user.enabled ? '禁用用户' : '启用用户'}
-                  >
-                    {user.enabled ? (
-                      <ToggleRight size={24} className="text-success" />
-                    ) : (
-                      <ToggleLeft size={24} className="text-text-muted" />
-                    )}
-                  </button>
+                  {user.role === currentUser?.role && user.enabled ? (
+                    <button
+                      disabled
+                      className="cursor-not-allowed opacity-40"
+                      title="不能禁用同等级管理员"
+                    >
+                      <ToggleRight size={24} className="text-text-muted" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleToggleUser(user.id, !user.enabled)}
+                      className="cursor-pointer"
+                      title={user.enabled ? '禁用用户' : '启用用户'}
+                    >
+                      {user.enabled ? (
+                        <ToggleRight size={24} className="text-success" />
+                      ) : (
+                        <ToggleLeft size={24} className="text-text-muted" />
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
 
