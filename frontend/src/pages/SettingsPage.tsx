@@ -98,21 +98,52 @@ export default function SettingsPage() {
     dimensions: 2048,
   });
 
-  // 格式化测试结果消息（处理向量维度错误等特殊场景）
-  const formatTestResultMessage = (result: { healthy: boolean; message: string; detail?: string }): { message: string; detail?: string } => {
-    // 检测向量维度不匹配错误
-    if (!result.healthy && result.message.includes('向量维度不匹配')) {
-      // 从 detail 中提取实际维度: "请将向量维度修改为 1536"
+  // 格式化测试结果消息，对用户不友好的后端错误进行转换
+  const formatTestResultMessage = (result: { healthy: boolean; message: string; detail?: string }): { message: string; showDetail: boolean } => {
+    if (result.healthy) {
+      return { message: result.message, showDetail: false };
+    }
+
+    // 向量维度不匹配
+    if (result.message.includes('向量维度不匹配')) {
       const match = result.detail?.match(/请将向量维度修改为 (\d+)/);
       if (match) {
-        const actualDim = match[1];
-        return {
-          message: `向量维度错误，该向量模型支持 ${actualDim} 维度，请更改后重试`,
-          detail: undefined, // 不再显示 detail
-        };
+        return { message: `向量维度错误，该向量模型支持 ${match[1]} 维度，请更改后重试`, showDetail: false };
       }
     }
-    return { message: result.message, detail: result.detail };
+
+    // 向量维度配置错误（API 返回的维度不支持）
+    if (result.message.includes('向量维度错误')) {
+      return { message: result.message, showDetail: false };
+    }
+
+    // API Key 相关错误
+    if (result.message.includes('API Key') || result.detail?.includes('401') || result.detail?.includes('403')) {
+      return { message: 'API Key 无效或无权限，请检查后重试', showDetail: false };
+    }
+
+    // 模型不存在
+    if (result.message.includes('模型') && result.message.includes('不存在')) {
+      return { message: result.message, showDetail: false };
+    }
+
+    // 连接超时
+    if (result.message.includes('超时') || result.detail?.includes('timeout')) {
+      return { message: '连接超时，请检查 API 地址是否正确', showDetail: false };
+    }
+
+    // 连接失败
+    if (result.message.includes('连接失败') || result.detail?.includes('connection')) {
+      return { message: '连接失败，请检查 API 地址是否正确', showDetail: false };
+    }
+
+    // 限流
+    if (result.message.includes('限流') || result.detail?.includes('429')) {
+      return { message: '当前请求被限流，请稍后重试', showDetail: false };
+    }
+
+    // 其他错误，返回通用提示
+    return { message: '连接测试失败，请检查配置是否正确', showDetail: false };
   };
 
   // 获取当前选中 provider 的配置要求
@@ -1028,12 +1059,6 @@ export default function SettingsPage() {
                           {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
                           <div>
                             <p className="font-medium">{formatted.message}</p>
-                            {testResult.latency_ms > 0 && (
-                              <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
-                            )}
-                            {formatted.detail && (
-                              <p className="text-xs opacity-70 mt-0.5 break-all">{formatted.detail}</p>
-                            )}
                           </div>
                         </div>
                       );
@@ -1263,12 +1288,6 @@ export default function SettingsPage() {
                     {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
                     <div>
                       <p className="font-medium">{formatted.message}</p>
-                      {testResult.latency_ms > 0 && (
-                        <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
-                      )}
-                      {formatted.detail && (
-                        <p className="text-xs opacity-70 mt-0.5 break-all">{formatted.detail}</p>
-                      )}
                     </div>
                   </div>
                 );

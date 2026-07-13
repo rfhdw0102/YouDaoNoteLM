@@ -571,14 +571,20 @@ func parseSupportedDimensions(errMsg string) string {
 }
 
 // createEmbeddingService 根据配置创建 embedding 服务实例
-func (h *ConfigHealthChecker) createEmbeddingService(config *entity.UserConfig) (*embedding.OpenAIEmbeddingService, error) {
+func (h *ConfigHealthChecker) createEmbeddingService(config *entity.UserConfig) (embedding.EmbeddingService, error) {
 	dimensions := 2048 // 默认维度
 	if config.Dimensions != nil && *config.Dimensions > 0 {
 		dimensions = *config.Dimensions
 	}
 
-	// 所有 provider 都使用 OpenAI 兼容接口（包括火山引擎，它也支持 OpenAI 兼容模式）
 	apiURL := h.resolveAPIURL(config.Provider, config.APIURL)
+
+	// 火山引擎使用 Ark 原生接口
+	if config.Provider == "volcengine" || config.Provider == "doubao" {
+		return embedding.NewArkEmbeddingService(config.APIKey, config.Model, "multi_modal_api", apiURL, dimensions)
+	}
+
+	// 其他 provider 使用 OpenAI 兼容接口
 	return embedding.NewOpenAIEmbeddingService(config.APIKey, config.Model, apiURL, dimensions)
 }
 
