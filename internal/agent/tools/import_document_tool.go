@@ -38,14 +38,6 @@ func WithNotebookID(ctx context.Context, notebookID uint) context.Context {
 	return context.WithValue(ctx, notebookIDKey, notebookID)
 }
 
-// GetNotebookID 从 context 获取 notebookID
-func GetNotebookID(ctx context.Context) uint {
-	if v, ok := ctx.Value(notebookIDKey).(uint); ok {
-		return v
-	}
-	return 0
-}
-
 // ImportDocumentInput import_document 工具输入
 type ImportDocumentInput struct {
 	SourceType  string `json:"source_type" jsonschema:"enum=youdao|url|file,description=来源类型"`
@@ -78,11 +70,11 @@ func NewImportDocumentTool(
 
 			switch input.SourceType {
 			case "youdao":
-				return importYoudao(ctx, youdaoService, userID, input)
+				return importYoudao(youdaoService, userID, input)
 			case "url":
-				return importURL(ctx, importerService, userID, input)
+				return importURL(importerService, userID, input)
 			case "file":
-				return importFile(ctx, importerService, userID, input)
+				return importFile(importerService, userID, input)
 			default:
 				return nil, fmt.Errorf("不支持的来源类型: %s", input.SourceType)
 			}
@@ -90,7 +82,7 @@ func NewImportDocumentTool(
 	)
 }
 
-func importYoudao(ctx context.Context, youdaoService service.YoudaoService, userID uint, input *ImportDocumentInput) (*ImportDocumentOutput, error) {
+func importYoudao(youdaoService service.YoudaoService, userID uint, input *ImportDocumentInput) (*ImportDocumentOutput, error) {
 	if youdaoService == nil {
 		return nil, fmt.Errorf("当前 Agent 未配置有道笔记导入能力，不支持 source_type=youdao")
 	}
@@ -117,7 +109,7 @@ func importYoudao(ctx context.Context, youdaoService service.YoudaoService, user
 	}, nil
 }
 
-func importURL(ctx context.Context, importer service.ImporterService, userID uint, input *ImportDocumentInput) (*ImportDocumentOutput, error) {
+func importURL(importer service.ImporterService, userID uint, input *ImportDocumentInput) (*ImportDocumentOutput, error) {
 	if input.URL == "" {
 		return nil, fmt.Errorf("source_type=url 时 url 不能为空")
 	}
@@ -145,7 +137,7 @@ func importURL(ctx context.Context, importer service.ImporterService, userID uin
 	}, nil
 }
 
-func importFile(ctx context.Context, importer service.ImporterService, userID uint, input *ImportDocumentInput) (*ImportDocumentOutput, error) {
+func importFile(importer service.ImporterService, userID uint, input *ImportDocumentInput) (*ImportDocumentOutput, error) {
 	// 文件上传需要 multipart.FileHeader，Agent 场景下无法直接提供
 	// 返回错误提示用户通过 API 上传
 	return nil, fmt.Errorf("文件上传请通过 API 接口处理，Agent 暂不支持直接上传文件")

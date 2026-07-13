@@ -40,7 +40,7 @@ func extractBizError(err error) *bizerrors.BizError {
 var jsonBlockRegexp = regexp.MustCompile("(?s)```(?:json)?\\s*([\\s\\S]*?)```")
 
 // jsonObjRegexp 兜底：从文本中提取第一个 JSON 对象
-var jsonObjRegexp = regexp.MustCompile("(?s)\\{.*\\}")
+var jsonObjRegexp = regexp.MustCompile(`(?s)\{.*\}`)
 
 // verifyFinalResultCount 硬约束（结果检查）：从最终回复内容中解析 JSON 并校验 results 数量是否为 10
 // 仅记录告警，不修改内容；流式场景下内容已发出，此处用于事后排查
