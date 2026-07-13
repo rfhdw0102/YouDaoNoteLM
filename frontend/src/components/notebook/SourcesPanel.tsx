@@ -303,7 +303,13 @@ export default function SourcesPanel() {
           );
 
           setSearchResults(finalResults);
-          setSearchSummary(finalSummary || '搜索完成');
+          if (finalSummary) {
+            setSearchSummary(finalSummary);
+          } else if (finalResults.length === 0) {
+            setSearchSummary('未找到相关结果，请换个关键词或问题再试');
+          } else {
+            setSearchSummary('搜索完成');
+          }
         } catch (err: any) {
           if (err.name === 'AbortError') return;
           console.error('Search failed:', err);
@@ -314,10 +320,21 @@ export default function SourcesPanel() {
           const msg = getErrorMessage(err, '未知错误');
 
           if (errorCode === 40010) {
-            // CodeLLMNotConfigured
-            setSearchSummary('搜索需要先配置 LLM 服务。请前往 设置 → AI 服务配置 添加 LLM 配置后再试。');
-          } else if (msg.includes('LLM') || msg.includes('llm') || msg.includes('配置')) {
-            setSearchSummary('搜索需要先配置 LLM 服务。请前往 设置 → AI 服务配置 添加 LLM 配置后再试。');
+            // CodeSearchProviderNotConfigured：搜索引擎未配置
+            setSearchSummary('请前往 设置 → 添加搜索引擎配置后再试');
+          } else if (errorCode === 40020) {
+            // CodeLLMNotConfigured：LLM 未配置（搜索 Agent 依赖 LLM）
+            setSearchSummary('请前往 设置 → 添加 LLM 配置后再试');
+          } else if (errorCode === 40011) {
+            // CodeSearchInvalidAPIKey：搜索引擎 API Key 无效
+            setSearchSummary('请前往 设置 → 更新搜索引擎 API Key 后重试');
+          } else if (errorCode === 40012 || errorCode === 40013) {
+            // 搜索超时 / 服务不可用
+            setSearchSummary(`搜索失败：${msg}`);
+          } else if (msg.includes('搜索引擎') || msg.includes('search')) {
+            setSearchSummary('请前往 设置 → 添加搜索引擎配置后再试');
+          } else if (msg.includes('LLM') || msg.includes('llm')) {
+            setSearchSummary('请前往 设置 → 添加 LLM 配置后再试');
           } else {
             setSearchSummary(`搜索失败：${msg}`);
           }

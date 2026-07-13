@@ -86,8 +86,9 @@ export default function ProfilePage() {
       const res = await uploadAvatar(file);
       if (res.code === 0) {
         // 上传接口已在服务端更新头像，只需更新本地状态（不回传 URL 到 PUT /user/profile）
-        // 加 cache-buster 避免浏览器命中旧缓存（objectName 固定为 avatars/{id}.{ext}，URL 不变）
-        const avatarUrl = res.data.avatar + (res.data.avatar.includes('?') ? '&' : '?') + 't=' + Date.now();
+        // 后端每次返回的是新生成的 MinIO presigned URL（签名/过期时间不同，本身已是新缓存 key），
+        // 切勿再追加 ?t= 等 cache-buster 参数——会破坏 SigV4 签名导致 403 Forbidden。
+        const avatarUrl = res.data.avatar;
         useAuthStore.setState((state) => {
           const updated = state.user ? { ...state.user, avatar: avatarUrl } : null;
           if (updated) localStorage.setItem('user', JSON.stringify(updated));

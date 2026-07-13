@@ -38,13 +38,13 @@ type SearchAgentEvent struct {
 // SearchAgentService 搜索 Agent 服务接口
 type SearchAgentService interface {
 	// Search 智能搜索：Agent 自主执行多轮搜索+分析（用户交互模式，不自动导入）
-	Search(userID, notebookID uint, query string) (*response.SearchResponse, error)
+	Search(ctx context.Context, userID, notebookID uint, query string) (*response.SearchResponse, error)
 	// SearchStream 智能搜索（流式）：返回事件 channel，用于 SSE 推送
-	SearchStream(userID, notebookID uint, query string) <-chan *SearchAgentEvent
+	SearchStream(ctx context.Context, userID, notebookID uint, query string) <-chan *SearchAgentEvent
 	// ImportFromURL URL 直接导入（返回任务 ID 和 Source ID）
 	ImportFromURL(userID, notebookID uint, url string) (taskID string, sourceID uint, err error)
 	// ImportSearchResults 批量导入搜索结果（带标题），返回任务 ID 和创建的 Source ID 列表
 	ImportSearchResults(userID, notebookID uint, items []SearchResultItem) (taskID string, sourceIDs []uint, err error)
 	// SearchAndImport 搜索并自动导入：Agent 自主执行多轮搜索并自动导入结果（主Agent调用模式）
-	SearchAndImport(userID, notebookID uint, query string) (*response.SearchResponse, error)
+	SearchAndImport(ctx context.Context, userID, notebookID uint, query string) (*response.SearchResponse, error)
 }
