@@ -12,7 +12,7 @@ import ResizablePanel from '../components/ui/ResizablePanel';
 export default function NotebookPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { setCurrentNotebook, getCurrentNotebook, renameNotebook, fetchNotebooks } = useNotebookStore();
+  const { setCurrentNotebook, getCurrentNotebook, renameNotebook, fetchNotebooks, stopGeneration } = useNotebookStore();
 
   const [editingName, setEditingName] = useState(false);
   const [notebookName, setNotebookName] = useState('');
@@ -34,6 +34,17 @@ export default function NotebookPage() {
     };
     loadNotebook();
   }, [id, setCurrentNotebook, fetchNotebooks]);
+
+  // 离开笔记本页面时，停止正在进行的流式生成
+  useEffect(() => {
+    return () => {
+      const { streamingConversationId, currentNotebookId } = useNotebookStore.getState();
+      if (streamingConversationId && currentNotebookId) {
+        console.log('[NotebookPage] 组件卸载，停止流式生成:', streamingConversationId);
+        stopGeneration(currentNotebookId, streamingConversationId).catch(() => {});
+      }
+    };
+  }, [stopGeneration]);
 
   const notebook = getCurrentNotebook();
 

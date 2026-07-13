@@ -94,10 +94,6 @@ export default function SourcesPanel() {
   const [expandedVectorized, setExpandedVectorized] = useState(true);
   const [expandedUnvectorized, setExpandedUnvectorized] = useState(true);
 
-  // 拖拽上传状态
-  const [isDragging, setIsDragging] = useState(false);
-  const mainDragCounterRef = useRef(0);
-
   // 监听 store 中 audio source 状态变化，转写完成时自动更新预览面板
   useEffect(() => {
     if (!audioPreview || !audioTranscribing || !notebook) return;
@@ -307,7 +303,13 @@ export default function SourcesPanel() {
           );
 
           setSearchResults(finalResults);
-          setSearchSummary(finalSummary || '搜索完成');
+          if (finalSummary) {
+            setSearchSummary(finalSummary);
+          } else if (finalResults.length === 0) {
+            setSearchSummary('未找到相关结果，请换个关键词或问题再试');
+          } else {
+            setSearchSummary('搜索完成');
+          }
         } catch (err: any) {
           if (err.name === 'AbortError') return;
           console.error('Search failed:', err);
@@ -318,10 +320,21 @@ export default function SourcesPanel() {
           const msg = getErrorMessage(err, '未知错误');
 
           if (errorCode === 40010) {
-            // CodeLLMNotConfigured
-            setSearchSummary('搜索需要先配置 LLM 服务。请前往 设置 → AI 服务配置 添加 LLM 配置后再试。');
-          } else if (msg.includes('LLM') || msg.includes('llm') || msg.includes('配置')) {
-            setSearchSummary('搜索需要先配置 LLM 服务。请前往 设置 → AI 服务配置 添加 LLM 配置后再试。');
+            // CodeSearchProviderNotConfigured：搜索引擎未配置
+            setSearchSummary('请前往 设置 → 添加搜索引擎配置后再试');
+          } else if (errorCode === 40020) {
+            // CodeLLMNotConfigured：LLM 未配置（搜索 Agent 依赖 LLM）
+            setSearchSummary('请前往 设置 → 添加 LLM 配置后再试');
+          } else if (errorCode === 40011) {
+            // CodeSearchInvalidAPIKey：搜索引擎 API Key 无效
+            setSearchSummary('请前往 设置 → 更新搜索引擎 API Key 后重试');
+          } else if (errorCode === 40012 || errorCode === 40013) {
+            // 搜索超时 / 服务不可用
+            setSearchSummary(`搜索失败：${msg}`);
+          } else if (msg.includes('搜索引擎') || msg.includes('search')) {
+            setSearchSummary('请前往 设置 → 添加搜索引擎配置后再试');
+          } else if (msg.includes('LLM') || msg.includes('llm')) {
+            setSearchSummary('请前往 设置 → 添加 LLM 配置后再试');
           } else {
             setSearchSummary(`搜索失败：${msg}`);
           }
@@ -556,75 +569,8 @@ export default function SourcesPanel() {
   }
 
   // ---- Main Panel ----
-
-  // 主面板拖拽处理
-  const handleMainDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    mainDragCounterRef.current++;
-    if (e.dataTransfer.types.includes('Files')) {
-      setIsDragging(true);
-    }
-  };
-
-  const handleMainDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    mainDragCounterRef.current--;
-    if (mainDragCounterRef.current === 0) {
-      setIsDragging(false);
-    }
-  };
-
-  const handleMainDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const handleMainDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    mainDragCounterRef.current = 0;
-    setIsDragging(false);
-
-    const files = e.dataTransfer.files;
-    if (files.length === 0 || !currentNotebookId) return;
-
-    const audioExts = ['.mp3', '.wav'];
-    for (const file of Array.from(files)) {
-      const ext = '.' + file.name.split('.').pop()?.toLowerCase();
-      if (audioExts.includes(ext)) {
-        try {
-          await previewAudio(currentNotebookId, file);
-        } catch (err) {
-          console.error('Audio import failed:', err);
-        }
-      } else {
-        try {
-          await importFile(currentNotebookId, file);
-        } catch (err) {
-          console.error('File import failed:', err);
-        }
-      }
-    }
-  };
-
   return (
-    <div
-      className="h-full flex flex-col bg-bg-secondary/30 relative"
-      onDragEnter={handleMainDragEnter}
-      onDragLeave={handleMainDragLeave}
-      onDragOver={handleMainDragOver}
-      onDrop={handleMainDrop}
-    >
-      {/* 拖拽遮罩 */}
-      {isDragging && (
-        <div className="absolute inset-0 z-50 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex flex-col items-center justify-center pointer-events-none">
-          <Upload size={48} className="text-accent mb-3" />
-          <p className="text-lg font-medium text-accent">松开鼠标上传文件</p>
-          <p className="text-sm text-text-muted mt-1">支持 PDF, DOCX, TXT, MD, HTML, MP3, WAV</p>
-        </div>
-      )}
+    <div className="h-full flex flex-col bg-bg-secondary/30">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -1090,13 +1036,11 @@ export default function SourcesPanel() {
       {/* Import Modal */}
       <Modal open={showImportModal} onClose={() => setShowImportModal(false)} title="导入资料" size="md">
         <ImportModalContent
-          onFileImport={(file) => importFile(currentNotebookId, file).then(() => setShowImportModal(false)).catch(console.error)}
+          onClose={() => setShowImportModal(false)}
+          onFileImport={(file) => importFile(currentNotebookId, file)}
           onAudioImport={async (file) => {
-            try {
-              await previewAudio(currentNotebookId, file);
-              setShowImportModal(false);
-              // 不跳转到转写预览面板，转写完成后通过通知横幅提醒用户
-            } catch (err) { console.error(err); }
+            await previewAudio(currentNotebookId, file);
+            // 不跳转到转写预览面板，转写完成后通过通知横幅提醒用户
           }}
           onUrlImport={async (url) => {
             try {
@@ -1145,11 +1089,12 @@ export default function SourcesPanel() {
   );
 }
 
-function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudaoImport }: {
-  onFileImport: (file: File) => Promise<void>;
-  onAudioImport: (file: File) => void;
+function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudaoImport, onClose }: {
+  onFileImport: (file: File) => Promise<any>;
+  onAudioImport: (file: File) => Promise<any>;
   onUrlImport: (url: string) => void;
   onYoudaoImport: (fileIds: string[], fileNames: Record<string, string>) => Promise<void>;
+  onClose: () => void;
 }) {
   const [tab, setTab] = useState<'youdao' | 'file' | 'url'>('youdao');
   const [urlValue, setUrlValue] = useState('');
@@ -1179,6 +1124,10 @@ function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudao
           await onFileImport(file);
         }
       }
+      // 所有文件处理成功后关闭弹窗
+      onClose();
+    } catch (err) {
+      console.error('File upload failed:', err);
     } finally {
       setUploading(false);
       setUploadProgress(null);

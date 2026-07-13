@@ -89,6 +89,17 @@ func (s *chatAgentService) ProcessMessageWithAgent(ctx context.Context, req *req
 	eventCh := make(chan chat.StreamEvent, 64)
 
 	go func() {
+		// recover 防止 panic 导致服务崩溃）
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("[Agent] goroutine panic recovered", zap.Uint("conversationID", conversationID), zap.Any("panic", r))
+				// 发送错误事件给前端
+				select {
+				case eventCh <- chat.StreamEvent{Type: chat.EventError, Content: "服务内部错误"}:
+				default:
+				}
+			}
+		}()
 		defer func() {
 			s.cancelFuncs.Delete(conversationID)
 			s.cache.ReleaseLock(context.Background(), conversationID, lockValue)
@@ -149,7 +160,19 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 		zap.String("content", req.Content),
 	)
 
-	// 1. 获取 LLM 配置
+	// 立即保存用户消息（保证用户切换对话再返回时能看到自己发送的问题）
+	if err := s.messageRepo.Create(&entity.Message{
+		ConversationID: conversationID,
+		Role:           "user",
+		Content:        req.Content,
+		Metadata:       "{}",
+	}); err != nil {
+		logger.Error("[Agent] 保存用户消息失败", zap.Error(err))
+		s.sendAgentError(eventCh, "保存消息失败")
+		return
+	}
+
+	//  获取 LLM 配置
 	llmConfig, err := s.getLLMConfig(req.UserID, req.LLMConfigID)
 	if err != nil {
 		logger.Error("[Agent] 获取 LLM 配置失败", zap.Error(err))
@@ -157,7 +180,7 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 		return
 	}
 
-	// 2. 创建 ChatAgent
+	//  创建 ChatAgent
 	chatAgent, err := s.createChatAgent(ctx, llmConfig, req.UserID, req.SourceIDs)
 	if err != nil {
 		logger.Error("[Agent] 创建 ChatAgent 失败", zap.Error(err))
@@ -165,13 +188,19 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 		return
 	}
 
-	// 3. 调用 Process，直接转发事件
+	//  调用 Process，直接转发事件
 	fullContent := s.processAndForward(ctx, chatAgent, conversationID, req.Content, eventCh)
 
-	// 4. 保存结果
+	logger.Info("[Agent] processAndForward 返回",
+		zap.Uint("conversationID", conversationID),
+		zap.Int("contentLen", len(fullContent)),
+		zap.Bool("ctxCanceled", ctx.Err() != nil),
+	)
+
+	//  保存结果（即使 ctx 已取消也要保存，使用 Background ctx）
 	s.saveResults(ctx, conversationID, req.UserID, req.Content, fullContent, chatAgent.GetReferences())
 
-	// 5. 生成标题并发送给前端
+	//  生成标题并发送给前端
 	if title := s.maybeGenerateTitle(ctx, conversationID, req.UserID, req.Content, fullContent); title != "" {
 		eventCh <- chat.StreamEvent{
 			Type:    chat.EventTitle,
@@ -270,14 +299,30 @@ func (s *chatAgentService) processAndForward(ctx context.Context, chatAgent *cha
 	agentEventCh := chatAgent.Process(ctx, conversationID, content)
 
 	var fullContent string
-	for event := range agentEventCh {
-		eventCh <- event // 直接转发，不需要转换
-		if event.Type == chat.EventToken {
-			fullContent += event.Content
+	for {
+		select {
+		case event, ok := <-agentEventCh:
+			if !ok {
+				// Agent 事件通道已关闭，正常结束
+				return fullContent
+			}
+			// 写入时检查 context，感知 SSE 断连
+			select {
+			case eventCh <- event:
+				// 写入成功
+			case <-ctx.Done():
+				logger.Info("[Agent] SSE 断连，停止转发事件", zap.Uint("conversationID", conversationID), zap.Int("contentLen", len(fullContent)))
+				return fullContent
+			}
+			if event.Type == chat.EventToken {
+				fullContent += event.Content
+			}
+		case <-ctx.Done():
+			// SSE 断连或主动取消，立即停止转发
+			logger.Info("[Agent] SSE 断连，停止转发事件", zap.Uint("conversationID", conversationID), zap.Int("contentLen", len(fullContent)))
+			return fullContent
 		}
 	}
-
-	return fullContent
 }
 
 // saveResults 保存结果
@@ -301,34 +346,27 @@ func (s *chatAgentService) saveResults(ctx context.Context, conversationID, user
 	}
 }
 
-// saveMessages 保存消息
+// saveMessages 保存助手消息
 func (s *chatAgentService) saveMessages(ctx context.Context, conversationID uint, userContent, assistantContent string, references []response.Reference) (*cache.MessagePair, error) {
-	msgs := []*entity.Message{
-		{ConversationID: conversationID, Role: "user", Content: userContent, Metadata: "{}"},
-	}
-
-	if len(assistantContent) > 0 {
-		assistantMetadata := "{}"
-		if len(references) > 0 {
-			meta := response.MessageMetadata{References: references}
-			if data, err := json.Marshal(meta); err == nil {
-				assistantMetadata = string(data)
-			}
-		}
-		msgs = append(msgs, &entity.Message{
-			ConversationID: conversationID,
-			Role:           "assistant",
-			Content:        assistantContent,
-			Metadata:       assistantMetadata,
-		})
-	}
-
-	if err := s.messageRepo.CreateBatch(msgs); err != nil {
-		return nil, fmt.Errorf("批量保存消息失败: %w", err)
-	}
-
 	if len(assistantContent) == 0 {
 		return nil, nil
+	}
+
+	assistantMetadata := "{}"
+	if len(references) > 0 {
+		meta := response.MessageMetadata{References: references}
+		if data, err := json.Marshal(meta); err == nil {
+			assistantMetadata = string(data)
+		}
+	}
+
+	if err := s.messageRepo.Create(&entity.Message{
+		ConversationID: conversationID,
+		Role:           "assistant",
+		Content:        assistantContent,
+		Metadata:       assistantMetadata,
+	}); err != nil {
+		return nil, fmt.Errorf("保存助手消息失败: %w", err)
 	}
 
 	var evictedPair *cache.MessagePair

@@ -8,9 +8,9 @@ import (
 )
 
 // RegisterRoutes registers generation routes.
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService) {
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService, statusCheck gin.HandlerFunc) {
 	group := r.Group("/generations")
-	group.Use(middleware.Auth(tokenBlacklist))
+	group.Use(middleware.Auth(tokenBlacklist), statusCheck)
 	{
 		group.POST("", ctrl.Generate)
 		group.POST("/export", ctrl.Export)

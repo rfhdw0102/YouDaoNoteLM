@@ -152,7 +152,24 @@ func (s *configService) getService(userID uint, serviceType string) (interface{}
 		return svc, nil
 	}
 
-	return nil, fmt.Errorf("未配置 %s 服务，请在用户配置或系统配置中添加", serviceType)
+	return nil, notConfiguredError(serviceType)
+}
+
+// notConfiguredError 按 serviceType 返回带正确错误码的 BizError
+// serviceType: "search" / "asr" / "llm" / "embedding"
+func notConfiguredError(serviceType string) error {
+	switch serviceType {
+	case "search":
+		return bizerrors.ErrSearchProviderNotConfigured
+	case "asr":
+		return bizerrors.ErrASRNotConfigured
+	case "llm":
+		return bizerrors.ErrLLMNotConfigured
+	case "embedding":
+		return bizerrors.ErrEmbeddingNotConfigured
+	default:
+		return bizerrors.New(bizerrors.CodeBadRequest, fmt.Sprintf("未配置 %s 服务，请在设置中添加", serviceType))
+	}
 }
 
 // getSysService 从 sys_config 查找并创建服务
@@ -267,10 +284,10 @@ func (s *configService) GetEmbeddingService(userID uint) (embedding.EmbeddingSer
 	// 缓存未命中，查 DB
 	userCfgPtr, err := s.userConfigRepo.FindByUserAndType(userID, "embedding")
 	if err != nil {
-		return nil, fmt.Errorf("未配置 Embedding 服务，请在设置中添加 Embedding 配置")
+		return nil, bizerrors.ErrEmbeddingNotConfigured
 	}
 	if userCfgPtr == nil || !userCfgPtr.Enabled {
-		return nil, fmt.Errorf("未配置 Embedding 服务，请在设置中添加 Embedding 配置")
+		return nil, bizerrors.ErrEmbeddingNotConfigured
 	}
 
 	if cacheErr := s.cache.Set(ctx, cacheKey, userCfgPtr, userConfigTTL); cacheErr != nil {

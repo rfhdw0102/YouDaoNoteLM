@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   Folder, ChevronRight, ArrowLeft,
@@ -16,18 +17,42 @@ interface YoudaoImportPanelProps {
 }
 
 export default function YoudaoImportPanel({ onImport, onBack }: YoudaoImportPanelProps) {
+  const navigate = useNavigate();
   const [notes, setNotes] = useState<YoudaoNoteItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notBound, setNotBound] = useState(false);
+  const [bindChecked, setBindChecked] = useState(false);
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set());
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
   const [importing, setImporting] = useState(false);
 
-  // 加载有道云笔记数据
+  // 挂载时先检查有道云绑定状态，未绑定则引导用户去绑定（避免发起注定失败的 listNotes）
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await youdaoApi.getBindStatus();
+        if (cancelled) return;
+        if (res.code === 0 && !res.data?.bound) {
+          setNotBound(true);
+          setBindChecked(true);
+          return;
+        }
+      } catch {
+        // 绑定状态查询失败，兜底交给 loadNotes 的错误处理
+      }
+      if (!cancelled) setBindChecked(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 已绑定后，目录切换时加载笔记
+  useEffect(() => {
+    if (!bindChecked || notBound) return;
     loadNotes(currentFolder);
-  }, [currentFolder]);
+  }, [currentFolder, bindChecked, notBound]);
 
   const loadNotes = async (folderId: string | null) => {
     setLoading(true);
@@ -45,6 +70,22 @@ export default function YoudaoImportPanel({ onImport, onBack }: YoudaoImportPane
     } catch (err) {
       setError('加载有道云笔记失败');
       console.error('Failed to load youdao notes:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 重新检查绑定状态（未绑定界面下点击刷新按钮时调用，便于用户在别处绑定后回到此面板刷新）
+  const recheckBinding = async () => {
+    setLoading(true);
+    try {
+      const res = await youdaoApi.getBindStatus();
+      if (res.code === 0 && res.data?.bound) {
+        setNotBound(false);
+        setError(null);
+      }
+    } catch {
+      // 忽略，保持当前状态
     } finally {
       setLoading(false);
     }
@@ -121,7 +162,7 @@ export default function YoudaoImportPanel({ onImport, onBack }: YoudaoImportPane
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => loadNotes(currentFolder)}
+          onClick={() => (notBound ? recheckBinding() : loadNotes(currentFolder))}
           disabled={loading}
         >
           <RefreshCw size={14} className={cn(loading && 'animate-spin')} />
@@ -168,10 +209,19 @@ export default function YoudaoImportPanel({ onImport, onBack }: YoudaoImportPane
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {loading ? (
+        {loading || !bindChecked ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 size={20} className="animate-spin text-accent" />
             <span className="ml-2 text-sm text-text-muted">加载中...</span>
+          </div>
+        ) : notBound ? (
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <AlertCircle size={24} className="text-text-muted" />
+            <p className="text-sm text-text-primary">未绑定有道云笔记账号</p>
+            <p className="text-xs text-text-muted">请先在设置中绑定账号后再导入笔记</p>
+            <Button size="sm" onClick={() => navigate('/settings?tab=youdao')}>
+              去绑定
+            </Button>
           </div>
         ) : error ? (
           <div className="flex flex-col items-center justify-center py-12 gap-3">

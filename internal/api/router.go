@@ -16,6 +16,7 @@ import (
 	youdao "YoudaoNoteLm/internal/api/v1/youdao"
 	"YoudaoNoteLm/internal/middleware"
 	"YoudaoNoteLm/internal/rag"
+	"YoudaoNoteLm/internal/repository"
 	"YoudaoNoteLm/internal/service"
 	externalStorage "YoudaoNoteLm/internal/service/external/storage"
 
@@ -31,6 +32,7 @@ type Router struct {
 	generationCtrl *generation.Controller
 	chatCtrl       *chat.Controller
 	tokenBlacklist service.TokenBlacklistService
+	userRepo       repository.UserRepository
 	importCtrl     *importn.Controller
 	adminCtrl      *admin.Controller
 	searchCtrl     *search.Controller
@@ -60,6 +62,7 @@ func NewRouter(
 	youdaoService service.YoudaoService,
 	ingestionService rag.IngestionService,
 	storage externalStorage.FileStorage,
+	userRepo repository.UserRepository,
 ) *Router {
 	return &Router{
 		userCtrl:       user.NewController(userService, tokenBlacklist),
@@ -69,6 +72,7 @@ func NewRouter(
 		generationCtrl: generation.NewController(generationService),
 		chatCtrl:       chat.NewController(chatAgentService, convService),
 		tokenBlacklist: tokenBlacklist,
+		userRepo:       userRepo,
 		importCtrl:     importn.NewController(importerService),
 		searchCtrl:     search.NewController(searchAgentService, tokenBlacklist),
 		adminCtrl:      admin.NewController(adminService),
@@ -96,30 +100,33 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 	v1 := engine.Group("/api/v1")
 	{
+		// 用户状态检查中间件（被禁用用户立即拦截，返回 1004）
+		statusCheck := middleware.StatusCheck(r.userRepo)
+
 		r.authCtrl.RegisterRoutes(v1)
-		r.userCtrl.RegisterRoutes(v1)
-		r.notebookCtrl.RegisterRoutes(v1, r.tokenBlacklist)
-		r.sourceCtrl.RegisterRoutes(v1)
-		r.searchCtrl.RegisterRoutes(v1)
-		r.generationCtrl.RegisterRoutes(v1, r.tokenBlacklist)
+		r.userCtrl.RegisterRoutes(v1, statusCheck)
+		r.notebookCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
+		r.sourceCtrl.RegisterRoutes(v1, statusCheck)
+		r.searchCtrl.RegisterRoutes(v1, statusCheck)
+		r.generationCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
 
 		// 文件代理路由（公开，头像降级访问）
 		r.fileCtrl.RegisterRoutes(v1)
 
 		// 导入路由（需认证）
-		r.importCtrl.RegisterRoutes(v1, r.tokenBlacklist)
-		r.chatCtrl.RegisterRoutes(v1, r.tokenBlacklist)
+		r.importCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
+		r.chatCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
 
 		// 用户配置路由（需认证）
-		r.userConfigCtrl.RegisterRoutes(v1)
+		r.userConfigCtrl.RegisterRoutes(v1, statusCheck)
 
-		// 后台管理路由（需认证）
-		r.adminCtrl.RegisterRoutes(v1, r.tokenBlacklist)
+		// 后台管理路由（需认证 + 管理员角色）
+		r.adminCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
 
 		// 有道云笔记路由（需认证）
-		r.youdaoCtrl.RegisterRoutes(v1, r.tokenBlacklist)
+		r.youdaoCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
 
 		// Provider 发现路由（/active 支持可选认证）
-		r.providerCtrl.RegisterRoutes(v1, middleware.OptionalAuth(r.tokenBlacklist))
+		r.providerCtrl.RegisterRoutes(v1, middleware.OptionalAuth(r.tokenBlacklist, r.userRepo))
 	}
 }
