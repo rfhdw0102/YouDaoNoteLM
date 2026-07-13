@@ -68,3 +68,54 @@ func (s *tokenBlacklistService) IsRevoked(ctx context.Context, jti string) (bool
 	}
 	return exists > 0, nil
 }
+
+// userTokenKey 用户 token 集合 key: token:user:{userID}
+func (s *tokenBlacklistService) userTokenKey(userID uint) string {
+	return fmt.Sprintf("%s%d", userTokenKeyPrefix, userID)
+}
+
+// AddUserToken 将 jti 加入用户 token 集合，并续期集合 TTL
+// Redis Set 不支持元素级 TTL，每次 SAdd 后整体 Expire 续期
+func (s *tokenBlacklistService) AddUserToken(ctx context.Context, userID uint, jti string, ttl time.Duration) error {
+	key := s.userTokenKey(userID)
+	pipe := s.redis.Pipeline()
+	pipe.SAdd(ctx, key, jti)
+	pipe.Expire(ctx, key, ttl)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("添加用户 token 到集合失败: %w", err)
+	}
+	return nil
+}
+
+// RemoveUserToken 从用户 token 集合移除 jti（refresh 换发新 token 后清理旧 jti）
+func (s *tokenBlacklistService) RemoveUserToken(ctx context.Context, userID uint, jti string) error {
+	key := s.userTokenKey(userID)
+	if err := s.redis.SRem(ctx, key, jti).Err(); err != nil {
+		return fmt.Errorf("从用户 token 集合移除失败: %w", err)
+	}
+	return nil
+}
+
+// RevokeUserTokens 拉黑该用户集合中所有 token，并删除集合
+// tokenTTL 应取 refresh token 有效期，保证 refresh token 被拉黑到过期
+func (s *tokenBlacklistService) RevokeUserTokens(ctx context.Context, userID uint, tokenTTL time.Duration) (int, error) {
+	key := s.userTokenKey(userID)
+	jtis, err := s.redis.SMembers(ctx, key).Result()
+	if err != nil {
+		return 0, fmt.Errorf("查询用户 token 集合失败: %w", err)
+	}
+	if len(jtis) == 0 {
+		return 0, nil
+	}
+
+	// 批量拉黑 + 删除集合，Pipeline 减少往返
+	pipe := s.redis.Pipeline()
+	for _, jti := range jtis {
+		pipe.Set(ctx, s.blacklistKey(jti), "1", tokenTTL)
+	}
+	pipe.Del(ctx, key)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, fmt.Errorf("批量拉黑用户 token 失败: %w", err)
+	}
+	return len(jtis), nil
+}
