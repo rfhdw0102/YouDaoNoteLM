@@ -92,6 +92,23 @@ export default function SettingsPage() {
     dimensions: 2048,
   });
 
+  // 格式化测试结果消息（处理向量维度错误等特殊场景）
+  const formatTestResultMessage = (result: { healthy: boolean; message: string; detail?: string }): { message: string; detail?: string } => {
+    // 检测向量维度不匹配错误
+    if (!result.healthy && result.message.includes('向量维度不匹配')) {
+      // 从 detail 中提取实际维度: "请将向量维度修改为 1536"
+      const match = result.detail?.match(/请将向量维度修改为 (\d+)/);
+      if (match) {
+        const actualDim = match[1];
+        return {
+          message: `向量维度错误，该向量模型支持 ${actualDim} 维度，请更改后重试`,
+          detail: undefined, // 不再显示 detail
+        };
+      }
+    }
+    return { message: result.message, detail: result.detail };
+  };
+
   // 获取当前选中 provider 的配置要求
   const getSelectedProviderInfo = (): ProviderInfo | undefined => {
     return providers.find(p => p.provider === formData.provider);
@@ -100,6 +117,11 @@ export default function SettingsPage() {
   // 获取当前选中 provider 的文档链接
   const getProviderDoc = (): { label: string; url: string; description: string } | undefined => {
     return PROVIDER_DOCS[formData.provider];
+  };
+
+  // 判断当前 provider 是否为 ARK 类型（火山引擎/豆包）
+  const isARKProvider = (): boolean => {
+    return formData.provider === 'volcengine' || formData.provider === 'doubao';
   };
 
   // 获取字段的中文标签
@@ -946,6 +968,29 @@ export default function SettingsPage() {
                             }
                           };
 
+                          // ARK 类型服务商的向量维度使用下拉选择
+                          if (field === 'dimensions' && activeTab === 'embedding' && isARKProvider()) {
+                            return (
+                              <div key={field}>
+                                <label className="block text-sm font-medium text-text-primary mb-1.5">
+                                  {required ? `${label} *` : `${label} (可选)`}
+                                </label>
+                                <select
+                                  value={getValue() || 2048}
+                                  disabled={activeTab === 'embedding'}
+                                  onChange={(e) => setValue(e.target.value)}
+                                  className={cn(
+                                    "w-full h-10 px-3 rounded-lg bg-bg-tertiary border border-border-light text-sm focus:outline-none focus:border-accent",
+                                    activeTab === 'embedding' && "opacity-60 cursor-not-allowed"
+                                  )}
+                                >
+                                  <option value={2048}>2048</option>
+                                  <option value={1024}>1024</option>
+                                </select>
+                              </div>
+                            );
+                          }
+
                           return (
                             <Input
                               key={field}
@@ -967,25 +1012,28 @@ export default function SettingsPage() {
                     )}
 
                     {/* 测试结果展示 - 编辑模式 */}
-                    {testResult && (
-                      <div className={cn(
-                        'p-3 rounded-lg flex items-start gap-2 text-sm',
-                        testResult.healthy
-                          ? 'bg-success/5 border border-success/20 text-success'
-                          : 'bg-error/5 border border-error/20 text-error'
-                      )}>
-                        {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
-                        <div>
-                          <p className="font-medium">{testResult.message}</p>
-                          {testResult.latency_ms > 0 && (
-                            <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
-                          )}
-                          {testResult.detail && (
-                            <p className="text-xs opacity-70 mt-0.5 break-all">{testResult.detail}</p>
-                          )}
+                    {testResult && (() => {
+                      const formatted = formatTestResultMessage(testResult);
+                      return (
+                        <div className={cn(
+                          'p-3 rounded-lg flex items-start gap-2 text-sm',
+                          testResult.healthy
+                            ? 'bg-success/5 border border-success/20 text-success'
+                            : 'bg-error/5 border border-error/20 text-error'
+                        )}>
+                          {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
+                          <div>
+                            <p className="font-medium">{formatted.message}</p>
+                            {testResult.latency_ms > 0 && (
+                              <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
+                            )}
+                            {formatted.detail && (
+                              <p className="text-xs opacity-70 mt-0.5 break-all">{formatted.detail}</p>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     <div className="flex justify-end gap-2">
                       <Button
@@ -1159,6 +1207,25 @@ export default function SettingsPage() {
                         }
                       };
 
+                      // ARK 类型服务商的向量维度使用下拉选择
+                      if (field === 'dimensions' && activeTab === 'embedding' && isARKProvider()) {
+                        return (
+                          <div key={field}>
+                            <label className="block text-sm font-medium text-text-primary mb-1.5">
+                              {required ? `${label} *` : `${label} (可选)`}
+                            </label>
+                            <select
+                              value={getValue() || 2048}
+                              onChange={(e) => setValue(e.target.value)}
+                              className="w-full h-10 px-3 rounded-lg bg-bg-tertiary border border-border-light text-sm focus:outline-none focus:border-accent"
+                            >
+                              <option value={2048}>2048</option>
+                              <option value={1024}>1024</option>
+                            </select>
+                          </div>
+                        );
+                      }
+
                       return (
                         <Input
                           key={field}
@@ -1180,25 +1247,28 @@ export default function SettingsPage() {
                 ) : null}
               </div>
               {/* 测试结果展示 */}
-              {testResult && (
-                <div className={cn(
-                  'p-3 rounded-lg flex items-start gap-2 text-sm',
-                  testResult.healthy
-                    ? 'bg-success/5 border border-success/20 text-success'
-                    : 'bg-error/5 border border-error/20 text-error'
-                )}>
-                  {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
-                  <div>
-                    <p className="font-medium">{testResult.message}</p>
-                    {testResult.latency_ms > 0 && (
-                      <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
-                    )}
-                    {testResult.detail && (
-                      <p className="text-xs opacity-70 mt-0.5 break-all">{testResult.detail}</p>
-                    )}
+              {testResult && (() => {
+                const formatted = formatTestResultMessage(testResult);
+                return (
+                  <div className={cn(
+                    'p-3 rounded-lg flex items-start gap-2 text-sm',
+                    testResult.healthy
+                      ? 'bg-success/5 border border-success/20 text-success'
+                      : 'bg-error/5 border border-error/20 text-error'
+                  )}>
+                    {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
+                    <div>
+                      <p className="font-medium">{formatted.message}</p>
+                      {testResult.latency_ms > 0 && (
+                        <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
+                      )}
+                      {formatted.detail && (
+                        <p className="text-xs opacity-70 mt-0.5 break-all">{formatted.detail}</p>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               <div className="flex justify-end gap-2 mt-4">
                 <Button variant="ghost" size="sm" onClick={() => { setShowAddForm(false); resetForm(); }}>
