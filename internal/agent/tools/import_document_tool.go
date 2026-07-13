@@ -91,6 +91,9 @@ func NewImportDocumentTool(
 }
 
 func importYoudao(ctx context.Context, youdaoService service.YoudaoService, userID uint, input *ImportDocumentInput) (*ImportDocumentOutput, error) {
+	if youdaoService == nil {
+		return nil, fmt.Errorf("当前 Agent 未配置有道笔记导入能力，不支持 source_type=youdao")
+	}
 	if input.FileID == "" {
 		return nil, fmt.Errorf("source_type=youdao 时 file_id 不能为空")
 	}

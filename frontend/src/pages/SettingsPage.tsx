@@ -5,7 +5,7 @@ import {
   Check, AlertCircle, ArrowLeft, Save, X, BookOpen,
   Loader2, Plug
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { cn } from '../utils/cn';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -55,7 +55,13 @@ const PROVIDER_DOCS: Record<string, { label: string; url: string; description: s
 
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<ConfigTab>('llm');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<ConfigTab>(() => {
+    const tab = searchParams.get('tab');
+    return tab === 'llm' || tab === 'search' || tab === 'asr' || tab === 'embedding' || tab === 'youdao'
+      ? (tab as ConfigTab)
+      : 'llm';
+  });
   const [configs, setConfigs] = useState<UserConfig[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -596,15 +602,10 @@ export default function SettingsPage() {
   // 从 API 获取的动态 provider 列表（只返回已实现的）
   // 前端限定只展示博查搜索
   const getProviderOptions = (): { value: string; label: string }[] => {
-    if (providers.length > 0) {
-      return providers
-        .filter(p => p.provider === 'bocha')
-        .map(p => ({
-          value: p.provider,
-          label: p.display_name,
-        }));
-    }
-    return [];
+    return providers.map(p => ({
+      value: p.provider,
+      label: p.display_name,
+    }));
   };
 
   const providerOptions = getProviderOptions() ?? [];

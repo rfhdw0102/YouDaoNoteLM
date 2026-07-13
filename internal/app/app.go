@@ -14,6 +14,7 @@ import (
 	"YoudaoNoteLm/pkg/cache"
 	"YoudaoNoteLm/pkg/config"
 	"YoudaoNoteLm/pkg/database"
+	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/logger"
 	"YoudaoNoteLm/pkg/utils"
 	"context"
@@ -251,7 +252,7 @@ func (a *App) initDependencies() {
 			return nil, fmt.Errorf("获取 Embedding 配置失败: %w", err)
 		}
 		if cfg == nil {
-			return nil, fmt.Errorf("请先在设置中配置 Embedding 服务")
+			return nil, bizerrors.ErrEmbeddingNotConfigured
 		}
 		return rag.NewEmbedderFromConfig(ctx, cfg)
 	}
@@ -284,8 +285,8 @@ func (a *App) initDependencies() {
 	youdaoBindingRepo := repository.NewYoudaoBindingRepository(a.mysqlDB)
 	youdaoSvc := service.NewYoudaoService(youdaoCLI, youdaoBindingRepo, sourceRepo, ingestionSvc, a.cfg.External.Youdao.CookiesPath, structurer, configSvc, sourceSummaryCache)
 
-	// 创建搜索 Agent（依赖 youdaoSvc、youdaoCLI 和 importerSvc）
-	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc, youdaoSvc, youdaoCLI)
+	// 创建搜索 Agent（import_document 是公共工具，search agent 只用 url 来源，不依赖 youdao）
+	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc)
 	searchAgentSvc := service.NewSearchAgentService(configSvc, importerSvc, searchAgentInst)
 
 	// 创建生成服务（SearchService 暂为 nil，后续可接入）
@@ -344,7 +345,7 @@ func (a *App) initIngestionService(sourceRepo repository.SourceRepository, confi
 			return nil, 0, fmt.Errorf("获取 Embedding 配置失败: %w", err)
 		}
 		if cfg == nil {
-			return nil, 0, fmt.Errorf("请先在设置中配置 Embedding 服务")
+			return nil, 0, bizerrors.ErrEmbeddingNotConfigured
 		}
 		embedder, err := rag.NewEmbedderFromConfig(ctx, cfg)
 		if err != nil {
