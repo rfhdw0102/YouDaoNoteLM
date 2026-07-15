@@ -13,6 +13,7 @@ import (
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/service/external"
 	"YoudaoNoteLm/internal/service/external/asr"
+	"YoudaoNoteLm/internal/service/external/embedding"
 	"YoudaoNoteLm/internal/service/external/search"
 	"YoudaoNoteLm/pkg/logger"
 
@@ -452,7 +453,7 @@ func (h *ConfigHealthChecker) testASR(config *entity.UserConfig) *HealthCheckRes
 }
 
 // testEmbedding 测试 Embedding 配置
-// 策略：用 /models 端点验证 API Key（与 LLM 共享同一套 API）
+// 策略：实际调用 embedding API，验证 API Key 有效性 + 向量维度是否匹配
 func (h *ConfigHealthChecker) testEmbedding(config *entity.UserConfig) *HealthCheckResult {
 	apiURL := h.resolveAPIURL(config.Provider, config.APIURL)
 	if apiURL == "" {
@@ -461,64 +462,130 @@ func (h *ConfigHealthChecker) testEmbedding(config *entity.UserConfig) *HealthCh
 	if config.APIKey == "" {
 		return &HealthCheckResult{Healthy: false, Message: "API Key 为空"}
 	}
-
-	// Embedding 通常与 LLM 共享 API，用 /models 验证 Key
-	url := strings.TrimRight(apiURL, "/") + "/models"
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return &HealthCheckResult{Healthy: false, Message: "创建请求失败"}
+	if config.Model == "" {
+		return &HealthCheckResult{Healthy: false, Message: "模型名称未配置"}
 	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	req = req.WithContext(ctx)
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return &HealthCheckResult{Healthy: false, Message: "连接超时（5s）"}
-		}
-		return &HealthCheckResult{Healthy: false, Message: "连接失败", Detail: err.Error()}
+	// 获取配置的维度
+	configuredDimensions := 0
+	if config.Dimensions != nil && *config.Dimensions > 0 {
+		configuredDimensions = *config.Dimensions
 	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			logger.Warn("关闭 HTTP 响应体失败", zap.String("url", url), zap.Error(err))
-		}
-	}()
 
-	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+	// 根据 provider 类型创建 embedding 服务
+	embedService, err := h.createEmbeddingService(config)
+	if err != nil {
 		return &HealthCheckResult{
 			Healthy: false,
-			Message: "API Key 无效或无权限",
+			Message: "创建 Embedding 服务失败",
+			Detail:  err.Error(),
 		}
 	}
-	if resp.StatusCode == 429 {
-		return &HealthCheckResult{Healthy: true, Message: "配置正确（当前被限流，但连通性正常）"}
-	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		msg := "Embedding API 连通正常"
-		if config.Model != "" {
-			msg = fmt.Sprintf("API 连通正常（模型: %s）", config.Model)
+
+	// 实际调用 embedding API，发送测试文本
+	testText := "Hello, this is a connectivity test."
+	vector, err := embedService.Embed(testText)
+	if err != nil {
+		// 解析错误信息，提供有用的反馈
+		errMsg := err.Error()
+
+		// 常见错误处理
+		if strings.Contains(errMsg, "401") || strings.Contains(errMsg, "403") || strings.Contains(errMsg, "Unauthorized") {
+			return &HealthCheckResult{
+				Healthy: false,
+				Message: "API Key 无效或无权限",
+				Detail:  errMsg,
+			}
 		}
-		return &HealthCheckResult{Healthy: true, Message: msg}
+		if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "rate_limit") {
+			return &HealthCheckResult{
+				Healthy: true,
+				Message: "配置正确（当前被限流，但连通性正常）",
+				Detail:  errMsg,
+			}
+		}
+		if strings.Contains(errMsg, "model_not_found") || strings.Contains(errMsg, "does not exist") {
+			return &HealthCheckResult{
+				Healthy: false,
+				Message: fmt.Sprintf("模型 %s 不存在", config.Model),
+				Detail:  errMsg,
+			}
+		}
+		if strings.Contains(errMsg, "dimension") || strings.Contains(errMsg, "dimensions") {
+			// 尝试从错误信息中解析支持的维度列表
+			// 格式示例: "its value should be in [64, 128, 256, 512, 768, 1024, 1536, 2048, 3072]"
+			supportedDims := parseSupportedDimensions(errMsg)
+			if supportedDims != "" {
+				return &HealthCheckResult{
+					Healthy: false,
+					Message: fmt.Sprintf("向量维度错误，该向量模型支持 %s 维度，请更改后重试", supportedDims),
+				}
+			}
+			return &HealthCheckResult{
+				Healthy: false,
+				Message: "向量维度配置错误",
+				Detail:  errMsg,
+			}
+		}
+
+		return &HealthCheckResult{
+			Healthy: false,
+			Message: "Embedding API 调用失败",
+			Detail:  errMsg,
+		}
 	}
 
-	// /models 不支持时回退
-	if resp.StatusCode == 404 || resp.StatusCode == 405 {
-		return h.fallbackReachabilityCheck(apiURL)
+	// 验证返回的向量维度
+	actualDimensions := len(vector)
+	if configuredDimensions > 0 && actualDimensions != configuredDimensions {
+		return &HealthCheckResult{
+			Healthy: false,
+			Message: fmt.Sprintf("向量维度不匹配: 配置 %d 维, 模型返回 %d 维", configuredDimensions, actualDimensions),
+			Detail:  fmt.Sprintf("请将向量维度修改为 %d", actualDimensions),
+		}
 	}
 
-	respBody, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		return &HealthCheckResult{Healthy: false, Message: "读取响应失败", Detail: readErr.Error()}
+	// 测试通过
+	msg := fmt.Sprintf("Embedding API 连通正常（模型: %s, 维度: %d）", config.Model, actualDimensions)
+	return &HealthCheckResult{Healthy: true, Message: msg}
+}
+
+// parseSupportedDimensions 从错误信息中解析支持的维度列表
+// 示例输入: "its value should be in [64, 128, 256, 512, 768, 1024, 1536, 2048, 3072]"
+// 示例输出: "64、128、256、512、768、1024、1536、2048、3072"
+func parseSupportedDimensions(errMsg string) string {
+	// 查找 [ 和 ] 之间的内容
+	start := strings.Index(errMsg, "[")
+	end := strings.Index(errMsg, "]")
+	if start == -1 || end == -1 || end <= start {
+		return ""
 	}
-	return &HealthCheckResult{
-		Healthy: false,
-		Message: fmt.Sprintf("API 返回异常状态码 %d", resp.StatusCode),
-		Detail:  truncate(string(respBody), 200),
+	dimsStr := errMsg[start+1 : end]
+	if dimsStr == "" {
+		return ""
 	}
+	// 将逗号替换为顿号，去除空格
+	dims := strings.ReplaceAll(dimsStr, ",", "、")
+	dims = strings.ReplaceAll(dims, " ", "")
+	return dims
+}
+
+// createEmbeddingService 根据配置创建 embedding 服务实例
+func (h *ConfigHealthChecker) createEmbeddingService(config *entity.UserConfig) (embedding.EmbeddingService, error) {
+	dimensions := 2048 // 默认维度
+	if config.Dimensions != nil && *config.Dimensions > 0 {
+		dimensions = *config.Dimensions
+	}
+
+	apiURL := h.resolveAPIURL(config.Provider, config.APIURL)
+
+	// 火山引擎使用 Ark 原生接口
+	if config.Provider == "volcengine" || config.Provider == "doubao" {
+		return embedding.NewArkEmbeddingService(config.APIKey, config.Model, "multi_modal_api", apiURL, dimensions)
+	}
+
+	// 其他 provider 使用 OpenAI 兼容接口
+	return embedding.NewOpenAIEmbeddingService(config.APIKey, config.Model, apiURL, dimensions)
 }
 
 // resolveAPIURL 解析 API URL（provider 默认值）

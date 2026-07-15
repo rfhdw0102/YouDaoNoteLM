@@ -64,12 +64,7 @@ func NewChatAgentService(
 
 // ProcessMessageWithAgent 使用 Agent 处理消息
 func (s *chatAgentService) ProcessMessageWithAgent(ctx context.Context, req *request.ProcessMessageRequest) (<-chan chat.StreamEvent, error) {
-	// 1. 校验资料来源（在获取锁之前校验，避免浪费锁资源）
-	if len(req.SourceIDs) == 0 {
-		return nil, bizerrors.New(bizerrors.CodeBadRequest, "请先选中资料再进行提问")
-	}
-
-	// 2. 准备/校验对话
+	// 1. 准备/校验对话（资料校验延后到工具调用时）
 	conversationID, err := s.prepareConversation(ctx, req)
 	if err != nil {
 		return nil, err
@@ -232,7 +227,7 @@ func (s *chatAgentService) getLLMConfig(userID, llmConfigID uint) (*entity.UserL
 	return llmConfig, nil
 }
 
-// createChatAgent 创建 ChatAgent
+// createChatAgent 创建 ChatAgent（使用 Builder 模式）
 func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entity.UserLLMConfig, userID uint, sourceIDs []uint) (*chat.ChatAgent, error) {
 	logger.Info("[Agent] 创建 ChatAgent",
 		zap.Uint("userID", userID),
@@ -255,19 +250,17 @@ func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entit
 	sourceNames := s.getSourceNames(sourceIDs)
 
 	logger.Debug("[Agent] AI 模型创建成功，开始创建 ChatAgent")
-	agent, err := chat.NewChatAgent(
-		ctx,
-		chatModel,
-		s.conversationRepo,
-		s.messageRepo,
-		s.cache,
-		s.retriever,
-		s.sourceRepo,
-		s.summaryCache,
-		userID,
-		sourceIDs,
-		sourceNames,
-	)
+
+	// 使用 Builder 模式构建 ChatAgent
+	agent, err := chat.NewChatAgentBuilder(ctx).
+		WithLLM(chatModel).
+		WithUserID(userID).
+		WithSources(sourceIDs, sourceNames).
+		WithRetriever(s.retriever).
+		WithSourceRepo(s.sourceRepo).
+		WithSummaryCache(s.summaryCache).
+		WithContextRepos(s.conversationRepo, s.messageRepo, s.cache).
+		Build()
 	if err != nil {
 		logger.Error("[Agent] 创建 ChatAgent 失败", zap.Error(err))
 		return nil, err
