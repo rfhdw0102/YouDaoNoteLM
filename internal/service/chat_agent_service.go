@@ -19,7 +19,6 @@ import (
 	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/repository"
 	"YoudaoNoteLm/pkg/cache"
-	"YoudaoNoteLm/pkg/config"
 	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/logger"
 	"YoudaoNoteLm/pkg/utils"
@@ -38,14 +37,9 @@ type chatAgentService struct {
 	summaryCache     *cache.SourceSummaryCache
 	cancelFuncs      sync.Map
 	encryptionKey    []byte
-	youdaoAgent      chat.SubAgentBuilder     // 主从协同：有道云笔记子 agent（nil 时不挂载）
-	searchAgent      chat.SearchAgentExecutor // 主从协同：搜索子 agent（nil 时不挂载）
-	generationSvc    GenerationService        // 主从协同：生成服务（nil 时不挂载生成 tool）
 }
 
 // NewChatAgentService 创建 Agent 对话服务
-// youdaoAgent/searchAgent 为主从协同模式的子 agent 构建器，可为 nil（开关关闭时不用）
-// generationSvc 为生成服务，可为 nil（不挂载生成触发 tool）
 func NewChatAgentService(
 	llmConfigRepo repository.UserLLMConfigRepository,
 	retriever rag.RAGRetriever,
@@ -55,9 +49,6 @@ func NewChatAgentService(
 	sourceRepo repository.SourceRepository,
 	summaryCache *cache.SourceSummaryCache,
 	encryptionKey string,
-	youdaoAgent chat.SubAgentBuilder,
-	searchAgent chat.SearchAgentExecutor,
-	generationSvc GenerationService,
 ) ChatAgentService {
 	return &chatAgentService{
 		llmConfigRepo:    llmConfigRepo,
@@ -68,51 +59,12 @@ func NewChatAgentService(
 		sourceRepo:       sourceRepo,
 		summaryCache:     summaryCache,
 		encryptionKey:    []byte(encryptionKey),
-		youdaoAgent:      youdaoAgent,
-		searchAgent:      searchAgent,
-		generationSvc:    generationSvc,
 	}
-}
-
-// AdaptSearchAgent 将 SearchAgentInterface 适配为 chat.SearchAgentExecutor，
-// 解决 chan *service.SearchAgentEvent 与 chan *chat.SearchEvent 类型不兼容的问题。
-func AdaptSearchAgent(sa SearchAgentInterface) chat.SearchAgentExecutor {
-	return &searchAgentAdapter{sa: sa}
-}
-
-type searchAgentAdapter struct {
-	sa SearchAgentInterface
-}
-
-func (a *searchAgentAdapter) ExecuteStream(ctx context.Context, userID, notebookID uint, task string) <-chan *chat.SearchEvent {
-	outCh := make(chan *chat.SearchEvent, 16)
-	go func() {
-		defer close(outCh)
-		for evt := range a.sa.ExecuteStream(ctx, userID, notebookID, task) {
-			outCh <- &chat.SearchEvent{
-				Type:         evt.Type,
-				Content:      evt.Content,
-				SearchRounds: evt.SearchRounds,
-				Error:        evt.Error,
-				ErrorCode:    evt.ErrorCode,
-			}
-		}
-	}()
-	return outCh
 }
 
 // ProcessMessageWithAgent 使用 Agent 处理消息
 func (s *chatAgentService) ProcessMessageWithAgent(ctx context.Context, req *request.ProcessMessageRequest) (<-chan chat.StreamEvent, error) {
-	// 1. 校验资料来源（主从协同模式开启时可不选资料，由主 agent 路由到搜索/有道等能力）
-	mainAgentEnabled := false
-	if cfg := config.Get(); cfg != nil {
-		mainAgentEnabled = cfg.Agent.MainAgentEnabled
-	}
-	if !mainAgentEnabled && len(req.SourceIDs) == 0 {
-		return nil, bizerrors.New(bizerrors.CodeBadRequest, "请先选中资料再进行提问")
-	}
-
-	// 2. 准备/校验对话
+	// 1. 准备/校验对话（资料校验延后到工具调用时）
 	conversationID, err := s.prepareConversation(ctx, req)
 	if err != nil {
 		return nil, err
@@ -129,29 +81,27 @@ func (s *chatAgentService) ProcessMessageWithAgent(ctx context.Context, req *req
 	s.cancelFuncs.Store(conversationID, cancel)
 
 	// 4. 启动 goroutine 处理
-	// eventCh 是 SSE 事件通道，主 agent 和后台任务（搜索/生成）都往里写。
-	// 流程：主 agent 完成 → 立即释放锁 → 后台任务继续向 eventCh 写入 → bgWg 完成 → close(eventCh) → SSE 流结束。
 	eventCh := make(chan chat.StreamEvent, 64)
-	var bgWg sync.WaitGroup // 后台任务注册，服务 goroutine 等待完成再 close
 
 	go func() {
-		// 保证 goroutine 退出时关闭 eventCh（SSE 流结束）
-		defer close(eventCh)
+		// recover 防止 panic 导致服务崩溃）
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("[Agent] goroutine panic recovered", zap.Uint("conversationID", conversationID), zap.Any("panic", r))
+				// 发送错误事件给前端
+				select {
+				case eventCh <- chat.StreamEvent{Type: chat.EventError, Content: "服务内部错误"}:
+				default:
+				}
+			}
+		}()
+		defer func() {
+			s.cancelFuncs.Delete(conversationID)
+			s.cache.ReleaseLock(context.Background(), conversationID, lockValue)
+			close(eventCh)
+		}()
 
-		// 把 bgWg 注入 context，触发工具用 GetBgWaitGroup 读取并注册
-		processCtx = chat.WithBgWaitGroup(processCtx, &bgWg)
 		s.processWithAgentAsync(processCtx, conversationID, req, eventCh)
-
-		// 主 agent 完成，立即释放锁（不等后台任务，用户可发新消息）
-		s.cancelFuncs.Delete(conversationID)
-		if err := s.cache.ReleaseLock(context.Background(), conversationID, lockValue); err != nil {
-			logger.Warn("[Agent] 释放锁失败", zap.Uint("conversationID", conversationID), zap.Error(err))
-		} else {
-			logger.Info("[Agent] 锁已释放，用户可继续对话", zap.Uint("conversationID", conversationID))
-		}
-
-		// SSE 流保持开放：后台搜索/生成 goroutine 仍在向 eventCh 发送事件
-		bgWg.Wait()
 	}()
 
 	return eventCh, nil
@@ -198,7 +148,7 @@ func (s *chatAgentService) acquireLock(ctx context.Context, conversationID uint)
 }
 
 // processWithAgentAsync 异步处理 Agent 消息
-func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversationID uint, req *request.ProcessMessageRequest, eventCh chan<- chat.StreamEvent) *chat.ChatAgent {
+func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversationID uint, req *request.ProcessMessageRequest, eventCh chan<- chat.StreamEvent) {
 	logger.Info("[Agent] ====== 开始处理消息 ======",
 		zap.Uint("conversationID", conversationID),
 		zap.Uint("userID", req.UserID),
@@ -214,7 +164,7 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 	}); err != nil {
 		logger.Error("[Agent] 保存用户消息失败", zap.Error(err))
 		s.sendAgentError(eventCh, "保存消息失败")
-		return nil
+		return
 	}
 
 	//  获取 LLM 配置
@@ -222,15 +172,15 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 	if err != nil {
 		logger.Error("[Agent] 获取 LLM 配置失败", zap.Error(err))
 		s.sendAgentError(eventCh, "获取 AI 配置失败，请先在设置中配置 LLM 服务")
-		return nil
+		return
 	}
 
 	//  创建 ChatAgent
-	chatAgent, err := s.createChatAgent(ctx, llmConfig, req.UserID, req.NotebookID, req.SourceIDs)
+	chatAgent, err := s.createChatAgent(ctx, llmConfig, req.UserID, req.SourceIDs)
 	if err != nil {
 		logger.Error("[Agent] 创建 ChatAgent 失败", zap.Error(err))
 		s.sendAgentError(eventCh, err.Error())
-		return nil
+		return
 	}
 
 	//  调用 Process，直接转发事件
@@ -253,8 +203,6 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 			Data:    conversationID,
 		}
 	}
-
-	return chatAgent
 }
 
 // getLLMConfig 获取用户的 LLM 配置
@@ -279,8 +227,8 @@ func (s *chatAgentService) getLLMConfig(userID, llmConfigID uint) (*entity.UserL
 	return llmConfig, nil
 }
 
-// createChatAgent 创建 ChatAgent
-func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entity.UserLLMConfig, userID, notebookID uint, sourceIDs []uint) (*chat.ChatAgent, error) {
+// createChatAgent 创建 ChatAgent（使用 Builder 模式）
+func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entity.UserLLMConfig, userID uint, sourceIDs []uint) (*chat.ChatAgent, error) {
 	logger.Info("[Agent] 创建 ChatAgent",
 		zap.Uint("userID", userID),
 		zap.Uints("sourceIDs", sourceIDs),
@@ -298,74 +246,21 @@ func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entit
 		return nil, fmt.Errorf("创建 AI 模型失败: %w", err)
 	}
 
-	// 读取主从协同开关
-	mainAgentEnabled := false
-	if cfg := config.Get(); cfg != nil {
-		mainAgentEnabled = cfg.Agent.MainAgentEnabled
-	}
-
-	// fallback：主从协同模式下 sourceIds 为空时，自动查询该笔记本下所有就绪资料
-	// 防止前端竞态（用户选中资料后立即发消息，状态未同步）导致 agent 收到空列表
-	if mainAgentEnabled && len(sourceIDs) == 0 && notebookID > 0 {
-		sources, err := s.sourceRepo.FindReadyByNotebookID(notebookID)
-		if err != nil {
-			logger.Warn("[Agent] fallback 查询就绪资料失败", zap.Error(err))
-		} else if len(sources) > 0 {
-			sourceIDs = make([]uint, 0, len(sources))
-			for _, src := range sources {
-				sourceIDs = append(sourceIDs, src.ID)
-			}
-			logger.Info("[Agent] fallback: 自动使用笔记本下就绪资料",
-				zap.Uint("notebookID", notebookID),
-				zap.Int("count", len(sourceIDs)),
-			)
-		}
-	}
-
-	// 获取资料名称映射（在 fallback 之后，确保包含 fallback 查到的资料）
+	// 获取资料名称映射
 	sourceNames := s.getSourceNames(sourceIDs)
 
-	// 把 GenerationService 包装成 chat.GenerateFunc（解耦，避免 chat 包导入 service 包）
-	var generateFn chat.GenerateFunc
-	if s.generationSvc != nil {
-		generateFn = func(ctx context.Context, userID, notebookID uint, markdown, genType, prompt string, sourceIDs []uint) (string, error) {
-			resp, err := s.generationSvc.Generate(ctx, &GenerationRequest{
-				UserID:       userID,
-				NotebookID:   notebookID,
-				Markdown:     markdown,
-				Type:         GenerationType(genType),
-				Prompt:       prompt,
-				SourceIDs:    sourceIDs,
-				UseWeb:       true,
-				AllowDegrade: true,
-			})
-			if err != nil {
-				return "", err
-			}
-			return resp.Content, nil
-		}
-	}
+	logger.Debug("[Agent] AI 模型创建成功，开始创建 ChatAgent")
 
-	logger.Debug("[Agent] AI 模型创建成功，开始创建 ChatAgent",
-		zap.Bool("mainAgentEnabled", mainAgentEnabled))
-	agent, err := chat.NewChatAgent(
-		ctx,
-		chatModel,
-		s.conversationRepo,
-		s.messageRepo,
-		s.cache,
-		s.retriever,
-		s.sourceRepo,
-		s.summaryCache,
-		userID,
-		notebookID,
-		sourceIDs,
-		sourceNames,
-		s.youdaoAgent,
-		s.searchAgent,
-		generateFn,
-		mainAgentEnabled,
-	)
+	// 使用 Builder 模式构建 ChatAgent
+	agent, err := chat.NewChatAgentBuilder(ctx).
+		WithLLM(chatModel).
+		WithUserID(userID).
+		WithSources(sourceIDs, sourceNames).
+		WithRetriever(s.retriever).
+		WithSourceRepo(s.sourceRepo).
+		WithSummaryCache(s.summaryCache).
+		WithContextRepos(s.conversationRepo, s.messageRepo, s.cache).
+		Build()
 	if err != nil {
 		logger.Error("[Agent] 创建 ChatAgent 失败", zap.Error(err))
 		return nil, err
@@ -392,10 +287,9 @@ func (s *chatAgentService) getSourceNames(sourceIDs []uint) map[uint]string {
 	return names
 }
 
-// processAndForward 调用 Process 并转发事件，返回完整内容。
-// eventCh 是服务层的 SSE 事件通道，传给 Process 用于后台任务（搜索/生成）直接写入。
+// processAndForward 调用 Process 并转发事件，返回完整内容
 func (s *chatAgentService) processAndForward(ctx context.Context, chatAgent *chat.ChatAgent, conversationID uint, content string, eventCh chan<- chat.StreamEvent) string {
-	agentEventCh := chatAgent.Process(ctx, conversationID, content, eventCh)
+	agentEventCh := chatAgent.Process(ctx, conversationID, content)
 
 	var fullContent string
 	for {

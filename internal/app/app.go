@@ -2,7 +2,6 @@ package app
 
 import (
 	searchAgent "YoudaoNoteLm/internal/agent/search"
-	youdaoAgent "YoudaoNoteLm/internal/agent/youdao"
 	"YoudaoNoteLm/internal/api"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/rag"
@@ -286,12 +285,9 @@ func (a *App) initDependencies() {
 	youdaoBindingRepo := repository.NewYoudaoBindingRepository(a.mysqlDB)
 	youdaoSvc := service.NewYoudaoService(youdaoCLI, youdaoBindingRepo, sourceRepo, ingestionSvc, a.cfg.External.Youdao.CookiesPath, structurer, configSvc, sourceSummaryCache)
 
-	// 创建搜索 Agent（只搜索，不自动导入）
-	searchAgentInst := searchAgent.NewSearchAgent(configSvc)
+	// 创建搜索 Agent（import_document 是公共工具，search agent 只用 url 来源，不依赖 youdao）
+	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc)
 	searchAgentSvc := service.NewSearchAgentService(configSvc, importerSvc, searchAgentInst)
-
-	// 创建有道云笔记 Agent（主从协同模式挂载为 ChatAgent 的子 agent tool）
-	youdaoAgentInst := youdaoAgent.NewYoudaoAgent(configSvc, youdaoSvc, youdaoCLI, importerSvc)
 
 	// 创建生成服务（SearchService 暂为 nil，后续可接入）
 	var generationMemory service.GenerationMemoryStore
@@ -301,7 +297,7 @@ func (a *App) initDependencies() {
 	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory, a.cfg.Security.EncryptionKey)
 
 	// 创建 ChatAgentService 和 ConversationService
-	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache, sourceRepo, sourceSummaryCache, a.cfg.Security.EncryptionKey, youdaoAgentInst, service.AdaptSearchAgent(searchAgentInst), generationSvc)
+	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache, sourceRepo, sourceSummaryCache, a.cfg.Security.EncryptionKey)
 	convSvc := service.NewConversationService(conversationRepo, messageRepo, chatCache)
 	logger.Info("ChatAgentService 初始化成功")
 	logger.Info("ConversationService 初始化成功")

@@ -56,6 +56,7 @@ func (ctrl *Controller) TestConfig(c *gin.Context) {
 		APIKey:      req.APIKey,
 		APIURL:      req.APIURL,
 		Model:       req.Model,
+		Dimensions:  req.Dimensions,
 		ExtraConfig: string(req.ExtraConfig),
 	}
 
