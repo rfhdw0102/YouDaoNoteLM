@@ -159,6 +159,7 @@ func (b *ChatAgentBuilder) Build() (*ChatAgent, error) {
 		},
 		MaxIterations:    b.maxIterations,
 		ModelRetryConfig: buildRetryConfig(),
+		Handlers:         []adk.ChatModelAgentMiddleware{newMetricsHandler()},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("创建 ChatModelAgent 失败: %w", err)
