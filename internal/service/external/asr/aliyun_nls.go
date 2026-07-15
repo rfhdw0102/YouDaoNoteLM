@@ -338,7 +338,7 @@ func (s *aliyunNLSASRService) pollResult(taskID string) (string, error) {
 			if input == "" {
 				input = statusText
 			}
-			return "", fmt.Errorf("ASR转写失败: %s", friendlyASRError(input))
+			return "", fmt.Errorf("%s", friendlyASRError(input))
 		}
 	}
 
@@ -358,6 +358,7 @@ func friendlyASRError(input string) string {
 	}{
 		{"USER_BIZDURATION_QUOTA_EXCEED", "阿里云语音识别时长额度已用尽，请前往阿里云控制台购买时长包或升级商用版"},
 		{"USER_FILE_DOWNLOAD_FAIL", "阿里云无法下载音频文件，请检查音频 URL 是否可公网访问"},
+		{"FILE_DOWNLOAD_FAILED", "阿里云无法下载音频文件，请检查音频 URL 是否可公网访问"},
 		{"USER_FILE_SIZE_EXCEED", "音频文件过大（超过 512MB 限制），请压缩或截取后再上传"},
 		{"USER_FILE_TOO_LONG", "音频文件时长过长（超过 12 小时限制），请截取后再上传"},
 		{"USER_FILE_UNSUPPORTED", "音频文件格式不支持，请转换为 WAV/MP3/M4A 等常见格式"},

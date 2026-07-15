@@ -58,17 +58,26 @@ func extractMarkdownHeadings(markdown string, limit int) []string {
 }
 
 func extractGenerationKeywords(prompt, markdown string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
 	candidates := append([]string{}, splitKeywordCandidates(prompt)...)
-	for _, line := range strings.Split(markdown, "\n") {
-		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#-*0123456789. "))
+
+	var headingLines []string
+	var contentLines []string
+	for _, rawLine := range strings.Split(markdown, "\n") {
+		trimmed := strings.TrimSpace(rawLine)
+		line := strings.TrimSpace(strings.TrimLeft(trimmed, "#-*0123456789. "))
 		if line == "" {
 			continue
 		}
-		candidates = append(candidates, splitKeywordCandidates(line)...)
-		if len(candidates) >= limit*3 {
-			break
+		if strings.HasPrefix(trimmed, "#") {
+			headingLines = append(headingLines, line)
 		}
+		contentLines = append(contentLines, line)
 	}
+	candidates = appendKeywordLineCandidates(candidates, headingLines, limit)
+	candidates = appendKeywordLineCandidates(candidates, contentLines, limit*2)
 
 	seen := map[string]struct{}{}
 	keywords := make([]string, 0, limit)
@@ -87,6 +96,35 @@ func extractGenerationKeywords(prompt, markdown string, limit int) []string {
 		}
 	}
 	return keywords
+}
+
+func appendKeywordLineCandidates(candidates []string, lines []string, limit int) []string {
+	for _, index := range balancedSampleIndexes(len(lines), limit) {
+		candidates = append(candidates, splitKeywordCandidates(lines[index])...)
+	}
+	return candidates
+}
+
+func balancedSampleIndexes(count, limit int) []int {
+	if count <= 0 || limit <= 0 {
+		return nil
+	}
+	if limit > count {
+		limit = count
+	}
+	indexes := make([]int, 0, limit)
+	seen := map[int]struct{}{}
+	for step := 1; len(indexes) < limit && step <= count*2; step *= 2 {
+		for i := 0; i <= step && len(indexes) < limit; i++ {
+			index := (i*(count-1) + step/2) / step
+			if _, ok := seen[index]; ok {
+				continue
+			}
+			seen[index] = struct{}{}
+			indexes = append(indexes, index)
+		}
+	}
+	return indexes
 }
 
 func splitKeywordCandidates(value string) []string {
