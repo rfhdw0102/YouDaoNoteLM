@@ -76,18 +76,6 @@ func (s *searchAgentService) ImportSearchResults(userID, notebookID uint, items 
 	return s.importer.ImportSearchResults(userID, notebookID, items)
 }
 
-// SearchAndImport 搜索并自动导入（主Agent调用模式）
-func (s *searchAgentService) SearchAndImport(ctx context.Context, userID, notebookID uint, query string) (*response.SearchResponse, error) {
-	// 执行 Agent（自动导入模式）
-	result, err := s.searchAgent.ExecuteWithImport(ctx, userID, notebookID, query)
-	if err != nil {
-		return nil, err
-	}
-
-	// 解析 Agent 结果为 SearchResponse
-	return parseAgentResult(result.Content, result.SearchRounds)
-}
-
 // parseAgentResult 解析 Agent 返回的内容为 SearchResponse
 func parseAgentResult(content string, searchRounds int) (*response.SearchResponse, error) {
 	// 尝试从 Agent 回复中提取 JSON 代码块
