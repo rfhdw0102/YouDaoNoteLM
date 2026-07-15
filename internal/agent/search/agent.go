@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"regexp"
+	"fmt"
+	"strings"
 	"time"
 
-	agentTools "YoudaoNoteLm/internal/agent/tools"
 	"YoudaoNoteLm/internal/llm"
 	"YoudaoNoteLm/internal/service"
 	"YoudaoNoteLm/pkg/config"
@@ -36,11 +36,50 @@ func extractBizError(err error) *bizerrors.BizError {
 	return nil
 }
 
-// jsonBlockRegexp 匹配 ```json ... ``` 或 ``` ... ``` 代码块
-var jsonBlockRegexp = regexp.MustCompile("(?s)```(?:json)?\\s*([\\s\\S]*?)```")
+// cancelTrigger 根据 ctx.Err() 返回取消触发原因。
+// 前端关闭搜索面板（AbortController.abort）和客户端网络断开在 ctx 层面都是 Canceled，
+// 语义上都是"放弃结果"，统一归类为 user_cancel。
+func cancelTrigger(ctx context.Context) string {
+	switch ctx.Err() {
+	case context.DeadlineExceeded:
+		return "timeout"
+	case context.Canceled:
+		return "user_cancel"
+	default:
+		return ""
+	}
+}
 
-// jsonObjRegexp 兜底：从文本中提取第一个 JSON 对象
-var jsonObjRegexp = regexp.MustCompile(`(?s)\{.*\}`)
+// cancelModeString 将 adk.CancelMode 转为可读字符串。
+func cancelModeString(m adk.CancelMode) string {
+	switch m {
+	case adk.CancelImmediate:
+		return "immediate"
+	case adk.CancelAfterChatModel:
+		return "after_chat_model"
+	case adk.CancelAfterToolCalls:
+		return "after_tool_calls"
+	default:
+		return fmt.Sprintf("combined(%d)", int(m))
+	}
+}
+
+// waitResultString 将 CancelHandle.Wait() 的返回值转为可读字符串。
+//   - nil: 取消成功，agent 在安全点停下
+//   - ErrCancelTimeout: 安全点等待超时，已升级为 immediate
+//   - ErrExecutionEnded: agent 已自然结束，本次取消未生效（contributed=false）
+func waitResultString(err error) string {
+	switch {
+	case err == nil:
+		return "succeeded"
+	case errors.Is(err, adk.ErrCancelTimeout):
+		return "cancel_timeout_escalated"
+	case errors.Is(err, adk.ErrExecutionEnded):
+		return "execution_ended"
+	default:
+		return err.Error()
+	}
+}
 
 // verifyFinalResultCount 硬约束（结果检查）：从最终回复内容中解析 JSON 并校验 results 数量是否为 10
 // 仅记录告警，不修改内容；流式场景下内容已发出，此处用于事后排查
@@ -49,26 +88,13 @@ func verifyFinalResultCount(content string) {
 		return
 	}
 
-	jsonStr := ""
-	if match := jsonBlockRegexp.FindStringSubmatch(content); match != nil {
-		jsonStr = match[1]
-	} else if match := jsonObjRegexp.FindStringSubmatch(content); match != nil {
-		jsonStr = match[0] // jsonObjRegexp 无捕获组，match[0] 为完整 {...} 匹配
-	} else {
-		jsonStr = content
-	}
-
-	var parsed struct {
-		Results []interface{} `json:"results"`
-	}
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+	got, ok := searchResultCount(content)
+	if !ok {
 		logger.Warn("结果校验：JSON 解析失败，跳过数量校验",
-			zap.Error(err),
+			zap.String("reason", "未找到包含 results 的 JSON 对象"),
 		)
 		return
 	}
-
-	got := len(parsed.Results)
 	if got != requiredResultCount {
 		logger.Warn("结果校验：最终 results 数量不符合要求",
 			zap.Int("got", got),
@@ -79,47 +105,57 @@ func verifyFinalResultCount(content string) {
 	}
 }
 
+func searchResultCount(content string) (int, bool) {
+	best := 0
+	found := false
+	for offset := 0; offset < len(content); {
+		rel := strings.IndexByte(content[offset:], '{')
+		if rel < 0 {
+			break
+		}
+		start := offset + rel
+		var parsed struct {
+			Results []json.RawMessage `json:"results"`
+		}
+		if err := json.NewDecoder(strings.NewReader(content[start:])).Decode(&parsed); err == nil && parsed.Results != nil {
+			best = len(parsed.Results)
+			found = true
+		}
+		offset = start + 1
+	}
+	return best, found
+}
+
 // SearchAgent 搜索 Agent（基于 Eino 框架）
 type SearchAgent struct {
 	configService service.ConfigService
-	importer      service.ImporterService
 	limiter       *userLimiter // per-user 并发限流（eino 未提供，自行实现）
 }
 
 // NewSearchAgent 创建搜索 Agent
-func NewSearchAgent(
-	configService service.ConfigService,
-	importer service.ImporterService,
-) *SearchAgent {
+func NewSearchAgent(configService service.ConfigService) *SearchAgent {
 	maxConcurrent := 1
 	if cfg := config.Get(); cfg != nil && cfg.Agent.MaxConcurrent > 0 {
 		maxConcurrent = cfg.Agent.MaxConcurrent
 	}
 	return &SearchAgent{
 		configService: configService,
-		importer:      importer,
 		limiter:       newUserLimiter(maxConcurrent), // per-user 并发上限（可配置，默认 1）
 	}
 }
 
 // agentRunParams 返回运行参数（config 零值时用代码内默认值，无需在 yaml 配置）
-func (a *SearchAgent) agentRunParams() (maxIter, importMaxIter int, execTimeout, execImportTimeout, cancelTimeout time.Duration) {
-	maxIter = 4
-	importMaxIter = 5
+func (a *SearchAgent) agentRunParams() (maxIter int, execTimeout, cancelTimeout time.Duration) {
+	maxIter = 6
 	execTimeout = 3 * time.Minute
-	execImportTimeout = 5 * time.Minute
 	cancelTimeout = 5 * time.Second
 	if cfg := config.Get(); cfg != nil {
 		ac := cfg.Agent
 		if ac.MaxIterations > 0 {
 			maxIter = ac.MaxIterations
-			importMaxIter = ac.MaxIterations + 1
 		}
 		if ac.ExecuteTimeout > 0 {
 			execTimeout = ac.ExecuteTimeout
-		}
-		if ac.ExecuteWithImportTimeout > 0 {
-			execImportTimeout = ac.ExecuteWithImportTimeout
 		}
 		if ac.CancelTimeout > 0 {
 			cancelTimeout = ac.CancelTimeout
@@ -150,28 +186,17 @@ func (a *SearchAgent) createTools() ([]tool.BaseTool, error) {
 	return tools, nil
 }
 
-// createToolsWithImport 创建搜索 Agent 的工具列表（web_search + import_document，自动导入模式）
-func (a *SearchAgent) createToolsWithImport() ([]tool.BaseTool, error) {
-	tools := make([]tool.BaseTool, 0, 2)
-
-	webSearchTool, err := NewWebSearchTool(a.configService)
-	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "创建 web_search 工具失败", err)
-	}
-	tools = append(tools, webSearchTool)
-
-	// 统一导入工具（替代旧的 import_urls）；search agent 只用 url 来源，不依赖 youdao
-	importDocTool, err := agentTools.NewImportDocumentTool(nil, a.importer)
-	if err != nil {
-		return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "创建 import_document 工具失败", err)
-	}
-	tools = append(tools, importDocTool)
-
-	return tools, nil
+// InjectContext 注入子 agent 工具执行所需的 userID context（实现 chat.SubAgentBuilder 接口）。
+// 主 agent 通过 NewAgentTool 调用子 agent 时，context 缺 search 包的 userID，
+// 会导致 web_search 工具读不到用户搜索引擎配置。此处补注入。
+func (a *SearchAgent) InjectContext(ctx context.Context, userID uint) context.Context {
+	ctx = WithUserID(ctx, userID) // search 包的 context key（web_search 工具用 GetUserID 读取）
+	return ctx
 }
 
-// createAgent 创建 Eino Agent（用户交互模式：只搜索不自动导入）
-func (a *SearchAgent) createAgent(ctx context.Context, userID uint) (*adk.ChatModelAgent, error) {
+// BuildAgent 创建 Eino Agent（用户交互模式：只搜索不自动导入）。
+// 导出供主 Agent 通过 adk.NewAgentTool 包装调用。
+func (a *SearchAgent) BuildAgent(ctx context.Context, userID uint) (*adk.ChatModelAgent, error) {
 	chatModel, err := a.createChatModel(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -182,7 +207,7 @@ func (a *SearchAgent) createAgent(ctx context.Context, userID uint) (*adk.ChatMo
 		return nil, err
 	}
 
-	maxIter, _, _, _, _ := a.agentRunParams()
+	maxIter, _, _ := a.agentRunParams()
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        "SearchAgent",
 		Description: "网络搜索助手，帮助用户搜索和分析网络内容",
@@ -194,35 +219,6 @@ func (a *SearchAgent) createAgent(ctx context.Context, userID uint) (*adk.ChatMo
 			},
 		},
 		MaxIterations:    maxIter, // 2 轮搜索 + 最终回复 + 余量
-		ModelRetryConfig: buildRetryConfig(),
-		Handlers:         []adk.ChatModelAgentMiddleware{newMetricsHandler()},
-	})
-}
-
-// createAgentWithImport 创建 Eino Agent（自动导入模式：搜索并自动导入）
-func (a *SearchAgent) createAgentWithImport(ctx context.Context, userID uint) (*adk.ChatModelAgent, error) {
-	chatModel, err := a.createChatModel(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	tools, err := a.createToolsWithImport()
-	if err != nil {
-		return nil, err
-	}
-
-	_, importMaxIter, _, _, _ := a.agentRunParams()
-	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-		Name:        "SearchAndImportAgent",
-		Description: "网络搜索助手，帮助用户搜索并自动导入网络内容",
-		Instruction: SearchAndImportSystemPrompt,
-		Model:       chatModel,
-		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: tools,
-			},
-		},
-		MaxIterations:    importMaxIter, // 2 轮搜索 + 导入 + 最终回复 + 余量
 		ModelRetryConfig: buildRetryConfig(),
 		Handlers:         []adk.ChatModelAgentMiddleware{newMetricsHandler()},
 	})
@@ -243,13 +239,10 @@ func buildRetryConfig() *adk.ModelRetryConfig {
 }
 
 // Execute 执行搜索任务（非流式）
-func (a *SearchAgent) Execute(ctx context.Context, userID, notebookID uint, task string) (*service.SearchAgentResult, error) {
+func (a *SearchAgent) Execute(ctx context.Context, userID, _ uint, task string) (*service.SearchAgentResult, error) {
 	ctx = WithUserID(ctx, userID)
-	ctx = WithNotebookID(ctx, notebookID)
-	ctx = agentTools.WithUserID(ctx, userID)
-	ctx = agentTools.WithNotebookID(ctx, notebookID)
 
-	_, _, execTimeout, _, cancelTimeout := a.agentRunParams()
+	_, execTimeout, cancelTimeout := a.agentRunParams()
 	ctx, cancel := context.WithTimeout(ctx, execTimeout)
 	defer cancel()
 
@@ -260,7 +253,7 @@ func (a *SearchAgent) Execute(ctx context.Context, userID, notebookID uint, task
 	}
 	defer release()
 
-	agent, err := a.createAgent(ctx, userID)
+	agent, err := a.BuildAgent(ctx, userID)
 	if err != nil {
 		logger.Error("创建搜索 Agent 失败",
 			zap.Uint("user_id", userID),
@@ -274,11 +267,33 @@ func (a *SearchAgent) Execute(ctx context.Context, userID, notebookID uint, task
 		EnableStreaming: false,
 	})
 
-	// 中断传播：eino 的 iter.Next() 不响应 ctx，必须用 adk.WithCancel() 才能让迭代器在客户端断开时退出
+	// 中断传播：eino 的 iter.Next() 不响应 ctx，必须用 adk.WithCancel() 才能让迭代器在客户端断开时退出。
+	// 保留 CancelHandle 并异步 Wait() 收集取消结局（nil/ErrCancelTimeout/ErrExecutionEnded），
+	// 同时记录 contributed（本次取消是否实际生效）。
 	cancelOpt, cancelFn := adk.WithCancel()
 	go func() {
 		<-ctx.Done()
-		cancelFn(adk.WithAgentCancelMode(adk.CancelAfterChatModel), adk.WithRecursive(), adk.WithAgentCancelTimeout(cancelTimeout))
+		handle, contributed := cancelFn(
+			adk.WithAgentCancelMode(adk.CancelAfterChatModel),
+			adk.WithRecursive(),
+			adk.WithAgentCancelTimeout(cancelTimeout),
+		)
+		go func() {
+			waitErr := handle.Wait()
+			if contributed {
+				logger.Info("搜索 Agent 取消操作结局",
+					zap.String("trigger", cancelTrigger(ctx)),
+					zap.Bool("contributed", contributed),
+					zap.String("wait_result", waitResultString(waitErr)),
+				)
+			} else {
+				// contributed=false：取消未生效（agent 已自然结束，defer cancel 触发的桥接），降级 Debug 避免噪音
+				logger.Debug("搜索 Agent 取消操作结局（未生效）",
+					zap.String("trigger", cancelTrigger(ctx)),
+					zap.String("wait_result", waitResultString(waitErr)),
+				)
+			}
+		}()
 	}()
 
 	searchRounds := 0
@@ -293,16 +308,40 @@ func (a *SearchAgent) Execute(ctx context.Context, userID, notebookID uint, task
 		}
 
 		if event.Err != nil {
+			// 优先识别 ADK 取消错误：拿到 Mode/Escalated/Timeout 这些 ctx.Err() 拿不到的信息
+			var cancelErr *adk.CancelError
+			if errors.As(event.Err, &cancelErr) {
+				trigger := cancelTrigger(ctx)
+				logger.Info("搜索 Agent 被取消",
+					zap.String("trigger", trigger),
+					zap.String("mode", cancelModeString(cancelErr.Info.Mode)),
+					zap.Bool("escalated", cancelErr.Info.Escalated),
+					zap.Bool("timeout", cancelErr.Info.Timeout),
+				)
+				if trigger == "timeout" {
+					return nil, bizerrors.NewWithErr(bizerrors.CodeSearchAgentTimeout, "搜索超时，请稍后重试", ctx.Err())
+				}
+				// user_cancel：用户主动关闭搜索面板，返回 ctx.Err() 让上层感知
+				return nil, ctx.Err()
+			}
+			// 兜底：ctx 已取消但 ADK 还没投递 CancelError（如 immediate 中断 stream 的边界情况）
 			if ctx.Err() != nil {
-				logger.Error("Agent 执行超时", zap.Error(ctx.Err()))
-				return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "搜索超时，请稍后重试", ctx.Err())
+				trigger := cancelTrigger(ctx)
+				logger.Info("搜索 Agent 因 ctx 取消退出（未收到 CancelError）",
+					zap.String("trigger", trigger),
+					zap.Error(event.Err),
+				)
+				if trigger == "timeout" {
+					return nil, bizerrors.NewWithErr(bizerrors.CodeSearchAgentTimeout, "搜索超时，请稍后重试", ctx.Err())
+				}
+				return nil, ctx.Err()
 			}
 			logger.Error("Agent 执行错误", zap.Error(event.Err))
 			// 保留工具返回的业务错误码（如搜索引擎未配置、API Key 无效等），便于前端精确提示
 			if bizErr := extractBizError(event.Err); bizErr != nil {
 				return nil, bizErr
 			}
-			return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "Agent 执行失败", event.Err)
+			return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "搜索服务暂时不可用，请稍后重试", event.Err)
 		}
 
 		if event.Output == nil || event.Output.MessageOutput == nil {
@@ -311,7 +350,11 @@ func (a *SearchAgent) Execute(ctx context.Context, userID, notebookID uint, task
 
 		msg, err := event.Output.MessageOutput.GetMessage()
 		if err != nil {
-			logger.Warn("获取消息失败", zap.Error(err))
+			if ctx.Err() != nil {
+				logger.Debug("获取消息失败（ctx 已取消）", zap.Error(err))
+			} else {
+				logger.Warn("获取消息失败", zap.Error(err))
+			}
 			continue
 		}
 
@@ -356,18 +399,15 @@ func (a *SearchAgent) Execute(ctx context.Context, userID, notebookID uint, task
 }
 
 // ExecuteStream 执行搜索任务（流式返回）
-func (a *SearchAgent) ExecuteStream(ctx context.Context, userID, notebookID uint, task string) <-chan *service.SearchAgentEvent {
+func (a *SearchAgent) ExecuteStream(ctx context.Context, userID, _ uint, task string) <-chan *service.SearchAgentEvent {
 	eventCh := make(chan *service.SearchAgentEvent, 16)
 
 	go func() {
 		defer close(eventCh)
 
 		ctx = WithUserID(ctx, userID)
-		ctx = WithNotebookID(ctx, notebookID)
-		ctx = agentTools.WithUserID(ctx, userID)
-		ctx = agentTools.WithNotebookID(ctx, notebookID)
 
-		_, _, execTimeout, _, cancelTimeout := a.agentRunParams()
+		_, execTimeout, cancelTimeout := a.agentRunParams()
 		ctx, cancel := context.WithTimeout(ctx, execTimeout)
 		defer cancel()
 
@@ -394,7 +434,7 @@ func (a *SearchAgent) ExecuteStream(ctx context.Context, userID, notebookID uint
 		}
 		defer release()
 
-		agent, err := a.createAgent(ctx, userID)
+		agent, err := a.BuildAgent(ctx, userID)
 		if err != nil {
 			logger.Error("创建搜索 Agent 失败",
 				zap.Uint("user_id", userID),
@@ -409,16 +449,42 @@ func (a *SearchAgent) ExecuteStream(ctx context.Context, userID, notebookID uint
 			return
 		}
 
+		if !send(&service.SearchAgentEvent{Type: "started"}) {
+			return
+		}
+
 		runner := adk.NewRunner(ctx, adk.RunnerConfig{
 			Agent:           agent,
 			EnableStreaming: true,
 		})
 
-		// 中断传播：eino 的 iter.Next() 不响应 ctx，必须用 adk.WithCancel() 才能让迭代器在客户端断开时退出
+		// 中断传播：eino 的 iter.Next() 不响应 ctx，必须用 adk.WithCancel() 才能让迭代器在客户端断开时退出。
+		// 保留 CancelHandle 并异步 Wait() 收集取消结局（nil/ErrCancelTimeout/ErrExecutionEnded），
+		// 同时记录 contributed（本次取消是否实际生效）。
 		cancelOpt, cancelFn := adk.WithCancel()
 		go func() {
 			<-ctx.Done()
-			cancelFn(adk.WithAgentCancelMode(adk.CancelAfterChatModel), adk.WithRecursive(), adk.WithAgentCancelTimeout(cancelTimeout))
+			handle, contributed := cancelFn(
+				adk.WithAgentCancelMode(adk.CancelAfterChatModel),
+				adk.WithRecursive(),
+				adk.WithAgentCancelTimeout(cancelTimeout),
+			)
+			go func() {
+				waitErr := handle.Wait()
+				if contributed {
+					logger.Info("搜索 Agent 取消操作结局",
+						zap.String("trigger", cancelTrigger(ctx)),
+						zap.Bool("contributed", contributed),
+						zap.String("wait_result", waitResultString(waitErr)),
+					)
+				} else {
+					// contributed=false：取消未生效（agent 已自然结束，defer cancel 触发的桥接），降级 Debug 避免噪音
+					logger.Debug("搜索 Agent 取消操作结局（未生效）",
+						zap.String("trigger", cancelTrigger(ctx)),
+						zap.String("wait_result", waitResultString(waitErr)),
+					)
+				}
+			}()
 		}()
 
 		iter := runner.Query(ctx, task, cancelOpt)
@@ -433,13 +499,42 @@ func (a *SearchAgent) ExecuteStream(ctx context.Context, userID, notebookID uint
 			}
 
 			if event.Err != nil {
+				// 优先识别 ADK 取消错误：拿到 Mode/Escalated/Timeout 这些 ctx.Err() 拿不到的信息
+				var cancelErr *adk.CancelError
+				if errors.As(event.Err, &cancelErr) {
+					trigger := cancelTrigger(ctx)
+					logger.Info("搜索 Agent 被取消",
+						zap.String("trigger", trigger),
+						zap.String("mode", cancelModeString(cancelErr.Info.Mode)),
+						zap.Bool("escalated", cancelErr.Info.Escalated),
+						zap.Bool("timeout", cancelErr.Info.Timeout),
+					)
+					if trigger == "timeout" {
+						// 真超时：前端可能还在等，发送超时错误事件
+						send(&service.SearchAgentEvent{Type: "error", ErrorCode: bizerrors.CodeSearchAgentTimeout, Error: "搜索超时，请稍后重试"})
+					}
+					// user_cancel：前端已断开（关面板），send 也会因 ctx.Done 返回 false，直接 return
+					return
+				}
+				// 兜底：ctx 已取消但 ADK 还没投递 CancelError（如 immediate 中断 stream 的边界情况）
 				if ctx.Err() != nil {
-					send(&service.SearchAgentEvent{Type: "error", Error: "搜索超时，请稍后重试"})
-				} else if bizErr := extractBizError(event.Err); bizErr != nil {
+					trigger := cancelTrigger(ctx)
+					logger.Info("搜索 Agent 因 ctx 取消退出（未收到 CancelError）",
+						zap.String("trigger", trigger),
+						zap.Error(event.Err),
+					)
+					if trigger == "timeout" {
+						send(&service.SearchAgentEvent{Type: "error", ErrorCode: bizerrors.CodeSearchAgentTimeout, Error: "搜索超时，请稍后重试"})
+					}
+					return
+				}
+				logger.Error("Agent 执行错误", zap.Error(event.Err))
+				if bizErr := extractBizError(event.Err); bizErr != nil {
 					// 保留工具返回的业务错误码（如搜索引擎未配置、API Key 无效等），便于前端精确提示
 					send(&service.SearchAgentEvent{Type: "error", ErrorCode: bizErr.Code, Error: bizErr.Message})
 				} else {
-					send(&service.SearchAgentEvent{Type: "error", Error: event.Err.Error()})
+					// 非业务错误（如 LLM 网络故障）：返回友好提示，原始错误已由上方 logger.Error 记录
+					send(&service.SearchAgentEvent{Type: "error", ErrorCode: bizerrors.CodeLLMCallFailed, Error: "搜索服务暂时不可用，请稍后重试"})
 				}
 				return
 			}
@@ -450,7 +545,11 @@ func (a *SearchAgent) ExecuteStream(ctx context.Context, userID, notebookID uint
 
 			msg, err := event.Output.MessageOutput.GetMessage()
 			if err != nil {
-				logger.Warn("获取消息失败", zap.Error(err))
+				if ctx.Err() != nil {
+					logger.Debug("获取消息失败（ctx 已取消）", zap.Error(err))
+				} else {
+					logger.Warn("获取消息失败", zap.Error(err))
+				}
 				continue
 			}
 
@@ -519,117 +618,4 @@ func (a *SearchAgent) ExecuteStream(ctx context.Context, userID, notebookID uint
 	}()
 
 	return eventCh
-}
-
-// ExecuteWithImport 执行搜索并自动导入任务（主Agent调用模式）
-func (a *SearchAgent) ExecuteWithImport(ctx context.Context, userID, notebookID uint, task string) (*service.SearchAgentResult, error) {
-	ctx = WithUserID(ctx, userID)
-	ctx = WithNotebookID(ctx, notebookID)
-	ctx = agentTools.WithUserID(ctx, userID)
-	ctx = agentTools.WithNotebookID(ctx, notebookID)
-
-	_, _, _, execImportTimeout, cancelTimeout := a.agentRunParams()
-	ctx, cancel := context.WithTimeout(ctx, execImportTimeout) // 自动导入模式给更长超时
-	defer cancel()
-
-	// per-user 限流
-	release, err := a.limiter.acquire(userID)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
-	agent, err := a.createAgentWithImport(ctx, userID)
-	if err != nil {
-		logger.Error("创建搜索导入 Agent 失败",
-			zap.Uint("user_id", userID),
-			zap.Error(err),
-		)
-		return nil, err
-	}
-
-	runner := adk.NewRunner(ctx, adk.RunnerConfig{
-		Agent:           agent,
-		EnableStreaming: false,
-	})
-
-	// 中断传播：客户端断开时让迭代器尽快退出
-	cancelOpt, cancelFn := adk.WithCancel()
-	go func() {
-		<-ctx.Done()
-		cancelFn(adk.WithAgentCancelMode(adk.CancelAfterChatModel), adk.WithRecursive(), adk.WithAgentCancelTimeout(cancelTimeout))
-	}()
-
-	searchRounds := 0
-	totalToolCalls := 0
-	var finalContent string
-
-	iter := runner.Query(ctx, task, cancelOpt)
-	for {
-		event, ok := iter.Next()
-		if !ok {
-			break
-		}
-
-		if event.Err != nil {
-			if ctx.Err() != nil {
-				logger.Error("Agent 执行超时", zap.Error(ctx.Err()))
-				return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "搜索超时，请稍后重试", ctx.Err())
-			}
-			logger.Error("Agent 执行错误", zap.Error(event.Err))
-			// 保留工具返回的业务错误码（如搜索引擎未配置、API Key 无效等），便于前端精确提示
-			if bizErr := extractBizError(event.Err); bizErr != nil {
-				return nil, bizErr
-			}
-			return nil, bizerrors.NewWithErr(bizerrors.CodeLLMCallFailed, "Agent 执行失败", event.Err)
-		}
-
-		if event.Output == nil || event.Output.MessageOutput == nil {
-			continue
-		}
-
-		msg, err := event.Output.MessageOutput.GetMessage()
-		if err != nil {
-			logger.Warn("获取消息失败", zap.Error(err))
-			continue
-		}
-
-		// 统计搜索轮数
-		if event.Output.MessageOutput.ToolName == "web_search" {
-			searchRounds++
-		}
-
-		// 获取最终内容（assistant 消息且无工具调用）
-		if msg.Role == schema.Assistant && len(msg.ToolCalls) == 0 {
-			finalContent = msg.Content
-		}
-
-		// 工具调用计数
-		if len(msg.ToolCalls) > 0 {
-			totalToolCalls++
-			if totalToolCalls > 5 { // 自动导入模式允许多一点轮数
-				logger.Warn("达到最大工具调用轮数，强制结束",
-					zap.Int("maxRounds", 5),
-					zap.Int("searchRounds", searchRounds),
-				)
-				if finalContent == "" {
-					finalContent = "搜索和导入已完成，但达到轮数限制。"
-				}
-				break
-			}
-		}
-	}
-
-	logger.Info("Agent 执行完成（自动导入模式）",
-		zap.Int("searchRounds", searchRounds),
-		zap.Int("contentLength", len(finalContent)),
-	)
-
-	// 硬约束（结果检查）：校验最终 results 数量是否为 10
-	verifyFinalResultCount(finalContent)
-
-	return &service.SearchAgentResult{
-		Content:      finalContent,
-		SearchRounds: searchRounds,
-	}, nil
 }
