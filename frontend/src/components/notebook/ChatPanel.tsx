@@ -212,6 +212,22 @@ function remarkExtractReferences(references: Reference[]) {
   };
 }
 
+// 去除 LLM 回答末尾自动生成的引用来源列表（如 "参考来源："、"## 参考资料"、"> 引用来源：..." 等）
+function stripTrailingReferenceList(content: string): string {
+  // 匹配作为"引用列表标题"的行：行首可选 #、>、**，后接关键词，行尾可含 **、:、：
+  const headerPattern = /^[ \t]*(?:#{1,6}\s+|>\s*|\*\*)?\s*(?:参考来源|参考资料|引用来源|引用列表|参考文献|引用文献|参考引用|References|Sources|Citations)\b[^\n]*$/gim;
+  let lastIdx = -1;
+  let m: RegExpExecArray | null;
+  while ((m = headerPattern.exec(content)) !== null) {
+    lastIdx = m.index;
+  }
+  // 仅当该标题位于内容后半段时才裁剪，避免误删正文中的"参考"字样
+  if (lastIdx >= 0 && lastIdx / content.length > 0.4) {
+    return content.slice(0, lastIdx).replace(/\s+$/, '');
+  }
+  return content;
+}
+
 // Custom markdown component with reference support
 function MarkdownWithReferences({
   content,
@@ -220,7 +236,8 @@ function MarkdownWithReferences({
   content: string;
   references?: Reference[];
 }) {
-  if (!content) {
+  const displayContent = stripTrailingReferenceList(content);
+  if (!displayContent) {
     return null;
   }
 
@@ -252,7 +269,7 @@ function MarkdownWithReferences({
           },
         }}
       >
-        {content}
+        {displayContent}
       </Markdown>
     </div>
   );
@@ -320,6 +337,7 @@ export default function ChatPanel() {
   const [deletingConvId, setDeletingConvId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const prevConvIdRef = useRef<string | null>(null);
+  const prevStreamingConvIdRef = useRef<string | null>(null);
   const modelListRef = useRef<HTMLDivElement>(null);
 
   // Check if any message is streaming
@@ -333,13 +351,39 @@ export default function ChatPanel() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [conversation?.messages, displayContent]);
 
-  // Fetch messages only when conversation ID changes (not on every render)
+  // 当会话切换时，记录需要停止流式生成的旧会话 ID
   useEffect(() => {
     if (currentNotebookId && conversation?.id && conversation.id !== prevConvIdRef.current) {
+      const prevConvId = prevConvIdRef.current;
+      // 检查旧会话是否有流式消息
+      if (prevConvId) {
+        const nb = notebooks.find((n) => n.id === currentNotebookId);
+        const prevConv = nb?.conversations.find((c) => c.id === prevConvId);
+        if (prevConv?.messages.some((m) => m.isStreaming)) {
+          prevStreamingConvIdRef.current = prevConvId;
+        }
+      }
       prevConvIdRef.current = conversation.id;
+    }
+  }, [currentNotebookId, conversation?.id, notebooks]);
+
+  // 拉取消息：如果有旧会话正在流式生成，等停止完成后再拉取（防止旧流的 onDone 回调覆盖新数据）
+  useEffect(() => {
+    if (!currentNotebookId || !conversation?.id) return;
+
+    const streamingConvId = prevStreamingConvIdRef.current;
+    if (streamingConvId) {
+      prevStreamingConvIdRef.current = null;
+      console.log('[ChatPanel] 等待停止旧会话流后再拉取消息:', streamingConvId);
+      stopGeneration(currentNotebookId, streamingConvId)
+        .catch(() => {})
+        .finally(() => {
+          fetchMessages(currentNotebookId, conversation.id);
+        });
+    } else {
       fetchMessages(currentNotebookId, conversation.id);
     }
-  }, [currentNotebookId, conversation?.id, fetchMessages]);
+  }, [currentNotebookId, conversation?.id, fetchMessages, stopGeneration]);
 
   // Load LLM configs on mount
   useEffect(() => {

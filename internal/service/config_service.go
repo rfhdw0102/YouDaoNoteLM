@@ -91,17 +91,16 @@ func userConfigCacheKey(userID uint, configType string) string {
 }
 
 // decryptAPIKey 解密 API Key（如果加密密钥已配置）
-func (s *configService) decryptAPIKey(encryptedKey string) string {
+// 解密失败时返回错误，调用方应据此提示用户重新输入，而非把密文发给外部 API
+func (s *configService) decryptAPIKey(encryptedKey string) (string, error) {
 	if encryptedKey == "" || len(s.encryptionKey) == 0 {
-		return encryptedKey
+		return encryptedKey, nil
 	}
 	decrypted, err := utils.Decrypt(encryptedKey, s.encryptionKey)
 	if err != nil {
-		// 解密失败，可能数据未加密，返回原值
-		logger.Debug("解密 API Key 失败（可能未加密）", zap.Error(err))
-		return encryptedKey
+		return "", fmt.Errorf("API Key 解密失败（ENCRYPTION_KEY 不匹配或数据损坏），请在 Web UI 重新输入 API Key: %w", err)
 	}
-	return decrypted
+	return decrypted, nil
 }
 
 func sysConfigCacheKey(group string) string {
@@ -122,7 +121,10 @@ func (s *configService) getService(userID uint, serviceType string) (interface{}
 		logger.Debug("用户配置缓存命中",
 			zap.Uint("user_id", userID),
 			zap.String("service_type", serviceType))
-		apiKey := s.decryptAPIKey(userCfg.APIKey)
+		apiKey, err := s.decryptAPIKey(userCfg.APIKey)
+		if err != nil {
+			return nil, err
+		}
 		sc := external.NewServiceConfigFromEntity(
 			userCfg.Provider, userCfg.APIURL, apiKey,
 			userCfg.Model, userCfg.ExtraConfig)
@@ -135,7 +137,10 @@ func (s *configService) getService(userID uint, serviceType string) (interface{}
 		if cacheErr := s.cache.Set(ctx, cacheKey, userCfgPtr, userConfigTTL); cacheErr != nil {
 			logger.Warn("缓存用户配置失败", zap.String("key", cacheKey), zap.Error(cacheErr))
 		}
-		apiKey := s.decryptAPIKey(userCfgPtr.APIKey)
+		apiKey, err := s.decryptAPIKey(userCfgPtr.APIKey)
+		if err != nil {
+			return nil, err
+		}
 		sc := external.NewServiceConfigFromEntity(
 			userCfgPtr.Provider, userCfgPtr.APIURL, apiKey,
 			userCfgPtr.Model, userCfgPtr.ExtraConfig)
@@ -147,7 +152,24 @@ func (s *configService) getService(userID uint, serviceType string) (interface{}
 		return svc, nil
 	}
 
-	return nil, fmt.Errorf("未配置 %s 服务，请在用户配置或系统配置中添加", serviceType)
+	return nil, notConfiguredError(serviceType)
+}
+
+// notConfiguredError 按 serviceType 返回带正确错误码的 BizError
+// serviceType: "search" / "asr" / "llm" / "embedding"
+func notConfiguredError(serviceType string) error {
+	switch serviceType {
+	case "search":
+		return bizerrors.ErrSearchProviderNotConfigured
+	case "asr":
+		return bizerrors.ErrASRNotConfigured
+	case "llm":
+		return bizerrors.ErrLLMNotConfigured
+	case "embedding":
+		return bizerrors.ErrEmbeddingNotConfigured
+	default:
+		return bizerrors.New(bizerrors.CodeBadRequest, fmt.Sprintf("未配置 %s 服务，请在设置中添加", serviceType))
+	}
 }
 
 // getSysService 从 sys_config 查找并创建服务
@@ -241,7 +263,10 @@ func (s *configService) GetEmbeddingService(userID uint) (embedding.EmbeddingSer
 	cacheKey := userConfigCacheKey(userID, "embedding")
 	var userCfg entity.UserConfig
 	if err := s.cache.Get(ctx, cacheKey, &userCfg); err == nil && userCfg.Enabled {
-		apiKey := s.decryptAPIKey(userCfg.APIKey)
+		apiKey, err := s.decryptAPIKey(userCfg.APIKey)
+		if err != nil {
+			return nil, err
+		}
 		sc := external.NewServiceConfigFromEntity(
 			userCfg.Provider, userCfg.APIURL, apiKey,
 			userCfg.Model, userCfg.ExtraConfig)
@@ -259,17 +284,20 @@ func (s *configService) GetEmbeddingService(userID uint) (embedding.EmbeddingSer
 	// 缓存未命中，查 DB
 	userCfgPtr, err := s.userConfigRepo.FindByUserAndType(userID, "embedding")
 	if err != nil {
-		return nil, fmt.Errorf("未配置 Embedding 服务，请在设置中添加 Embedding 配置")
+		return nil, bizerrors.ErrEmbeddingNotConfigured
 	}
 	if userCfgPtr == nil || !userCfgPtr.Enabled {
-		return nil, fmt.Errorf("未配置 Embedding 服务，请在设置中添加 Embedding 配置")
+		return nil, bizerrors.ErrEmbeddingNotConfigured
 	}
 
 	if cacheErr := s.cache.Set(ctx, cacheKey, userCfgPtr, userConfigTTL); cacheErr != nil {
 		logger.Warn("缓存用户配置失败", zap.String("key", cacheKey), zap.Error(cacheErr))
 	}
 
-	apiKey := s.decryptAPIKey(userCfgPtr.APIKey)
+	apiKey, err := s.decryptAPIKey(userCfgPtr.APIKey)
+	if err != nil {
+		return nil, err
+	}
 	sc := external.NewServiceConfigFromEntity(
 		userCfgPtr.Provider, userCfgPtr.APIURL, apiKey,
 		userCfgPtr.Model, userCfgPtr.ExtraConfig)
@@ -348,7 +376,11 @@ func (s *configService) GetUserConfig(userID uint, configType string) (*entity.U
 	cacheKey := userConfigCacheKey(userID, configType)
 	var userCfg entity.UserConfig
 	if err := s.cache.Get(ctx, cacheKey, &userCfg); err == nil {
-		userCfg.APIKey = s.decryptAPIKey(userCfg.APIKey)
+		apiKey, err := s.decryptAPIKey(userCfg.APIKey)
+		if err != nil {
+			return nil, err
+		}
+		userCfg.APIKey = apiKey
 		return &userCfg, nil
 	}
 
@@ -361,7 +393,11 @@ func (s *configService) GetUserConfig(userID uint, configType string) (*entity.U
 		if cacheErr := s.cache.Set(ctx, cacheKey, userCfgPtr, userConfigTTL); cacheErr != nil {
 			logger.Warn("缓存用户配置失败", zap.String("key", cacheKey), zap.Error(cacheErr))
 		}
-		userCfgPtr.APIKey = s.decryptAPIKey(userCfgPtr.APIKey)
+		apiKey, err := s.decryptAPIKey(userCfgPtr.APIKey)
+		if err != nil {
+			return nil, err
+		}
+		userCfgPtr.APIKey = apiKey
 	}
 	return userCfgPtr, nil
 }
@@ -374,7 +410,11 @@ func (s *configService) getUserLLMConfigAsUserConfig(userID uint) (*entity.UserC
 	cacheKey := userConfigCacheKey(userID, "llm")
 	var userCfg entity.UserConfig
 	if err := s.cache.Get(ctx, cacheKey, &userCfg); err == nil {
-		userCfg.APIKey = s.decryptAPIKey(userCfg.APIKey)
+		apiKey, err := s.decryptAPIKey(userCfg.APIKey)
+		if err != nil {
+			return nil, err
+		}
+		userCfg.APIKey = apiKey
 		return &userCfg, nil
 	}
 
@@ -400,7 +440,11 @@ func (s *configService) getUserLLMConfigAsUserConfig(userID uint) (*entity.UserC
 	if cacheErr := s.cache.Set(ctx, cacheKey, result, userConfigTTL); cacheErr != nil {
 		logger.Warn("缓存用户LLM配置失败", zap.String("key", cacheKey), zap.Error(cacheErr))
 	}
-	result.APIKey = s.decryptAPIKey(result.APIKey)
+	apiKey, err := s.decryptAPIKey(result.APIKey)
+	if err != nil {
+		return nil, err
+	}
+	result.APIKey = apiKey
 	return result, nil
 }
 
@@ -508,7 +552,10 @@ func (s *configService) GetChatModelConfig(userID uint) (*ChatModelConfig, error
 	cacheKey := userConfigCacheKey(userID, "llm")
 	var userCfg entity.UserLLMConfig
 	if err := s.cache.Get(ctx, cacheKey, &userCfg); err == nil && userCfg.Enabled {
-		apiKey := s.decryptAPIKey(userCfg.APIKey)
+		apiKey, err := s.decryptAPIKey(userCfg.APIKey)
+		if err != nil {
+			return nil, err
+		}
 		return &ChatModelConfig{
 			Provider: userCfg.Provider,
 			BaseURL:  userCfg.APIURL,
@@ -523,7 +570,10 @@ func (s *configService) GetChatModelConfig(userID uint) (*ChatModelConfig, error
 		if cacheErr := s.cache.Set(ctx, cacheKey, userCfgPtr, userConfigTTL); cacheErr != nil {
 			logger.Warn("缓存用户LLM配置失败", zap.String("key", cacheKey), zap.Error(cacheErr))
 		}
-		apiKey := s.decryptAPIKey(userCfgPtr.APIKey)
+		apiKey, err := s.decryptAPIKey(userCfgPtr.APIKey)
+		if err != nil {
+			return nil, err
+		}
 		return &ChatModelConfig{
 			Provider: userCfgPtr.Provider,
 			BaseURL:  userCfgPtr.APIURL,
@@ -571,7 +621,11 @@ func (s *configService) GetUserLLMConfig(userID uint) (*entity.UserLLMConfig, er
 	cacheKey := userConfigCacheKey(userID, "llm")
 	var userCfg entity.UserLLMConfig
 	if err := s.cache.Get(ctx, cacheKey, &userCfg); err == nil && userCfg.Enabled {
-		userCfg.APIKey = s.decryptAPIKey(userCfg.APIKey)
+		apiKey, err := s.decryptAPIKey(userCfg.APIKey)
+		if err != nil {
+			return nil, err
+		}
+		userCfg.APIKey = apiKey
 		return &userCfg, nil
 	}
 
@@ -584,7 +638,11 @@ func (s *configService) GetUserLLMConfig(userID uint) (*entity.UserLLMConfig, er
 		if cacheErr := s.cache.Set(ctx, cacheKey, userCfgPtr, userConfigTTL); cacheErr != nil {
 			logger.Warn("缓存用户LLM配置失败", zap.String("key", cacheKey), zap.Error(cacheErr))
 		}
-		userCfgPtr.APIKey = s.decryptAPIKey(userCfgPtr.APIKey)
+		apiKey, err := s.decryptAPIKey(userCfgPtr.APIKey)
+		if err != nil {
+			return nil, err
+		}
+		userCfgPtr.APIKey = apiKey
 		return userCfgPtr, nil
 	}
 

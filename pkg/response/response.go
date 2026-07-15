@@ -1,8 +1,10 @@
 package response
 
 import (
-	"YoudaoNoteLm/pkg/errors"
+	stderrors "errors"
 	"math"
+
+	"YoudaoNoteLm/pkg/errors"
 
 	"github.com/gin-gonic/gin"
 )
@@ -51,7 +53,8 @@ func ErrorWithData(c *gin.Context, code int, message string, data interface{}) {
 
 // BizError 业务错误响应
 func BizError(c *gin.Context, err error) {
-	if bizErr, ok := err.(*errors.BizError); ok {
+	var bizErr *errors.BizError
+	if stderrors.As(err, &bizErr) {
 		c.JSON(200, Response{
 			Code:    bizErr.Code,
 			Message: bizErr.Message,

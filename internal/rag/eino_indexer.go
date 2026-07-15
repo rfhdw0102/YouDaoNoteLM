@@ -95,6 +95,7 @@ func NewEinoIndexerWrapper(ctx context.Context, address string) (*EinoIndexerWra
 
 // Store 将文档写入用户专属 Collection
 // Indexer 内置 Embedding，自动完成向量化；sparse vector 由 Milvus BM25 Function 自动生成
+// 分批处理
 func (w *EinoIndexerWrapper) Store(ctx context.Context, userID uint, docs []*schema.Document, embedder embedding.Embedder, vectorDim int) error {
 	if len(docs) == 0 {
 		return fmt.Errorf("没有可写入的文档")
@@ -105,8 +106,7 @@ func (w *EinoIndexerWrapper) Store(ctx context.Context, userID uint, docs []*sch
 		return err
 	}
 
-	// 生成文档 ID（如果未设置）
-	// 使用 sourceID + parentBlockID + childIndex 确保全局唯一
+	// 生成文档 ID、使用 sourceID + parentBlockID + childIndex 确保全局唯一
 	for _, doc := range docs {
 		if doc.ID == "" {
 			sourceID, _ := doc.MetaData["source_id"].(uint)
@@ -116,9 +116,18 @@ func (w *EinoIndexerWrapper) Store(ctx context.Context, userID uint, docs []*sch
 		}
 	}
 
-	_, err = idx.Store(ctx, docs)
-	if err != nil {
-		return fmt.Errorf("写入 Milvus 失败: %w", err)
+	// 分批写入，每批最多 20 个文档
+	batchSize := 20
+	for i := 0; i < len(docs); i += batchSize {
+		end := i + batchSize
+		if end > len(docs) {
+			end = len(docs)
+		}
+		batch := docs[i:end]
+
+		if _, err := idx.Store(ctx, batch); err != nil {
+			return fmt.Errorf("写入 Milvus 失败 (batch %d-%d): %w", i, end, err)
+		}
 	}
 	return nil
 }

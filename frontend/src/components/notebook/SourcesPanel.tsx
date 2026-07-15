@@ -303,7 +303,13 @@ export default function SourcesPanel() {
           );
 
           setSearchResults(finalResults);
-          setSearchSummary(finalSummary || '搜索完成');
+          if (finalSummary) {
+            setSearchSummary(finalSummary);
+          } else if (finalResults.length === 0) {
+            setSearchSummary('未找到相关结果，请换个关键词或问题再试');
+          } else {
+            setSearchSummary('搜索完成');
+          }
         } catch (err: any) {
           if (err.name === 'AbortError') return;
           console.error('Search failed:', err);
@@ -314,10 +320,21 @@ export default function SourcesPanel() {
           const msg = getErrorMessage(err, '未知错误');
 
           if (errorCode === 40010) {
-            // CodeLLMNotConfigured
-            setSearchSummary('搜索需要先配置 LLM 服务。请前往 设置 → AI 服务配置 添加 LLM 配置后再试。');
-          } else if (msg.includes('LLM') || msg.includes('llm') || msg.includes('配置')) {
-            setSearchSummary('搜索需要先配置 LLM 服务。请前往 设置 → AI 服务配置 添加 LLM 配置后再试。');
+            // CodeSearchProviderNotConfigured：搜索引擎未配置
+            setSearchSummary('请前往 设置 → 添加搜索引擎配置后再试');
+          } else if (errorCode === 40020) {
+            // CodeLLMNotConfigured：LLM 未配置（搜索 Agent 依赖 LLM）
+            setSearchSummary('请前往 设置 → 添加 LLM 配置后再试');
+          } else if (errorCode === 40011) {
+            // CodeSearchInvalidAPIKey：搜索引擎 API Key 无效
+            setSearchSummary('请前往 设置 → 更新搜索引擎 API Key 后重试');
+          } else if (errorCode === 40012 || errorCode === 40013) {
+            // 搜索超时 / 服务不可用
+            setSearchSummary(`搜索失败：${msg}`);
+          } else if (msg.includes('搜索引擎') || msg.includes('search')) {
+            setSearchSummary('请前往 设置 → 添加搜索引擎配置后再试');
+          } else if (msg.includes('LLM') || msg.includes('llm')) {
+            setSearchSummary('请前往 设置 → 添加 LLM 配置后再试');
           } else {
             setSearchSummary(`搜索失败：${msg}`);
           }
@@ -478,6 +495,12 @@ export default function SourcesPanel() {
                   await confirmAudio(previewId, currentNotebookId, content);
                 } catch (err) {
                   console.error('Confirm audio failed:', err);
+                  // 清除 confirmedPreviewIds，让 UI 显示错误状态而非"导入中..."
+                  setConfirmedPreviewIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(previewId);
+                    return next;
+                  });
                 }
               }}
             >
@@ -1013,13 +1036,11 @@ export default function SourcesPanel() {
       {/* Import Modal */}
       <Modal open={showImportModal} onClose={() => setShowImportModal(false)} title="导入资料" size="md">
         <ImportModalContent
-          onFileImport={(file) => { importFile(currentNotebookId, file).then(() => setShowImportModal(false)).catch(console.error); }}
+          onClose={() => setShowImportModal(false)}
+          onFileImport={(file) => importFile(currentNotebookId, file)}
           onAudioImport={async (file) => {
-            try {
-              await previewAudio(currentNotebookId, file);
-              setShowImportModal(false);
-              // 不跳转到转写预览面板，转写完成后通过通知横幅提醒用户
-            } catch (err) { console.error(err); }
+            await previewAudio(currentNotebookId, file);
+            // 不跳转到转写预览面板，转写完成后通过通知横幅提醒用户
           }}
           onUrlImport={async (url) => {
             try {
@@ -1068,34 +1089,78 @@ export default function SourcesPanel() {
   );
 }
 
-function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudaoImport }: {
-  onFileImport: (file: File) => void;
-  onAudioImport: (file: File) => void;
+function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudaoImport, onClose }: {
+  onFileImport: (file: File) => Promise<any>;
+  onAudioImport: (file: File) => Promise<any>;
   onUrlImport: (url: string) => void;
   onYoudaoImport: (fileIds: string[], fileNames: Record<string, string>) => Promise<void>;
+  onClose: () => void;
 }) {
   const [tab, setTab] = useState<'youdao' | 'file' | 'url'>('youdao');
   const [urlValue, setUrlValue] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [showYoudaoPanel, setShowYoudaoPanel] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
 
   const audioExts = ['.mp3', '.wav'];
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const processFiles = async (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
     setUploading(true);
+    setUploadProgress({ current: 0, total: fileArray.length });
+
     try {
-      const ext = '.' + file.name.split('.').pop()?.toLowerCase();
-      if (audioExts.includes(ext)) {
-        onAudioImport(file);
-      } else {
-        onFileImport(file);
+      for (let i = 0; i < fileArray.length; i++) {
+        setUploadProgress({ current: i + 1, total: fileArray.length });
+        const file = fileArray[i];
+        const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+        if (audioExts.includes(ext)) {
+          await onAudioImport(file);
+        } else {
+          await onFileImport(file);
+        }
       }
+      // 所有文件处理成功后关闭弹窗
+      onClose();
+    } catch (err) {
+      console.error('File upload failed:', err);
     } finally {
       setUploading(false);
+      setUploadProgress(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    await processFiles(files);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      await processFiles(files);
     }
   };
 
@@ -1159,20 +1224,32 @@ function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudao
       )}
 
       {tab === 'file' && (
-        <div className="border-2 border-dashed border-border-light rounded-xl p-8 text-center hover:border-accent/40 transition-colors">
-          <Upload size={32} className="mx-auto mb-3 text-text-muted" />
-          <p className="text-sm text-text-secondary mb-1">拖拽文件到此处，或点击选择</p>
+        <div
+          className={cn(
+            'border-2 border-dashed rounded-xl p-8 text-center transition-colors',
+            isDragging ? 'border-accent bg-accent/10' : 'border-border-light hover:border-accent/40'
+          )}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          <Upload size={32} className={cn('mx-auto mb-3', isDragging ? 'text-accent' : 'text-text-muted')} />
+          <p className="text-sm text-text-secondary mb-1">
+            {isDragging ? '松开鼠标上传文件' : '拖拽文件到此处，或点击选择'}
+          </p>
           <p className="text-xs text-text-muted">支持 PDF, DOCX, TXT, MD, HTML</p>
-          <p className="text-xs text-text-muted mt-1">音频支持 MP3, WAV</p>
+          <p className="text-xs text-text-muted mt-1">音频支持 MP3, WAV（支持多选）</p>
           {uploading ? (
-            <div className="mt-4 flex items-center justify-center gap-2">
+            <div className="mt-4 flex flex-col items-center justify-center gap-2">
               <Loader2 size={16} className="animate-spin text-accent" />
-              <span className="text-sm text-text-muted">上传中...</span>
+              <span className="text-sm text-text-muted">
+                {uploadProgress ? `上传中 (${uploadProgress.current}/${uploadProgress.total})...` : '上传中...'}
+              </span>
             </div>
           ) : (
             <>
               <Button size="sm" className="mt-4" onClick={() => fileInputRef.current?.click()}>选择文件</Button>
-              <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.md,.html,.pptx,.mp3,.wav" className="hidden" onChange={handleFileSelect} />
+              <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.txt,.md,.html,.pptx,.mp3,.wav" className="hidden" onChange={handleFileSelect} />
             </>
           )}
         </div>

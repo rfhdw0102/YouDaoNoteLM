@@ -117,13 +117,15 @@ async function isTokenErrorResponse(response: Response): Promise<boolean> {
   return false;
 }
 
-// 7. Send message (streaming) - returns a ReadableStream
+// 7. Send message (streaming) - returns Response and AbortController
 export async function sendMessage(
   conversationId: number,
   content: string,
   sourceIds?: number[],
   llmConfigId?: number
-): Promise<Response> {
+): Promise<{ response: Response; abortController: AbortController }> {
+  const abortController = new AbortController();
+
   const makeRequest = (token: string) =>
     fetch(`/api/v1/chat/conversations/${conversationId}/messages`, {
       method: 'POST',
@@ -136,6 +138,7 @@ export async function sendMessage(
         source_ids: sourceIds || [],
         llm_config_id: llmConfigId || 0,
       }),
+      signal: abortController.signal,
     });
 
   let token = sessionStorage.getItem('access_token') || '';
@@ -149,7 +152,7 @@ export async function sendMessage(
     }
   }
 
-  return response;
+  return { response, abortController };
 }
 
 // 8. Stop generation
@@ -170,14 +173,13 @@ export function parseSSEStream(
     onTitle?: (title: string) => void;
     onDone?: (content: string) => void;
     onError?: (error: string) => void;
-  }
-): AbortController {
-  const abortController = new AbortController();
-
+  },
+  abortController?: AbortController
+): void {
   const reader = response.body?.getReader();
   if (!reader) {
     callbacks.onError?.('无法读取响应流');
-    return abortController;
+    return;
   }
 
   const decoder = new TextDecoder();
@@ -273,17 +275,18 @@ export function parseSSEStream(
       console.log('Stream ended, calling onDone');
       callbacks.onDone?.('');
     } catch (error) {
-      console.error('Stream parsing error:', error);
-      if (abortController.signal.aborted) {
-        // Stream was intentionally aborted (user clicked stop)
+      const isAborted = abortController?.signal.aborted ?? false;
+      console.log('[parseSSEStream] catch 触发, isAborted:', isAborted, 'error:', error);
+      if (isAborted) {
+        // Stream was intentionally aborted (user clicked stop or switched conversation)
         // Call onDone to preserve the accumulated content
+        console.log('[parseSSEStream] 检测到 abort，调用 onDone 保存已累积内容');
         callbacks.onDone?.('');
       } else {
         const rawMessage = error instanceof Error ? error.message : '流读取错误';
+        console.log('[parseSSEStream] 非 abort 错误，调用 onError:', rawMessage);
         callbacks.onError?.(getChatErrorMessage(rawMessage));
       }
     }
   })();
-
-  return abortController;
 }

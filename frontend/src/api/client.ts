@@ -19,11 +19,11 @@ function onTokenRefreshed(newToken: string) {
   refreshSubscribers = [];
 }
 
-function clearAuth() {
+function clearAuth(reason?: string) {
   sessionStorage.removeItem('access_token');
   localStorage.removeItem('refresh_token');
   localStorage.removeItem('user');
-  window.location.href = '/login';
+  window.location.href = reason ? `/login?reason=${reason}` : '/login';
 }
 
 // Request: attach access_token
@@ -38,6 +38,11 @@ client.interceptors.request.use((config) => {
 // Check if response indicates token issues
 function isTokenError(data: any): boolean {
   return data && (data.code === 1005 || data.code === 1006);
+}
+
+// Check if response indicates the user has been disabled (1004)
+function isUserDisabled(data: any): boolean {
+  return data && data.code === 1004;
 }
 
 export async function doRefreshToken(): Promise<string | null> {
@@ -61,6 +66,12 @@ export async function doRefreshToken(): Promise<string | null> {
 client.interceptors.response.use(
   (response: AxiosResponse) => {
     const data = response.data;
+
+    // 用户被禁用 → 立即强制退出,不尝试刷新 token
+    if (isUserDisabled(data)) {
+      clearAuth('disabled');
+      return Promise.reject(new Error('user_disabled'));
+    }
 
     // Backend returns HTTP 200 but code 1005/1006 → token issue
     if (isTokenError(data)) {
@@ -107,6 +118,11 @@ client.interceptors.response.use(
   async (error) => {
     // HTTP 4xx/5xx errors - check if it's a token issue in the response body
     const data = error.response?.data;
+    // 用户被禁用 → 立即强制退出
+    if (isUserDisabled(data)) {
+      clearAuth('disabled');
+      return Promise.reject(error);
+    }
     if (isTokenError(data)) {
       const originalRequest = error.config;
       if (originalRequest._retry) {

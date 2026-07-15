@@ -7,8 +7,8 @@ import (
 )
 
 // RegisterRoutes 注册用户配置路由
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
-	cfg := r.Group("/user/config").Use(middleware.Auth(ctrl.tokenBlacklist))
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, statusCheck gin.HandlerFunc) {
+	cfg := r.Group("/user/config").Use(middleware.Auth(ctrl.tokenBlacklist), statusCheck)
 	{
 		// 配置连通性测试（不保存，仅验证）
 		cfg.POST("/:type/test", ctrl.TestConfig)

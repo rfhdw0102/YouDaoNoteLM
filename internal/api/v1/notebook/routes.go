@@ -7,9 +7,9 @@ import (
 )
 
 // RegisterRoutes 注册笔记本路由
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService) {
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService, statusCheck gin.HandlerFunc) {
 	notebookGroup := r.Group("/notebooks")
-	notebookGroup.Use(middleware.Auth(tokenBlacklist))
+	notebookGroup.Use(middleware.Auth(tokenBlacklist), statusCheck)
 	{
 		notebookGroup.POST("", ctrl.Create)
 		notebookGroup.GET("", ctrl.List)

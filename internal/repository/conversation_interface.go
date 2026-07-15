@@ -25,4 +25,6 @@ type ConversationRepository interface {
 	Delete(id uint) error
 	// DeleteByNotebookID 删除笔记本下的所有对话（软删除）
 	DeleteByNotebookID(notebookID uint) error
+	// DeleteWithMessages 在事务中删除对话及其所有消息（先软删消息，再软删对话）
+	DeleteWithMessages(id uint) error
 }

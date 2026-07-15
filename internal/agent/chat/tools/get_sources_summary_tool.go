@@ -67,6 +67,11 @@ func (t *GetSourcesSummaryTool) InvokableRun(ctx context.Context, argumentsInJSO
 		zap.Uints("availableSourceIDs", t.sourceIDs),
 	)
 
+	// 校验：未选中资料时不允许调用工具
+	if len(t.sourceIDs) == 0 {
+		return "请先选中资料再进行提问", nil
+	}
+
 	// 先用 interface{} 接收，兼容字符串和数字两种格式
 	var rawParams struct {
 		SourceIDs []interface{} `json:"source_ids"`

@@ -56,6 +56,9 @@ func Load(configPath string) (*Config, error) {
 	if val := os.Getenv("MINIO_PUBLIC_ENDPOINT"); val != "" {
 		config.External.MinIO.PublicEndpoint = val
 	}
+	if val := os.Getenv("MINIO_ENDPOINT"); val != "" {
+		config.External.MinIO.Endpoint = val
+	}
 	if val := os.Getenv("ENCRYPTION_KEY"); val != "" {
 		config.Security.EncryptionKey = val
 	}

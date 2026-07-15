@@ -2,20 +2,11 @@ package chat
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/components/tool"
-	"github.com/cloudwego/eino/compose"
 
-	"YoudaoNoteLm/internal/agent/chat/prompts"
 	chatTools "YoudaoNoteLm/internal/agent/chat/tools"
 	"YoudaoNoteLm/internal/model/dto/response"
-	"YoudaoNoteLm/internal/rag"
-	"YoudaoNoteLm/internal/repository"
-	"YoudaoNoteLm/pkg/cache"
 	"YoudaoNoteLm/pkg/logger"
 
 	"go.uber.org/zap"
@@ -40,6 +31,7 @@ const (
 )
 
 // ChatAgent 自包含的对话 Agent
+// 使用 NewChatAgentBuilder 创建实例
 type ChatAgent struct {
 	agent           *adk.ChatModelAgent
 	refCollector    *chatTools.ReferenceCollector
@@ -49,74 +41,6 @@ type ChatAgent struct {
 	// 运行时状态
 	fullContent string
 	references  []response.Reference
-}
-
-// NewChatAgent 创建 Agent 实例
-// 内部自动构建工具集，外部只需传入 retriever、sourceIDs 和 sourceNames
-func NewChatAgent(
-	ctx context.Context,
-	llmModel model.ToolCallingChatModel,
-	conversationRepo repository.ConversationRepository,
-	messageRepo repository.MessageRepository,
-	chatCache *cache.ChatCache,
-	retriever rag.RAGRetriever,
-	sourceRepo repository.SourceRepository,
-	summaryCache *cache.SourceSummaryCache,
-	userID uint,
-	sourceIDs []uint,
-	sourceNames map[uint]string,
-) (*ChatAgent, error) {
-	if llmModel == nil {
-		return nil, fmt.Errorf("ChatModel 不能为空")
-	}
-
-	// 创建引用收集器和工具
-	collector := chatTools.NewReferenceCollector()
-	ragTool := chatTools.NewRAGRetrieverTool(retriever, userID, sourceIDs, collector)
-	summaryTool := chatTools.NewGetSourcesSummaryTool(sourceRepo, summaryCache, sourceIDs, sourceNames)
-
-	// 构建系统提示词（注入资料列表）
-	systemPrompt := buildSystemPrompt(sourceIDs, sourceNames)
-
-	// 创建 ChatModelAgent（ReAct 循环）
-	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-		Model:       llmModel,
-		Instruction: systemPrompt,
-		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: []tool.BaseTool{ragTool, summaryTool},
-			},
-		},
-		MaxIterations: 10,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("创建 ChatModelAgent 失败: %w", err)
-	}
-
-	return &ChatAgent{
-		agent:           agent,
-		refCollector:    collector,
-		contextBuilder:  NewContextBuilder(conversationRepo, messageRepo, chatCache),
-		streamProcessor: NewStreamProcessor(),
-	}, nil
-}
-
-// buildSystemPrompt 构建系统提示词，注入资料列表
-func buildSystemPrompt(sourceIDs []uint, sourceNames map[uint]string) string {
-	if len(sourceIDs) == 0 {
-		return strings.Replace(prompts.ChatAgentSystemPrompt, "{{.SourceList}}", "（用户未选定特定资料）", 1)
-	}
-
-	var sb strings.Builder
-	for i, id := range sourceIDs {
-		name := sourceNames[id]
-		if name == "" {
-			name = fmt.Sprintf("资料#%d", id)
-		}
-		sb.WriteString(fmt.Sprintf("%d. %s (ID: %d)\n", i+1, name, id))
-	}
-
-	return strings.Replace(prompts.ChatAgentSystemPrompt, "{{.SourceList}}", sb.String(), 1)
 }
 
 // Process 处理消息，返回事件通道
@@ -170,4 +94,17 @@ func (a *ChatAgent) GetFullContent() string {
 // GetReferences 获取引用
 func (a *ChatAgent) GetReferences() []response.Reference {
 	return a.references
+}
+
+// buildRetryConfig 构造 LLM 重试配置，仅对返回 error 的 LLM 调用重试，业务错误不在此路径。
+func buildRetryConfig() *adk.ModelRetryConfig {
+	return &adk.ModelRetryConfig{
+		MaxRetries: 1,
+		ShouldRetry: func(ctx context.Context, retryCtx *adk.RetryContext) *adk.RetryDecision {
+			if retryCtx.Err != nil {
+				return &adk.RetryDecision{Retry: true}
+			}
+			return &adk.RetryDecision{Retry: false}
+		},
+	}
 }

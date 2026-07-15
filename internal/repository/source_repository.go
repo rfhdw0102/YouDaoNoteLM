@@ -27,6 +27,16 @@ func (r *sourceRepository) FindByID(id uint) (*entity.Source, error) {
 	return &source, nil
 }
 
+// FindByIDs 批量查询资料（一次 SQL，避免 N+1）
+func (r *sourceRepository) FindByIDs(ids []uint) ([]*entity.Source, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var sources []*entity.Source
+	err := r.db.Where("id IN ?", ids).Find(&sources).Error
+	return sources, err
+}
+
 func (r *sourceRepository) Create(source *entity.Source) error {
 	return r.db.Create(source).Error
 }

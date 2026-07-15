@@ -5,7 +5,7 @@ import {
   Check, AlertCircle, ArrowLeft, Save, X, BookOpen,
   Loader2, Plug
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { cn } from '../utils/cn';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -34,9 +34,34 @@ const DEFAULT_API_URLS: Record<string, string> = {
   minimax: 'https://api.minimax.chat/v1',
 };
 
+// Provider 文档链接映射（用户配置时引导其获取对应密钥/参数）
+const PROVIDER_DOCS: Record<string, { label: string; url: string; description: string }> = {
+  aliyun_nls: {
+    label: '阿里云语音开通指引',
+    url: 'https://help.aliyun.com/zh/vms/getting-started/new-guidelines',
+    description: '如何获取 Access Key ID / Access Key Secret / App Key',
+  },
+  volcengine: {
+    label: '火山引擎 Embedding 文档',
+    url: 'https://www.volcengine.com/docs/search?q=embedding&c=-1',
+    description: '如何获取 API Key、接入点 ID 及向量维度',
+  },
+  bocha: {
+    label: '博查搜索 API 文档',
+    url: 'https://bocha-ai.feishu.cn/wiki/HmtOw1z6vik14Fkdu5uc9VaInBb',
+    description: '如何获取博查搜索 API Key',
+  },
+};
+
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<ConfigTab>('llm');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<ConfigTab>(() => {
+    const tab = searchParams.get('tab');
+    return tab === 'llm' || tab === 'search' || tab === 'asr' || tab === 'embedding' || tab === 'youdao'
+      ? (tab as ConfigTab)
+      : 'llm';
+  });
   const [configs, setConfigs] = useState<UserConfig[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -73,9 +98,67 @@ export default function SettingsPage() {
     dimensions: 2048,
   });
 
+  // 格式化测试结果消息，对用户不友好的后端错误进行转换
+  const formatTestResultMessage = (result: { healthy: boolean; message: string; detail?: string }): { message: string; showDetail: boolean } => {
+    if (result.healthy) {
+      return { message: result.message, showDetail: false };
+    }
+
+    // 向量维度不匹配
+    if (result.message.includes('向量维度不匹配')) {
+      const match = result.detail?.match(/请将向量维度修改为 (\d+)/);
+      if (match) {
+        return { message: `向量维度错误，该向量模型支持 ${match[1]} 维度，请更改后重试`, showDetail: false };
+      }
+    }
+
+    // 向量维度配置错误（API 返回的维度不支持）
+    if (result.message.includes('向量维度错误')) {
+      return { message: result.message, showDetail: false };
+    }
+
+    // API Key 相关错误
+    if (result.message.includes('API Key') || result.detail?.includes('401') || result.detail?.includes('403')) {
+      return { message: 'API Key 无效或无权限，请检查后重试', showDetail: false };
+    }
+
+    // 模型不存在
+    if (result.message.includes('模型') && result.message.includes('不存在')) {
+      return { message: result.message, showDetail: false };
+    }
+
+    // 连接超时
+    if (result.message.includes('超时') || result.detail?.includes('timeout')) {
+      return { message: '连接超时，请检查 API 地址是否正确', showDetail: false };
+    }
+
+    // 连接失败
+    if (result.message.includes('连接失败') || result.detail?.includes('connection')) {
+      return { message: '连接失败，请检查 API 地址是否正确', showDetail: false };
+    }
+
+    // 限流
+    if (result.message.includes('限流') || result.detail?.includes('429')) {
+      return { message: '当前请求被限流，请稍后重试', showDetail: false };
+    }
+
+    // 其他错误，返回通用提示
+    return { message: '连接测试失败，请检查配置是否正确', showDetail: false };
+  };
+
   // 获取当前选中 provider 的配置要求
   const getSelectedProviderInfo = (): ProviderInfo | undefined => {
     return providers.find(p => p.provider === formData.provider);
+  };
+
+  // 获取当前选中 provider 的文档链接
+  const getProviderDoc = (): { label: string; url: string; description: string } | undefined => {
+    return PROVIDER_DOCS[formData.provider];
+  };
+
+  // 判断当前 provider 是否为 ARK 类型（火山引擎/豆包）
+  const isARKProvider = (): boolean => {
+    return formData.provider === 'volcengine' || formData.provider === 'doubao';
   };
 
   // 获取字段的中文标签
@@ -570,14 +653,12 @@ export default function SettingsPage() {
   ];
 
   // 从 API 获取的动态 provider 列表（只返回已实现的）
+  // 前端限定只展示博查搜索
   const getProviderOptions = (): { value: string; label: string }[] => {
-    if (providers.length > 0) {
-      return providers.map(p => ({
-        value: p.provider,
-        label: p.display_name,
-      }));
-    }
-    return [];
+    return providers.map(p => ({
+      value: p.provider,
+      label: p.display_name,
+    }));
   };
 
   const providerOptions = getProviderOptions() ?? [];
@@ -797,10 +878,18 @@ export default function SettingsPage() {
                     </Button>
                   </div>
                 </div>
-                <div className="mt-4 p-3 bg-bg-tertiary rounded-lg">
+                <div className="mt-4 p-3 bg-bg-tertiary rounded-lg space-y-1">
                   <p className="text-xs text-text-muted">
-                    💡 如何获取 API Key：登录有道云笔记网页版，在设置中找到 API Key 选项
+                    💡 如何获取 API Key：前往网易开放平台登录后申请 API Key
                   </p>
+                  <a
+                    href="https://mopen.163.com/#/login"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-accent hover:underline inline-block"
+                  >
+                    网易开放平台 (mopen.163.com) →
+                  </a>
                 </div>
               </motion.div>
             )}
@@ -865,6 +954,24 @@ export default function SettingsPage() {
                         </select>
                       </div>
                     </div>
+                    {getProviderDoc() && (
+                      <div className="p-3 bg-accent/5 border border-accent/20 rounded-lg flex items-start gap-2">
+                        <BookOpen size={14} className="text-accent mt-0.5 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-xs text-text-secondary">
+                            {getProviderDoc()!.description}
+                          </p>
+                          <a
+                            href={getProviderDoc()!.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-accent hover:underline mt-1 inline-block"
+                          >
+                            {getProviderDoc()!.label} →
+                          </a>
+                        </div>
+                      </div>
+                    )}
                     {providerNeedsConfig() ? (
                       <>
                         {getConfigFields().map(field => {
@@ -896,6 +1003,29 @@ export default function SettingsPage() {
                             }
                           };
 
+                          // ARK 类型服务商的向量维度使用下拉选择
+                          if (field === 'dimensions' && activeTab === 'embedding' && isARKProvider()) {
+                            return (
+                              <div key={field}>
+                                <label className="block text-sm font-medium text-text-primary mb-1.5">
+                                  {required ? `${label} *` : `${label} (可选)`}
+                                </label>
+                                <select
+                                  value={getValue() || 2048}
+                                  disabled={activeTab === 'embedding'}
+                                  onChange={(e) => setValue(e.target.value)}
+                                  className={cn(
+                                    "w-full h-10 px-3 rounded-lg bg-bg-tertiary border border-border-light text-sm focus:outline-none focus:border-accent",
+                                    activeTab === 'embedding' && "opacity-60 cursor-not-allowed"
+                                  )}
+                                >
+                                  <option value={2048}>2048</option>
+                                  <option value={1024}>1024</option>
+                                </select>
+                              </div>
+                            );
+                          }
+
                           return (
                             <Input
                               key={field}
@@ -917,25 +1047,22 @@ export default function SettingsPage() {
                     )}
 
                     {/* 测试结果展示 - 编辑模式 */}
-                    {testResult && (
-                      <div className={cn(
-                        'p-3 rounded-lg flex items-start gap-2 text-sm',
-                        testResult.healthy
-                          ? 'bg-success/5 border border-success/20 text-success'
-                          : 'bg-error/5 border border-error/20 text-error'
-                      )}>
-                        {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
-                        <div>
-                          <p className="font-medium">{testResult.message}</p>
-                          {testResult.latency_ms > 0 && (
-                            <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
-                          )}
-                          {testResult.detail && (
-                            <p className="text-xs opacity-70 mt-0.5 break-all">{testResult.detail}</p>
-                          )}
+                    {testResult && (() => {
+                      const formatted = formatTestResultMessage(testResult);
+                      return (
+                        <div className={cn(
+                          'p-3 rounded-lg flex items-start gap-2 text-sm',
+                          testResult.healthy
+                            ? 'bg-success/5 border border-success/20 text-success'
+                            : 'bg-error/5 border border-error/20 text-error'
+                        )}>
+                          {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
+                          <div>
+                            <p className="font-medium">{formatted.message}</p>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     <div className="flex justify-end gap-2">
                       <Button
@@ -1060,8 +1187,26 @@ export default function SettingsPage() {
                     </select>
                   </div>
                 </div>
-                {formData.provider && providerNeedsConfig() ? (
-                  <>
+                    {getProviderDoc() && (
+                      <div className="p-3 bg-accent/5 border border-accent/20 rounded-lg flex items-start gap-2">
+                        <BookOpen size={14} className="text-accent mt-0.5 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-xs text-text-secondary">
+                            {getProviderDoc()!.description}
+                          </p>
+                          <a
+                            href={getProviderDoc()!.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-accent hover:underline mt-1 inline-block"
+                          >
+                            {getProviderDoc()!.label} →
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                    {formData.provider && providerNeedsConfig() ? (
+                      <>
                     {getConfigFields().map(field => {
                       const required = isFieldRequired(field);
                       const label = getFieldLabel(field);
@@ -1091,6 +1236,25 @@ export default function SettingsPage() {
                         }
                       };
 
+                      // ARK 类型服务商的向量维度使用下拉选择
+                      if (field === 'dimensions' && activeTab === 'embedding' && isARKProvider()) {
+                        return (
+                          <div key={field}>
+                            <label className="block text-sm font-medium text-text-primary mb-1.5">
+                              {required ? `${label} *` : `${label} (可选)`}
+                            </label>
+                            <select
+                              value={getValue() || 2048}
+                              onChange={(e) => setValue(e.target.value)}
+                              className="w-full h-10 px-3 rounded-lg bg-bg-tertiary border border-border-light text-sm focus:outline-none focus:border-accent"
+                            >
+                              <option value={2048}>2048</option>
+                              <option value={1024}>1024</option>
+                            </select>
+                          </div>
+                        );
+                      }
+
                       return (
                         <Input
                           key={field}
@@ -1112,25 +1276,22 @@ export default function SettingsPage() {
                 ) : null}
               </div>
               {/* 测试结果展示 */}
-              {testResult && (
-                <div className={cn(
-                  'p-3 rounded-lg flex items-start gap-2 text-sm',
-                  testResult.healthy
-                    ? 'bg-success/5 border border-success/20 text-success'
-                    : 'bg-error/5 border border-error/20 text-error'
-                )}>
-                  {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
-                  <div>
-                    <p className="font-medium">{testResult.message}</p>
-                    {testResult.latency_ms > 0 && (
-                      <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
-                    )}
-                    {testResult.detail && (
-                      <p className="text-xs opacity-70 mt-0.5 break-all">{testResult.detail}</p>
-                    )}
+              {testResult && (() => {
+                const formatted = formatTestResultMessage(testResult);
+                return (
+                  <div className={cn(
+                    'p-3 rounded-lg flex items-start gap-2 text-sm',
+                    testResult.healthy
+                      ? 'bg-success/5 border border-success/20 text-success'
+                      : 'bg-error/5 border border-error/20 text-error'
+                  )}>
+                    {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
+                    <div>
+                      <p className="font-medium">{formatted.message}</p>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               <div className="flex justify-end gap-2 mt-4">
                 <Button variant="ghost" size="sm" onClick={() => { setShowAddForm(false); resetForm(); }}>

@@ -7,9 +7,9 @@ import (
 )
 
 // RegisterRoutes 注册对话路由
-func (ctrl *Controller) RegisterRoutes(rg *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService) {
+func (ctrl *Controller) RegisterRoutes(rg *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService, statusCheck gin.HandlerFunc) {
 	chat := rg.Group("/chat")
-	chat.Use(middleware.Auth(tokenBlacklist))
+	chat.Use(middleware.Auth(tokenBlacklist), statusCheck)
 	{
 		// 对话管理
 		chat.POST("/conversations", ctrl.Create)

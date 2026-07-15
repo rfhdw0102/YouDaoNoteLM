@@ -228,7 +228,7 @@ func (c *client) ConvertFromURLWithContext(ctx context.Context, url string) (str
 			)
 			return "", newConvertError(
 				"timeout",
-				"网页内容获取超时，请稍后重试或检查网址是否可访问",
+				"无法获取该网页内容",
 				fmt.Sprintf("请求MarkItDown URL转换超时（%v）", urlConvertTimeout),
 				0,
 			)
@@ -240,7 +240,7 @@ func (c *client) ConvertFromURLWithContext(ctx context.Context, url string) (str
 		)
 		return "", newConvertError(
 			"network",
-			"网络连接失败，请检查网络后重试",
+			"无法获取该网页内容",
 			fmt.Sprintf("请求MarkItDown URL转换失败: %v", err),
 			0,
 		)
@@ -259,7 +259,7 @@ func (c *client) ConvertFromURLWithContext(ctx context.Context, url string) (str
 		)
 		return "", newConvertError(
 			"timeout",
-			"网页内容获取超时，请稍后重试",
+			"无法获取该网页内容",
 			"MarkItDown 服务端转换超时",
 			http.StatusRequestTimeout,
 		)
@@ -268,26 +268,21 @@ func (c *client) ConvertFromURLWithContext(ctx context.Context, url string) (str
 	if resp.StatusCode != http.StatusOK {
 		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			return "", newConvertError("server_error", "网页内容获取失败", fmt.Sprintf("读取响应体失败: %v", readErr), resp.StatusCode)
+			return "", newConvertError("server_error", "无法获取该网页内容", fmt.Sprintf("读取响应体失败: %v", readErr), resp.StatusCode)
 		}
 		detailMsg := fmt.Sprintf("MarkItDown URL转换返回错误 %d: %s", resp.StatusCode, string(respBody))
 
 		// 根据 HTTP 状态码返回用户友好的错误信息
-		var userMsg string
 		var code string
 		switch resp.StatusCode {
 		case http.StatusForbidden:
 			code = "forbidden"
-			userMsg = "网页拒绝访问，该网站可能限制了外部访问"
 		case http.StatusNotFound:
 			code = "not_found"
-			userMsg = "网页不存在，请检查网址是否正确"
 		case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 			code = "server_error"
-			userMsg = "网页服务暂时不可用，请稍后重试"
 		default:
 			code = "server_error"
-			userMsg = "网页内容获取失败，请稍后重试"
 		}
 
 		logger.Error("MarkItDown URL 转换返回错误",
@@ -296,7 +291,7 @@ func (c *client) ConvertFromURLWithContext(ctx context.Context, url string) (str
 			zap.Duration("elapsed", time.Since(start)),
 			zap.String("code", code),
 		)
-		return "", newConvertError(code, userMsg, detailMsg, resp.StatusCode)
+		return "", newConvertError(code, "无法获取该网页内容", detailMsg, resp.StatusCode)
 	}
 
 	respBody, err := io.ReadAll(resp.Body)

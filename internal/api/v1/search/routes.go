@@ -8,10 +8,10 @@ import (
 )
 
 // RegisterRoutes 注册搜索路由
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, statusCheck gin.HandlerFunc) {
 	// 笔记本下的搜索操作（需认证）
 	notebooks := r.Group("/notebooks/:nbId/search")
-	notebooks.Use(middleware.Auth(ctrl.tokenBlacklist))
+	notebooks.Use(middleware.Auth(ctrl.tokenBlacklist), statusCheck)
 	{
 		notebooks.POST("", ctrl.Search)
 		notebooks.POST("/stream", ctrl.SearchStream) // SSE 流式搜索

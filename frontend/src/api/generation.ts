@@ -53,16 +53,82 @@ export interface GenerationResponse {
   meta?: Record<string, unknown>;
 }
 
-export async function generateFromMarkdown(req: GenerationRequest): Promise<GenerationResponse> {
-  const res = await client.post<{ code: number; data: GenerationResponse; message?: string }>(
+export type GenerationTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface GenerationTask {
+  task_id: string;
+  user_id: number;
+  notebook_id?: number;
+  type: GenerationType;
+  status: GenerationTaskStatus;
+  result?: GenerationResponse;
+  error?: string;
+  meta?: Record<string, unknown>;
+  created_at: number;
+  updated_at: number;
+  sequence?: number;
+}
+
+export type GenerationTaskSocketEvent =
+  | { event: 'snapshot'; tasks: GenerationTask[] }
+  | { event: 'task'; task: GenerationTask }
+  | { event: 'error'; message?: string };
+
+export async function generateFromMarkdown(req: GenerationRequest): Promise<GenerationTask> {
+  const res = await client.post<{ code: number; data: GenerationTask; message?: string }>(
     '/generations',
     req,
-    { timeout: 900000 }
+    { timeout: 30000 }
   );
   if (res.data.code !== 0) {
     throw new Error(res.data.message || '生成失败');
   }
   return res.data.data;
+}
+
+export async function getGenerationTask(taskId: string): Promise<GenerationTask> {
+  const res = await client.get<{ code: number; data: GenerationTask; message?: string }>(
+    `/generations/tasks/${taskId}`,
+    { timeout: 30000 }
+  );
+  if (res.data.code !== 0) {
+    throw new Error(res.data.message || '获取生成任务失败');
+  }
+  return res.data.data;
+}
+
+export async function listGenerationTasks(params?: { notebook_id?: number; limit?: number }): Promise<GenerationTask[]> {
+  const res = await client.get<{ code: number; data: GenerationTask[]; message?: string }>(
+    '/generations/tasks',
+    { params, timeout: 30000 }
+  );
+  if (res.data.code !== 0) {
+    throw new Error(res.data.message || '获取生成队列失败');
+  }
+  return res.data.data || [];
+}
+
+export async function cancelGenerationTask(taskId: string): Promise<void> {
+  const res = await client.delete<{ code: number; message?: string }>(
+    `/generations/tasks/${taskId}`,
+    { timeout: 30000 }
+  );
+  if (res.data.code !== 0) {
+    throw new Error(res.data.message || '停止生成任务失败');
+  }
+}
+
+export function createGenerationTaskSocket(params?: { notebook_id?: number }): WebSocket {
+  const url = new URL('/api/v1/generations/ws', window.location.href);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  if (params?.notebook_id) {
+    url.searchParams.set('notebook_id', String(params.notebook_id));
+  }
+  const token = sessionStorage.getItem('access_token');
+  if (token) {
+    url.searchParams.set('token', token);
+  }
+  return new WebSocket(url.toString());
 }
 
 // ============ 导出 API ============

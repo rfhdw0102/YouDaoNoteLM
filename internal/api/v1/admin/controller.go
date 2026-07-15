@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"YoudaoNoteLm/internal/middleware"
 	"YoudaoNoteLm/internal/model/dto/request"
 	"YoudaoNoteLm/internal/service"
 	"YoudaoNoteLm/pkg/response"
@@ -51,7 +52,7 @@ func (ctrl *Controller) UpdateUserStatus(c *gin.Context) {
 		return
 	}
 
-	if err := ctrl.adminService.UpdateUserStatus(uint(id), req.Enabled); err != nil {
+	if err := ctrl.adminService.UpdateUserStatus(middleware.GetUserID(c), uint(id), req.Enabled); err != nil {
 		response.BizError(c, err)
 		return
 	}

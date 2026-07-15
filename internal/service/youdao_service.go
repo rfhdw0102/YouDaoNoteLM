@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"YoudaoNoteLm/internal/repository"
 	externalYoudao "YoudaoNoteLm/internal/service/external/youdao"
 	"YoudaoNoteLm/pkg/cache"
+	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/logger"
 
 	"github.com/google/uuid"
@@ -65,6 +67,18 @@ func (s *youdaoService) getAPIKey(userID uint) (string, error) {
 	return binding.APIKey, nil
 }
 
+// mapYoudaoAuthError 将有道 CLI 的认证失败错误（HTTP 401 / API Key 无效或过期）
+// 映射为用户友好的业务错误 BizError，使前端看到的是 "有道云笔记 API Key 无效或已过期，请重新绑定"
+// 而不是原始的 "CLI 执行失败: SSE error: Non-200 status code (401)"。
+// 非认证错误返回 nil，由调用方按原逻辑包装上下文信息。
+func mapYoudaoAuthError(err error) error {
+	if err != nil && errors.Is(err, externalYoudao.ErrAuthFailed) {
+		return bizerrors.NewWithErr(bizerrors.CodeInvalidYoudaoAPIKey,
+			"有道云笔记 API Key 无效或已过期，请重新绑定", err)
+	}
+	return nil
+}
+
 // generateAndSaveSummary 生成资料摘要并保存到 MySQL 和 Redis
 func (s *youdaoService) generateAndSaveSummary(sourceID uint, userID uint, content string) {
 	doGenerateAndSaveSummary(s.sourceRepo, s.configSvc, s.summaryCache, sourceID, userID, content)
@@ -80,6 +94,9 @@ func (s *youdaoService) Bind(userID uint, apiKey string) error {
 	// 2. 验证 Key 有效性（调用 list 测试）
 	_, err := s.cli.List(apiKey, "")
 	if err != nil {
+		if friendly := mapYoudaoAuthError(err); friendly != nil {
+			return friendly
+		}
 		return fmt.Errorf("API Key 验证失败（CLI 返回错误: %w），请检查 Key 是否正确或网络是否正常", err)
 	}
 
@@ -111,6 +128,9 @@ func (s *youdaoService) ListNotes(userID uint, folderID string) ([]externalYouda
 
 	items, err := s.cli.List(apiKey, folderID)
 	if err != nil {
+		if friendly := mapYoudaoAuthError(err); friendly != nil {
+			return nil, friendly
+		}
 		return nil, fmt.Errorf("获取笔记列表失败: %w", err)
 	}
 
@@ -140,6 +160,9 @@ func (s *youdaoService) ImportNote(userID uint, notebookID uint, fileID string) 
 			zap.Duration("elapsed", time.Since(stepStart)),
 			zap.Error(err),
 		)
+		if friendly := mapYoudaoAuthError(err); friendly != nil {
+			return nil, friendly
+		}
 		return nil, fmt.Errorf("读取笔记内容失败: %w", err)
 	}
 
@@ -466,7 +489,15 @@ func (s *youdaoService) processSingleNote(taskCtx context.Context, apiKey string
 			zap.Duration("elapsed", time.Since(stepStart)),
 			zap.Error(err),
 		)
-		if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", fmt.Sprintf("读取失败: %v", err)); updateErr != nil {
+		failMsg := fmt.Sprintf("读取失败: %v", err)
+		if friendly := mapYoudaoAuthError(err); friendly != nil {
+			if bizErr, ok := friendly.(*bizerrors.BizError); ok {
+				failMsg = bizErr.Message
+			} else {
+				failMsg = friendly.Error()
+			}
+		}
+		if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", failMsg); updateErr != nil {
 			logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
 		}
 		return

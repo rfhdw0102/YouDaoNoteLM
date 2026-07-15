@@ -43,7 +43,7 @@ func (ctrl *Controller) Search(c *gin.Context) {
 		return
 	}
 
-	result, err := ctrl.searchService.Search(userID, uint(nbID), req.Query)
+	result, err := ctrl.searchService.Search(c.Request.Context(), userID, uint(nbID), req.Query)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -74,7 +74,7 @@ func (ctrl *Controller) SearchStream(c *gin.Context) {
 	c.Header("X-Accel-Buffering", "no") // 禁用 Nginx 缓冲
 
 	c.Stream(func(w io.Writer) bool {
-		eventCh := ctrl.searchService.SearchStream(userID, uint(nbID), req.Query)
+		eventCh := ctrl.searchService.SearchStream(c.Request.Context(), userID, uint(nbID), req.Query)
 		for event := range eventCh {
 			data, err := json.Marshal(event)
 			if err != nil {

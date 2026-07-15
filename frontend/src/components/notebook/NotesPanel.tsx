@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -39,7 +39,7 @@ const typeColors: Record<NoteType, string> = {
 };
 
 export default function NotesPanel() {
-  const { currentNotebookId, getCurrentNotebook, deleteNote, renameNote, toggleNoteSource, generateNote, generatingType, generationError, clearGenerationError } = useNotebookStore();
+  const { currentNotebookId, getCurrentNotebook, deleteNote, renameNote, toggleNoteSource, generateNote, generationTasks, generationError, clearGenerationError, connectGenerationTasks, disconnectGenerationTasks, cancelGenerationTask } = useNotebookStore();
   const notebook = getCurrentNotebook();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -53,11 +53,24 @@ export default function NotesPanel() {
   const [allowDegrade, setAllowDegrade] = useState(true);
   const [pptStyle, setPptStyle] = useState<string>('auto');
 
+  useEffect(() => {
+    if (!currentNotebookId) return;
+    connectGenerationTasks(currentNotebookId);
+    return () => disconnectGenerationTasks();
+  }, [currentNotebookId, connectGenerationTasks, disconnectGenerationTasks]);
+
   if (!notebook || !currentNotebookId) return null;
 
   const filteredNotes = notebook.notes.filter((n) =>
     n.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
+  const activeGenerationTasks = generationTasks
+    .filter((task) => task.notebookId === currentNotebookId && (task.status === 'pending' || task.status === 'running'))
+    .sort((a, b) => {
+      if ((a.sequence ?? 0) !== (b.sequence ?? 0)) return (a.sequence ?? 0) - (b.sequence ?? 0);
+      if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+      return a.taskId.localeCompare(b.taskId);
+    });
 
   const handleStartRename = (id: string, title: string) => {
     setEditingId(id);
@@ -128,14 +141,24 @@ export default function NotesPanel() {
   };
 
   // 调用后端生成 Agent
-  const handleGenerate = async (type: NoteType) => {
-    if (generatingType || !currentNotebookId) return;
-    await generateNote(currentNotebookId, type, {
+  const handleGenerate = (type: NoteType) => {
+    if (!currentNotebookId) return;
+    void generateNote(currentNotebookId, type, {
       prompt: genPrompt.trim() || undefined,
       useWeb,
       allowDegrade,
       pptStyle: type === 'ppt' ? pptStyle : undefined,
     });
+  };
+
+  const getActiveTaskForType = (type: NoteType) =>
+    activeGenerationTasks.find((task) => task.type === type);
+
+  const getGenerationButtonLabel = (type: NoteType) => {
+    const task = getActiveTaskForType(type);
+    if (task?.status === 'pending') return '排队中';
+    if (task?.status === 'running') return '执行中';
+    return null;
   };
 
   // ---- Note Viewer ----
@@ -231,31 +254,33 @@ export default function NotesPanel() {
             { icon: HelpCircle, label: '测验', type: 'quiz' as NoteType, color: 'from-orange-400 to-amber-400' },
             { icon: FileText, label: '笔记', type: 'note' as NoteType, color: 'from-blue-400 to-cyan-400' },
           ].map(({ icon: Icon, label, type, color }) => {
-            const isActive = generatingType === type;
-            const isDisabled = generatingType !== null && generatingType !== type;
+            const activeTask = getActiveTaskForType(type);
+            const taskLabel = getGenerationButtonLabel(type);
             return (
               <button
                 key={type}
                 onClick={() => handleGenerate(type)}
-                disabled={generatingType !== null}
                 className={cn(
-                  'flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-all group',
-                  isActive
+                  'flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-all group cursor-pointer',
+                  activeTask
                     ? 'border-accent/40 bg-accent/10'
-                    : isDisabled
-                      ? 'border-border-light bg-bg-secondary/50 opacity-50 cursor-not-allowed'
-                      : 'border-border-light hover:border-accent/40 hover:bg-accent/5 cursor-pointer'
+                    : 'border-border-light hover:border-accent/40 hover:bg-accent/5'
                 )}
               >
                 <div className={cn('w-9 h-9 rounded-lg bg-gradient-to-br flex items-center justify-center', color)}>
-                  {isActive ? <Loader2 size={16} className="text-white animate-spin" /> : <Icon size={16} className="text-white" />}
+                  {activeTask ? <Loader2 size={16} className="text-white animate-spin" /> : <Icon size={16} className="text-white" />}
                 </div>
                 <span className={cn(
                   'text-xs transition-colors',
-                  isActive ? 'text-accent font-medium' : 'text-text-secondary group-hover:text-text-primary'
+                  activeTask ? 'text-accent font-medium' : 'text-text-secondary group-hover:text-text-primary'
                 )}>
-                  {isActive ? '生成中...' : label}
+                  {label}
                 </span>
+                {taskLabel && (
+                  <span className="text-xs text-accent font-medium transition-colors">
+                    {taskLabel}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -268,15 +293,14 @@ export default function NotesPanel() {
               type="text"
               value={genPrompt}
               onChange={(e) => setGenPrompt(e.target.value)}
-              placeholder={'输入自定义提示词，如「聚焦第三章核心概念」...'}              disabled={generatingType !== null}
+              placeholder={'输入自定义提示词，如「聚焦第三章核心概念」...'}
               className={cn(
                 'w-full h-8 px-3 pr-8 rounded-lg border text-xs outline-none transition-colors',
                 'bg-bg-secondary border-border text-text-primary placeholder:text-text-muted',
-                'focus:border-accent/50 focus:bg-bg-card',
-                generatingType !== null && 'opacity-50 cursor-not-allowed'
+                'focus:border-accent/50 focus:bg-bg-card'
               )}
             />
-            {genPrompt && !generatingType && (
+            {genPrompt && (
               <button
                 onClick={() => setGenPrompt('')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-muted hover:text-text-primary cursor-pointer"
@@ -290,12 +314,10 @@ export default function NotesPanel() {
             <select
               value={pptStyle}
               onChange={(e) => setPptStyle(e.target.value)}
-              disabled={generatingType !== null}
               title="PPT 风格"
               className={cn(
                 'h-7 px-2 rounded-md text-[11px] border outline-none transition-all',
-                'bg-bg-tertiary border-border text-text-secondary focus:border-accent/40',
-                generatingType !== null && 'opacity-50 cursor-not-allowed'
+                'bg-bg-tertiary border-border text-text-secondary focus:border-accent/40'
               )}
             >
               <option value="auto">PPT风格：自动</option>
@@ -306,14 +328,12 @@ export default function NotesPanel() {
             </select>
             <button
               onClick={() => setUseWeb(!useWeb)}
-              disabled={generatingType !== null}
               className={cn(
                 'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] border transition-all',
                 useWeb
                   ? 'bg-accent/10 border-accent/30 text-accent'
                   : 'bg-bg-tertiary border-border text-text-muted',
-                generatingType !== null && 'opacity-50 cursor-not-allowed',
-                generatingType === null && 'cursor-pointer hover:border-accent/30'
+                'cursor-pointer hover:border-accent/30'
               )}
             >
               <Globe size={11} />
@@ -322,14 +342,12 @@ export default function NotesPanel() {
 
             <button
               onClick={() => setAllowDegrade(!allowDegrade)}
-              disabled={generatingType !== null}
               className={cn(
                 'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] border transition-all',
                 allowDegrade
                   ? 'bg-accent/10 border-accent/30 text-accent'
                   : 'bg-bg-tertiary border-border text-text-muted',
-                generatingType !== null && 'opacity-50 cursor-not-allowed',
-                generatingType === null && 'cursor-pointer hover:border-accent/30'
+                'cursor-pointer hover:border-accent/30'
               )}
             >
               <ShieldOff size={11} />
@@ -337,6 +355,46 @@ export default function NotesPanel() {
             </button>
           </div>
         </div>
+
+        {activeGenerationTasks.length > 0 && (
+          <div className="mt-2.5 rounded-lg border border-border-light bg-bg-secondary/60 px-3 py-2">
+            <div className="mb-1.5 flex items-center justify-between text-[11px] text-text-muted">
+              <span>生成任务</span>
+              <span>{activeGenerationTasks.length} 个待处理</span>
+            </div>
+            <div className="space-y-1">
+              {activeGenerationTasks.map((task, index) => (
+                <div key={task.taskId} className="flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {task.status === 'running' ? (
+                      <Loader2 size={12} className="text-accent animate-spin flex-shrink-0" />
+                    ) : (
+                      <span className="h-3 w-3 rounded-full border border-border flex-shrink-0" />
+                    )}
+                    <span className="truncate text-text-secondary">
+                      {index + 1}. {typeLabels[task.type]}
+                    </span>
+                  </div>
+                  <span className={cn(
+                    'flex-shrink-0 text-[11px]',
+                    task.status === 'running' ? 'text-accent' : 'text-text-muted'
+                  )}>
+                    {task.status === 'running' ? '执行中' : '排队中'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void cancelGenerationTask(task.taskId)}
+                    className="flex-shrink-0 rounded p-0.5 text-text-muted transition-colors hover:bg-bg-hover hover:text-red-400 cursor-pointer"
+                    title="停止生成"
+                    aria-label="停止生成"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Search */}

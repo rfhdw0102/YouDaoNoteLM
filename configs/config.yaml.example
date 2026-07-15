@@ -82,7 +82,8 @@ external:
   markitdown:
     url: "http://localhost:8085"       # MarkItDown 文档转换服务地址
   minio:
-    endpoint: "localhost:9000"
+    endpoint: "localhost:9000"             # SDK 连接用（容器内/本地可达）
+    public_endpoint: ""                    # URL 重写用（外部访问），留空则不重写；生产由 MINIO_PUBLIC_ENDPOINT 覆盖
     access_key: "minioadmin"
     secret_key: "your_minio_password"
     bucket: "youdaonotelm"

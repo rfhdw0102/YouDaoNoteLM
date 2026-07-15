@@ -20,9 +20,10 @@ import (
 
 // MinioStorage MinIO 存储实现（导出，供外部包类型断言使用）
 type MinioStorage struct {
-	client         *minio.Client
+	client         *minio.Client // 内部 endpoint，用于上传/下载/删除
+	presignClient  *minio.Client // 公网 endpoint，用于生成预签名 URL（签名 host 与公网访问一致）
 	bucket         string
-	publicEndpoint string // 公网访问地址，用于生成外网可访问的预签名URL
+	publicEndpoint string
 	accessKey      string
 	secretKey      string
 }
@@ -37,7 +38,39 @@ func NewMinIOStorage(endpoint, accessKey, secretKey, bucket, publicEndpoint stri
 		return nil, fmt.Errorf("MinIO 初始化失败: %w", err)
 	}
 
-	return &MinioStorage{client: client, bucket: bucket, publicEndpoint: publicEndpoint, accessKey: accessKey, secretKey: secretKey}, nil
+	// 若配置了公网 endpoint，创建专用 presign client：直接用公网地址生成 presign URL，
+	// 签名计算的 host 与外部访问一致，避免 host 重写导致 SignatureDoesNotMatch。
+	// 设 Region 避免 PresignedGetObject 内部 GetBucketLocation 调用（纯本地签名，不 dial 公网）。
+	var presignClient *minio.Client
+	if publicEndpoint != "" {
+		pubHost := strings.TrimPrefix(strings.TrimPrefix(publicEndpoint, "https://"), "http://")
+		pubSecure := strings.HasPrefix(strings.ToLower(publicEndpoint), "https://")
+		presignClient, err = minio.New(pubHost, &minio.Options{
+			Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+			Secure: pubSecure,
+			Region: "us-east-1",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("MinIO presign client 初始化失败: %w", err)
+		}
+	}
+
+	// 初始化时确保 bucket 存在，不存在则自动创建
+	ctx := context.Background()
+	exists, err := client.BucketExists(ctx, bucket)
+	if err != nil {
+		return nil, fmt.Errorf("检查 MinIO bucket 失败: %w", err)
+	}
+	if !exists {
+		if err := client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
+			return nil, fmt.Errorf("创建 MinIO bucket %q 失败: %w", bucket, err)
+		}
+		logger.Info("MinIO bucket 已自动创建", zap.String("bucket", bucket))
+	} else {
+		logger.Info("MinIO bucket 已存在", zap.String("bucket", bucket))
+	}
+
+	return &MinioStorage{client: client, presignClient: presignClient, bucket: bucket, publicEndpoint: publicEndpoint, accessKey: accessKey, secretKey: secretKey}, nil
 }
 
 // Upload 上传文件到 MinIO
@@ -94,28 +127,18 @@ func (s *MinioStorage) Delete(filePath string) error {
 }
 
 // GetPresignedURL 获取临时访问 URL
+// 优先用公网 presign client 生成：签名 host 与外部访问一致，避免 host 重写破坏 S3 签名。
+// presignClient 设了 Region，PresignedGetObject 不会 dial 公网（纯本地签名计算）。
 func (s *MinioStorage) GetPresignedURL(filePath string, expiry time.Duration) (string, error) {
-	// 如果配置了公网地址，使用公网 endpoint 生成预签名 URL（确保签名正确）
-	if s.publicEndpoint != "" {
-		publicHost := strings.TrimPrefix(s.publicEndpoint, "http://")
-		publicHost = strings.TrimPrefix(publicHost, "https://")
-
-		publicClient, err := minio.New(publicHost, &minio.Options{
-			Creds:  credentials.NewStaticV4(s.accessKey, s.secretKey, ""),
-			Secure: false,
-		})
-		if err != nil {
-			return "", fmt.Errorf("创建公网 MinIO 客户端失败: %w", err)
-		}
-
-		presignedURL, err := publicClient.PresignedGetObject(context.Background(), s.bucket, filePath, expiry, nil)
+	if s.presignClient != nil {
+		presignedURL, err := s.presignClient.PresignedGetObject(context.Background(), s.bucket, filePath, expiry, nil)
 		if err != nil {
 			return "", fmt.Errorf("生成预签名URL失败: %w", err)
 		}
 		return presignedURL.String(), nil
 	}
 
-	// 使用默认 endpoint
+	// 降级：无公网 endpoint 时用内部 client 生成（仅内部访问场景）
 	presignedURL, err := s.client.PresignedGetObject(context.Background(), s.bucket, filePath, expiry, nil)
 	if err != nil {
 		return "", fmt.Errorf("生成预签名URL失败: %w", err)
