@@ -68,6 +68,10 @@ const (
 	CodeLLMResponseInvalid = 40022
 	CodeSearchAgentTimeout = 40023
 
+	// 其他服务未配置错误码 4003x
+	CodeEmbeddingNotConfigured = 40030
+	CodeASRNotConfigured       = 40031
+
 	// 服务器错误 5xxxx
 	CodeInternalServiceError = 50001
 
@@ -117,10 +121,16 @@ var codeMessages = map[int]string{
 	CodeInvalidYoudaoAPIKey:         "有道API Key无效",
 	CodeDuplicateImport:             "重复导入",
 	CodePreviewExpired:              "预览已过期",
+	CodeSearchProviderNotConfigured: "请先在设置中配置搜索引擎服务",
+	CodeSearchInvalidAPIKey:         "搜索引擎 API Key 无效",
+	CodeSearchRequestTimeout:        "搜索请求超时",
+	CodeSearchProviderUnavailable:   "搜索引擎服务暂不可用",
 	CodeLLMNotConfigured:            "请先在设置中配置 LLM 服务",
 	CodeLLMCallFailed:               "LLM 服务调用失败",
 	CodeLLMResponseInvalid:          "LLM 返回结果格式异常",
 	CodeSearchAgentTimeout:          "搜索 Agent 执行超时",
+	CodeEmbeddingNotConfigured:      "请先在设置中配置 Embedding 服务",
+	CodeASRNotConfigured:            "请先在设置中配置 ASR 语音识别服务",
 	CodeInternalServiceError:        "内部服务错误",
 	CodeConfigTestFailed:            "配置连通性测试失败",
 	CodeConfigTestTimeout:           "配置连通性测试超时",

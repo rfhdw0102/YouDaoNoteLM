@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { isAxiosError } from 'axios';
 import type { Notebook, Source, Conversation, Note, NoteType, ChatMessage, Reference } from '../types';
 import * as notebookApi from '../api/notebook';
 import * as sourceApi from '../api/source';
@@ -15,6 +16,7 @@ interface NotebookState {
   notebooks: Notebook[];
   currentNotebookId: string | null;
   currentConversationId: string | null;
+  streamingConversationId: string | null;  // 当前正在流式生成的会话 ID
   loading: boolean;
   streamingContent: string;  // For real-time display
   // Generation state
@@ -132,6 +134,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   notebooks: [],
   currentNotebookId: null,
   currentConversationId: null,
+  streamingConversationId: null,
   taskIdBySourceId: {},
   loading: false,
   streamingContent: '',
@@ -180,6 +183,14 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   setCurrentNotebook: async (id) => {
+    // 如果有正在流式生成的会话，先中断它
+    const { streamingConversationId, currentNotebookId: oldNotebookId } = get();
+    if (streamingConversationId && oldNotebookId) {
+      console.log('[Switch] 切换笔记本，中断旧会话流:', streamingConversationId);
+      // 同步中断，不阻塞后续流程
+      get().stopGeneration(oldNotebookId, streamingConversationId).catch(() => {});
+    }
+
     set({ currentNotebookId: id, currentConversationId: null });
 
     // Fetch sources and conversations
@@ -234,9 +245,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       } else {
         throw new Error(res.message);
       }
-    } catch (err: any) {
-      if (err?.response?.status === 409) {
-        throw new Error(err.response.data?.message || '已存在同名笔记本');
+    } catch (err: unknown) {
+      if (isAxiosError(err) && err.response?.status === 409) {
+        throw new Error(err.response.data?.message || '已存在同名笔记本', { cause: err });
       }
       throw err;
     }
@@ -273,9 +284,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       } else {
         throw new Error(res.message);
       }
-    } catch (err: any) {
-      if (err?.response?.status === 409) {
-        throw new Error(err.response.data?.message || '已存在同名笔记本');
+    } catch (err: unknown) {
+      if (isAxiosError(err) && err.response?.status === 409) {
+        throw new Error(err.response.data?.message || '已存在同名笔记本', { cause: err });
       }
       throw err;
     }
@@ -618,7 +629,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         errorMessage: res.message || '导入失败',
       });
       throw new Error(res.message);
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Mark placeholder as error (only if not already marked)
       const currentNotebook = get().notebooks.find(n => n.id === notebookId);
       const placeholderSource = currentNotebook?.sources.find(s => s.id === tempId);
@@ -661,7 +672,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
             content: preview.transcribed_text,
             previewId: preview.preview_id,
           });
-        }).catch((err: any) => {
+        }).catch((err: unknown) => {
           get().updateSource(notebookId, tempId, {
             status: 'error',
             errorMessage: getErrorMessage(err, '音频转写失败'),
@@ -675,7 +686,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         errorMessage: res.message || '音频转写失败',
       });
       throw new Error(res.message);
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Mark placeholder as error (only if not already marked)
       const currentNotebook = get().notebooks.find(n => n.id === notebookId);
       const placeholderSource = currentNotebook?.sources.find(s => s.id === tempId);
@@ -715,30 +726,52 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   confirmAudio: async (previewId, notebookId, content) => {
-    const res = await importApi.confirmAudio({
-      preview_id: previewId,
-      content: content || undefined,
-      notebook_id: Number(notebookId),
-    });
-    if (res.code === 0) {
-      const source = toSource(res.data);
-      // Remove the pending placeholder (has previewId) and add the confirmed source
-      set((state) => ({
-        notebooks: state.notebooks.map((n) =>
-          n.id === notebookId
-            ? {
+    try {
+      const res = await importApi.confirmAudio({
+        preview_id: previewId,
+        content: content || undefined,
+        notebook_id: Number(notebookId),
+      });
+      if (res.code === 0) {
+        const source = toSource(res.data);
+        // Remove the pending placeholder (has previewId) and add the confirmed source
+        set((state) => ({
+          notebooks: state.notebooks.map((n) =>
+            n.id === notebookId
+              ? {
               ...n,
               sources: [
                 ...n.sources.filter((s) => s.previewId !== previewId),
                 source
               ]
             }
-            : n
-        ),
-      }));
-      return source;
+              : n
+          ),
+        }));
+        return source;
+      }
+      // API returned error code — mark placeholder as error so UI updates immediately
+      const nb = get().notebooks.find(n => n.id === notebookId);
+      const placeholder = nb?.sources.find(s => s.previewId === previewId);
+      if (placeholder && placeholder.status !== 'error') {
+        get().updateSource(notebookId, placeholder.id, {
+          status: 'error',
+          errorMessage: res.message || '导入失败',
+        });
+      }
+      throw new Error(res.message);
+    } catch (err: unknown) {
+      // Network or other error — mark placeholder as error if not already marked
+      const nb = get().notebooks.find(n => n.id === notebookId);
+      const placeholder = nb?.sources.find(s => s.previewId === previewId);
+      if (placeholder && placeholder.status !== 'error') {
+        get().updateSource(notebookId, placeholder.id, {
+          status: 'error',
+          errorMessage: getErrorMessage(err, '导入失败'),
+        });
+      }
+      throw err;
     }
-    throw new Error(res.message);
   },
 
   getImportTask: async (taskId) => {
@@ -910,11 +943,15 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   setCurrentConversation: (id) => {
-    const notebookId = get().currentNotebookId;
-    if (notebookId) {
-      localStorage.setItem(`lastConversation_${notebookId}`, id);
+    const { currentNotebookId } = get();
+
+    // 先立即更新 UI 状态
+    if (currentNotebookId) {
+      localStorage.setItem(`lastConversation_${currentNotebookId}`, id);
     }
     set({ currentConversationId: id });
+
+    // 注意：流式生成的停止由 ChatPanel 的 useEffect 处理（会 await 确保完成后再拉取消息）
   },
 
   deleteConversation: async (notebookId, conversationId) => {
@@ -1015,6 +1052,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   sendMessage: async (notebookId, conversationId, content, sourceIds, llmConfigId) => {
+    // 标记当前正在流式生成的会话
+    set({ streamingConversationId: conversationId });
+
     // Add user message immediately
     const userMessageId = `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const userMessage: ChatMessage = {
@@ -1040,12 +1080,15 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
     try {
       console.log('Sending message to conversation:', conversationId);
-      const response = await chatApi.sendMessage(
+      const { response, abortController } = await chatApi.sendMessage(
         Number(conversationId),
         content,
         sourceIds,
         llmConfigId
       );
+
+      // Save abort controller for stopGeneration to use
+      currentStreamAbortController = abortController;
 
       console.log('Response status:', response.status, response.ok);
       console.log('Response headers:', Object.fromEntries(response.headers.entries()));
@@ -1069,6 +1112,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           // Update the assistant message with the response
           const assistantContent = jsonData.data.content || jsonData.data.message || '';
           set((state) => ({
+            streamingConversationId: null,
             notebooks: state.notebooks.map((n) =>
               n.id === notebookId
                 ? {
@@ -1097,7 +1141,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
       // SSE response - parse the stream
       let accumulatedContent = '';
-      const abortController = chatApi.parseSSEStream(response, {
+      chatApi.parseSSEStream(response, {
         onToken: (token) => {
           console.log('Token received:', token);
           accumulatedContent += token;
@@ -1174,6 +1218,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         onDone: () => {
           console.log('Stream completed');
           set((state) => ({
+            streamingConversationId: null,
             notebooks: state.notebooks.map((n) =>
               n.id === notebookId
                 ? {
@@ -1200,6 +1245,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           console.error('Stream error:', error);
           const friendlyMessage = getChatErrorMessage(error);
           set((state) => ({
+            streamingConversationId: null,
             notebooks: state.notebooks.map((n) =>
               n.id === notebookId
                 ? {
@@ -1221,12 +1267,11 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
             ),
           }));
         },
-      });
-      // Save abort controller for stopGeneration to use
-      currentStreamAbortController = abortController;
+      }, abortController);
     } catch (err) {
       console.error('Failed to send message:', err);
       set((state) => ({
+        streamingConversationId: null,
         notebooks: state.notebooks.map((n) =>
           n.id === notebookId
             ? {
@@ -1252,14 +1297,21 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
   stopGeneration: async (notebookId, conversationId) => {
     try {
+      console.log('[stopGeneration] 开始停止生成, conversationId:', conversationId);
       // Abort the frontend SSE stream first
       if (currentStreamAbortController) {
+        console.log('[stopGeneration] 调用 abort() 中断 SSE 连接');
         currentStreamAbortController.abort();
         currentStreamAbortController = null;
+      } else {
+        console.log('[stopGeneration] 没有活跃的 AbortController');
       }
+      console.log('[stopGeneration] 调用后端 /stop API');
       await chatApi.stopGeneration(Number(conversationId));
+      console.log('[stopGeneration] 后端 /stop API 调用成功');
       // Mark any streaming messages as done
       set((state) => ({
+        streamingConversationId: null,
         notebooks: state.notebooks.map((n) =>
           n.id === notebookId
             ? {
@@ -1279,7 +1331,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      console.error('Failed to stop generation:', err);
+      console.error('[stopGeneration] 停止生成失败:', err);
     }
   },
 

@@ -14,7 +14,9 @@ import (
 	"YoudaoNoteLm/pkg/cache"
 	"YoudaoNoteLm/pkg/config"
 	"YoudaoNoteLm/pkg/database"
+	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/logger"
+	"YoudaoNoteLm/pkg/utils"
 	"context"
 	"fmt"
 	"net/http"
@@ -64,6 +66,9 @@ func (a *App) Initialize() error {
 		return err
 	}
 	if err := a.initDatabase(); err != nil {
+		return err
+	}
+	if err := a.verifyEncryptionKey(); err != nil {
 		return err
 	}
 
@@ -133,6 +138,42 @@ func (a *App) initDatabase() error {
 	}
 	a.redis = rs
 
+	return nil
+}
+
+// verifyEncryptionKey 校验 ENCRYPTION_KEY 能否解密数据库中已加密的 API Key
+// 启动失败比静默降级更好——立即暴露密钥不匹配问题，避免运行时把密文当明文发给外部 API 导致 401
+func (a *App) verifyEncryptionKey() error {
+	key := a.cfg.Security.EncryptionKey
+	if key == "" {
+		return nil
+	}
+
+	// 优先抽样 user_llm_config 表
+	var llmCfg entity.UserLLMConfig
+	if err := a.mysqlDB.First(&llmCfg).Error; err == nil {
+		if llmCfg.APIKey != "" {
+			if _, err := utils.Decrypt(llmCfg.APIKey, []byte(key)); err != nil {
+				return fmt.Errorf("ENCRYPTION_KEY 与数据库中已加密的 API Key 不匹配（user_llm_config 表），"+
+					"请确保使用与加密时相同的 32 字节密钥，或在 Web UI 重新输入 API Key: %w", err)
+			}
+		}
+		return nil
+	}
+
+	// 再抽样 user_config 表
+	var userCfg entity.UserConfig
+	if err := a.mysqlDB.First(&userCfg).Error; err == nil {
+		if userCfg.APIKey != "" {
+			if _, err := utils.Decrypt(userCfg.APIKey, []byte(key)); err != nil {
+				return fmt.Errorf("ENCRYPTION_KEY 与数据库中已加密的 API Key 不匹配（user_config 表），"+
+					"请确保使用与加密时相同的 32 字节密钥，或在 Web UI 重新输入 API Key: %w", err)
+			}
+		}
+		return nil
+	}
+
+	// 无数据，跳过
 	return nil
 }
 
@@ -211,7 +252,7 @@ func (a *App) initDependencies() {
 			return nil, fmt.Errorf("获取 Embedding 配置失败: %w", err)
 		}
 		if cfg == nil {
-			return nil, fmt.Errorf("请先在设置中配置 Embedding 服务")
+			return nil, bizerrors.ErrEmbeddingNotConfigured
 		}
 		return rag.NewEmbedderFromConfig(ctx, cfg)
 	}
@@ -244,8 +285,8 @@ func (a *App) initDependencies() {
 	youdaoBindingRepo := repository.NewYoudaoBindingRepository(a.mysqlDB)
 	youdaoSvc := service.NewYoudaoService(youdaoCLI, youdaoBindingRepo, sourceRepo, ingestionSvc, a.cfg.External.Youdao.CookiesPath, structurer, configSvc, sourceSummaryCache)
 
-	// 创建搜索 Agent（依赖 youdaoSvc、youdaoCLI 和 importerSvc）
-	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc, youdaoSvc, youdaoCLI)
+	// 创建搜索 Agent（import_document 是公共工具，search agent 只用 url 来源，不依赖 youdao）
+	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc)
 	searchAgentSvc := service.NewSearchAgentService(configSvc, importerSvc, searchAgentInst)
 
 	// 创建生成服务（SearchService 暂为 nil，后续可接入）
@@ -279,6 +320,8 @@ func (a *App) initDependencies() {
 		configSvc,
 		youdaoSvc,
 		ingestionSvc,
+		minioStorage,
+		userRepo,
 	)
 }
 
@@ -302,7 +345,7 @@ func (a *App) initIngestionService(sourceRepo repository.SourceRepository, confi
 			return nil, 0, fmt.Errorf("获取 Embedding 配置失败: %w", err)
 		}
 		if cfg == nil {
-			return nil, 0, fmt.Errorf("请先在设置中配置 Embedding 服务")
+			return nil, 0, bizerrors.ErrEmbeddingNotConfigured
 		}
 		embedder, err := rag.NewEmbedderFromConfig(ctx, cfg)
 		if err != nil {

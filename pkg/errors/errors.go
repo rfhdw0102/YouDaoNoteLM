@@ -88,5 +88,9 @@ var (
 	ErrLLMResponseInvalid = NewDefault(CodeLLMResponseInvalid)
 	ErrSearchAgentTimeout = NewDefault(CodeSearchAgentTimeout)
 
+	// 其他服务未配置
+	ErrEmbeddingNotConfigured = NewDefault(CodeEmbeddingNotConfigured)
+	ErrASRNotConfigured       = NewDefault(CodeASRNotConfigured)
+
 	ErrInternalServiceError = NewDefault(CodeInternalServiceError)
 )

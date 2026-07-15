@@ -6,9 +6,9 @@ import (
 )
 
 // RegisterRoutes 注册用户路由
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, statusCheck gin.HandlerFunc) {
 	userGroup := r.Group("/user")
-	userGroup.Use(middleware.Auth(ctrl.tokenBlacklist))
+	userGroup.Use(middleware.Auth(ctrl.tokenBlacklist), statusCheck)
 	{
 		userGroup.GET("/profile", ctrl.GetProfile)
 		userGroup.PUT("/profile", ctrl.UpdateProfile)

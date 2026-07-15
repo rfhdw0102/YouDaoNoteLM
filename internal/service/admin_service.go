@@ -45,21 +45,35 @@ func (s *adminService) ListUsers(page, size int, keyword string) ([]*response.Ad
 	return list, total, nil
 }
 
-func (s *adminService) UpdateUserStatus(userID uint, enabled bool) error {
-	user, err := s.userRepo.FindByID(userID)
+func (s *adminService) UpdateUserStatus(operatorID, targetID uint, enabled bool) error {
+	target, err := s.userRepo.FindByID(targetID)
 	if err != nil {
 		return err
 	}
-	if user == nil {
+	if target == nil {
 		return bizerrors.ErrUserNotFound
 	}
 
-	if enabled {
-		user.Status = 1
-	} else {
-		user.Status = 2
+	// 禁用操作：不允许禁用同等级用户（包括自己）
+	if !enabled {
+		operator, err := s.userRepo.FindByID(operatorID)
+		if err != nil {
+			return err
+		}
+		if operator == nil {
+			return bizerrors.ErrUserNotFound
+		}
+		if operator.Role == target.Role {
+			return bizerrors.New(bizerrors.CodeForbidden, "不能禁用同等级用户（包括自己）")
+		}
 	}
-	return s.userRepo.Update(user)
+
+	if enabled {
+		target.Status = 1
+	} else {
+		target.Status = 2
+	}
+	return s.userRepo.Update(target)
 }
 
 func (s *adminService) GetConfigs(group string) ([]*entity.SysConfig, error) {

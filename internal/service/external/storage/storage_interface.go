@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// FileStorage 文件存储接口（与 external.FileStorage 保持同步）
+// FileStorage 文件存储接口
 type FileStorage interface {
 	Upload(file *multipart.FileHeader) (string, error)
 	UploadBytes(objectName string, data []byte, contentType string) error

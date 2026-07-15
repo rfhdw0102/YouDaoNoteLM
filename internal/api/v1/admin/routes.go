@@ -7,8 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, blacklist service.TokenBlacklistService) {
-	admin := r.Group("/admin", middleware.Auth(blacklist))
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, blacklist service.TokenBlacklistService, statusCheck gin.HandlerFunc) {
+	admin := r.Group("/admin", middleware.Auth(blacklist), statusCheck, middleware.RequireAdmin())
 	{
 		admin.GET("/users", ctrl.ListUsers)
 		admin.PUT("/users/:id/status", ctrl.UpdateUserStatus)

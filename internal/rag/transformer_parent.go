@@ -14,7 +14,7 @@ import (
 // ParentTransformer 将 eino 文档转换为 ParentBlock
 // 实现 eino document.Transformer 接口
 type ParentTransformer struct {
-	maxTokens int // 默认 1000
+	maxTokens int // 每个父块的最大 token 数，默认 1000
 }
 
 // NewParentTransformer 创建 ParentBlock 构建器
@@ -48,7 +48,7 @@ func (t *ParentTransformer) Transform(ctx context.Context, src []*schema.Documen
 					"heading":      heading,
 					"level":        level,
 					"chapter_path": chapterPath,
-					"parent_index": blockIndex, // 记录原章节内顺序
+					"parent_index": blockIndex, // 记录在原章节内的顺序
 					"block_type":   "parent",
 				},
 			}
@@ -59,13 +59,13 @@ func (t *ParentTransformer) Transform(ctx context.Context, src []*schema.Documen
 	return result, nil
 }
 
-// 按 token 上限切分文本，尽量保持段落完整
+// splitByTokens 按 token 上限切分文本，尽量保持段落完整
 // 代码块（```...```）作为不可分割的原子单元，不会被切断
 func (t *ParentTransformer) splitByTokens(content string, maxTokens int) []string {
 	paragraphs := strings.Split(content, "\n\n") // 按空行分成段落
-	// Merge code blocks that were split across paragraphs.
-	// A code block like ```go\n...\n``` may contain \n\n inside it,
-	// causing Split to break it. We reassemble them here.
+	// 合并被空行分割的代码块
+	// 代码块如 ```go\n...\n``` 内部可能包含 \n\n，导致 Split 将其拆分
+	// 这里将它们重新组装
 	paragraphs = reassembleCodeBlockParagraphs(paragraphs)
 
 	var chunks []string
@@ -75,20 +75,17 @@ func (t *ParentTransformer) splitByTokens(content string, maxTokens int) []strin
 	for _, p := range paragraphs {
 		tokens := estimateTokens(p) // 估算当前段落 token 数
 
-		// If the paragraph is a code block (starts with ```), always keep
-		// it as an atomic unit — never split a code block across chunks.
+		// 代码块（以 ``` 开头）作为原子单元，不会被跨块切断
 		isCodeBlock := strings.HasPrefix(strings.TrimSpace(p), "```")
 
 		if isCodeBlock {
-			// If the current chunk is non-empty and adding the code block
-			// would exceed the limit, flush the current chunk first.
+			// 如果当前块非空且加上代码块会超限，先结束当前块
 			if currentTokens+tokens > maxTokens && len(current) > 0 {
 				chunks = append(chunks, strings.Join(current, "\n\n"))
 				current = nil
 				currentTokens = 0
 			}
-			// If the code block alone exceeds maxTokens, we still add it
-			// as its own chunk to avoid splitting it.
+			// 即使代码块本身超过 maxTokens，也作为独立块，避免拆分
 			current = append(current, p)
 			currentTokens += tokens
 		} else {
@@ -110,10 +107,9 @@ func (t *ParentTransformer) splitByTokens(content string, maxTokens int) []strin
 	return chunks
 }
 
-// reassembleCodeBlockParagraphs merges paragraphs that belong to the same
-// fenced code block. When content contains ```...``` with blank lines inside,
-// strings.Split("\n\n") will break the code block into separate paragraphs.
-// This function reassembles them back into a single paragraph.
+// reassembleCodeBlockParagraphs 将属于同一个代码块的段落重新合并
+// 当内容包含 ```...``` 且内部有空行时，strings.Split("\n\n") 会将代码块拆分成多个段落
+// 此函数将它们重新组装为一个完整的段落
 func reassembleCodeBlockParagraphs(paragraphs []string) []string {
 	var result []string
 	var codeBuf strings.Builder
@@ -123,7 +119,7 @@ func reassembleCodeBlockParagraphs(paragraphs []string) []string {
 		trimmed := strings.TrimSpace(p)
 		if !inCode {
 			if strings.HasPrefix(trimmed, "```") && !strings.HasSuffix(trimmed, "```") {
-				// Opening a code block that doesn't close on the same line
+				// 开始一个代码块（未在同一行闭合）
 				inCode = true
 				codeBuf.Reset()
 				codeBuf.WriteString(p)
@@ -133,8 +129,8 @@ func reassembleCodeBlockParagraphs(paragraphs []string) []string {
 		} else {
 			codeBuf.WriteString("\n\n")
 			codeBuf.WriteString(p)
-			// Check if this paragraph closes the code block
-			// A closing ``` appears on its own line at the end
+			// 检查当前段落是否闭合了代码块
+			// 闭合的 ``` 会单独出现在行末
 			lines := strings.Split(trimmed, "\n")
 			for _, line := range lines {
 				line = strings.TrimSpace(line)
@@ -147,21 +143,21 @@ func reassembleCodeBlockParagraphs(paragraphs []string) []string {
 			}
 		}
 	}
-	// Handle unclosed code block
+	// 处理未闭合的代码块
 	if inCode {
 		result = append(result, codeBuf.String())
 	}
 	return result
 }
 
-// 估算 token 数：中文每字1 token，英文每单词1 token
+// estimateTokens 估算 token 数：中文每字 1 token，英文每单词 1 token
 func estimateTokens(text string) int {
-	chars := 0      // 非ASCII字符数（中文等）
+	chars := 0      // 非 ASCII 字符数（中文等）
 	words := 0      // 英文单词数
 	inWord := false // 是否处于单词中
 
 	for _, r := range text {
-		if r > 127 { // 非ASCII（中文）
+		if r > 127 { // 非 ASCII（中文）
 			chars++
 			inWord = false
 		} else if r == ' ' || r == '\n' || r == '\t' { // 分隔符

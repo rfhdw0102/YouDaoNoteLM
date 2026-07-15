@@ -64,9 +64,10 @@ external:
   markitdown:
     url: "http://markitdown:8085"
   minio:
-    endpoint: "minio:9000"
-    access_key: ""                        # 由 MINIO_ACCESS_KEY 环境变量覆盖
-    secret_key: ""                        # 由 MINIO_SECRET_KEY 环境变量覆盖
+    endpoint: "minio:9000"                 # SDK 连接用（Docker 内部 DNS）
+    public_endpoint: ""                    # URL 重写用（浏览器/阿里云 ASR 访问），由 MINIO_PUBLIC_ENDPOINT 覆盖
+    access_key: ""                         # 由 MINIO_ACCESS_KEY 环境变量覆盖
+    secret_key: ""                         # 由 MINIO_SECRET_KEY 环境变量覆盖
     bucket: "youdaonotelm"
   bocha:
     base_url: "https://api.bochaai.com"

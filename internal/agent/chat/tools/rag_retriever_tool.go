@@ -60,6 +60,11 @@ func (t *RAGRetrieverTool) InvokableRun(ctx context.Context, argumentsInJSON str
 		zap.Uints("sourceIDs", t.sourceIDs),
 	)
 
+	// 校验：未选中资料时不允许调用工具
+	if len(t.sourceIDs) == 0 {
+		return "请先选中资料再进行提问", nil
+	}
+
 	var rawParams struct {
 		Query string      `json:"query"`
 		TopK  interface{} `json:"top_k"`

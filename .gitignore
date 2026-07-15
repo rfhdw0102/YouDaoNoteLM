@@ -13,8 +13,8 @@ MindTrace
 go.work
 go.work.sum
 
-# Vendor directory (uncomment if not vendoring)
-# vendor/
+# Vendor directory (not vendoring — build uses go mod download)
+vendor/
 
 # IDE and editor files
 .idea/
@@ -116,10 +116,20 @@ CLAUDE.local.md
 *.flac
 *.m4a
 
+# Personal / non-project files
+*.docx
+
 # Test commands and integration tests
 cmd/test_*/
 cmd/seed_*/
 tests/integration/
+
+# Frontend dev docs (keep README.md only)
+frontend/*.md
+!frontend/README.md
+
+# GitHub docs (keep workflows)
+.github/*.md
 
 # Debug and temporary test files
 response*.json
