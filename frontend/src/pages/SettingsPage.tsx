@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Settings, Cpu, Search, Mic, Database, Plus, Trash2,
   Check, AlertCircle, ArrowLeft, Save, X, BookOpen,
-  Loader2, Plug
+  Loader2, Plug, Filter
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { cn } from '../utils/cn';
@@ -18,7 +18,7 @@ import type { ProviderInfo } from '../api/providers';
 import type { YoudaoBindStatus } from '../api/youdao';
 import { getErrorMessage } from '../utils/error';
 
-type ConfigTab = 'llm' | 'search' | 'asr' | 'embedding' | 'youdao';
+type ConfigTab = 'llm' | 'search' | 'asr' | 'embedding' | 'reranker' | 'youdao';
 
 // 默认 API 地址映射
 const DEFAULT_API_URLS: Record<string, string> = {
@@ -32,6 +32,10 @@ const DEFAULT_API_URLS: Record<string, string> = {
   baichuan: 'https://api.baichuan-ai.com/v1',
   moonshot: 'https://api.moonshot.cn/v1',
   minimax: 'https://api.minimax.chat/v1',
+  // Reranker providers
+  cohere: 'https://api.cohere.com',
+  jina: 'https://api.jina.ai',
+  siliconflow: 'https://api.siliconflow.cn',
 };
 
 // Provider 文档链接映射（用户配置时引导其获取对应密钥/参数）
@@ -51,6 +55,21 @@ const PROVIDER_DOCS: Record<string, { label: string; url: string; description: s
     url: 'https://bocha-ai.feishu.cn/wiki/HmtOw1z6vik14Fkdu5uc9VaInBb',
     description: '如何获取博查搜索 API Key',
   },
+  cohere: {
+    label: 'Cohere Rerank 文档',
+    url: 'https://docs.cohere.com/docs/reranking',
+    description: '如何获取 Cohere API Key',
+  },
+  jina: {
+    label: 'Jina Reranker 文档',
+    url: 'https://jina.ai/reranker/',
+    description: '如何获取 Jina API Key',
+  },
+  siliconflow: {
+    label: 'SiliconFlow 文档',
+    url: 'https://docs.siliconflow.cn/',
+    description: '如何获取 SiliconFlow API Key',
+  },
 };
 
 export default function SettingsPage() {
@@ -58,7 +77,7 @@ export default function SettingsPage() {
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<ConfigTab>(() => {
     const tab = searchParams.get('tab');
-    return tab === 'llm' || tab === 'search' || tab === 'asr' || tab === 'embedding' || tab === 'youdao'
+    return tab === 'llm' || tab === 'search' || tab === 'asr' || tab === 'embedding' || tab === 'reranker' || tab === 'youdao'
       ? (tab as ConfigTab)
       : 'llm';
   });
@@ -348,6 +367,9 @@ export default function SettingsPage() {
         case 'embedding':
           res = await userConfigApi.listEmbeddingConfigs();
           break;
+        case 'reranker':
+          res = await userConfigApi.listRerankerConfigs();
+          break;
       }
       if (res && res.code === 0) {
         if (activeTab === 'llm') {
@@ -418,6 +440,9 @@ export default function SettingsPage() {
           break;
         case 'embedding':
           res = await userConfigApi.createEmbeddingConfig(formData);
+          break;
+        case 'reranker':
+          res = await userConfigApi.createRerankerConfig(formData);
           break;
       }
       if (res && res.code === 0) {
@@ -496,6 +521,9 @@ export default function SettingsPage() {
         case 'embedding':
           res = await userConfigApi.updateEmbeddingConfig(id, formData);
           break;
+        case 'reranker':
+          res = await userConfigApi.updateRerankerConfig(id, formData);
+          break;
       }
       if (res && res.code === 0) {
         setEditingId(null);
@@ -540,6 +568,9 @@ export default function SettingsPage() {
           break;
         case 'asr':
           res = await userConfigApi.deleteASRConfig(id);
+          break;
+        case 'reranker':
+          res = await userConfigApi.deleteRerankerConfig(id);
           break;
       }
       if (res && res.code === 0) {
@@ -649,6 +680,7 @@ export default function SettingsPage() {
   const tabs = [
     { key: 'search', label: '搜索引擎', icon: Search },
     { key: 'asr', label: '语音识别', icon: Mic },
+    { key: 'reranker', label: '精排模型', icon: Filter },
     { key: 'youdao', label: '有道云笔记', icon: BookOpen },
   ];
 
@@ -772,7 +804,7 @@ export default function SettingsPage() {
         </div>
 
         {/* 当前生效的服务 - 仅搜索和语音识别有系统默认配置 */}
-        {activeProvider && (activeTab === 'search' || activeTab === 'asr') && (
+        {activeProvider && (activeTab === 'search' || activeTab === 'asr' || activeTab === 'reranker') && (
           <div className="mb-4 p-4 rounded-xl bg-accent/5 border border-accent/20">
             <div className="flex items-center gap-2">
               <span className="text-xs text-text-muted">当前使用:</span>
@@ -791,6 +823,15 @@ export default function SettingsPage() {
           <div className="mb-4 p-3 rounded-xl bg-warning/5 border border-warning/20">
             <p className="text-xs text-warning">
               ⚠️ 建议配置好向量模型之后不要再进行更换。更换向量模型将导致原有知识库不可用，需要重新导入所有资料。
+            </p>
+          </div>
+        )}
+
+        {/* Reranker 配置提示 */}
+        {activeTab === 'reranker' && (
+          <div className="mb-4 p-3 rounded-xl bg-accent/5 border border-accent/20">
+            <p className="text-xs text-text-secondary">
+              💡 精排模型（Reranker）是可选组件，用于对检索结果进行二次精排，提高相关性。配置后将在知识库问答时自动启用。
             </p>
           </div>
         )}

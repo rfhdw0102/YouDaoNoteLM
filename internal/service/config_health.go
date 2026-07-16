@@ -14,6 +14,7 @@ import (
 	"YoudaoNoteLm/internal/service/external"
 	"YoudaoNoteLm/internal/service/external/asr"
 	"YoudaoNoteLm/internal/service/external/embedding"
+	"YoudaoNoteLm/internal/service/external/reranker"
 	"YoudaoNoteLm/internal/service/external/search"
 	"YoudaoNoteLm/pkg/logger"
 
@@ -56,6 +57,8 @@ func (h *ConfigHealthChecker) TestConfig(configType string, config *entity.UserC
 		result = h.testASR(config)
 	case "embedding":
 		result = h.testEmbedding(config)
+	case "reranker":
+		result = h.testReranker(config)
 	default:
 		result = &HealthCheckResult{
 			Healthy: false,
@@ -548,6 +551,71 @@ func (h *ConfigHealthChecker) testEmbedding(config *entity.UserConfig) *HealthCh
 	// 测试通过
 	msg := fmt.Sprintf("Embedding API 连通正常（模型: %s, 维度: %d）", config.Model, actualDimensions)
 	return &HealthCheckResult{Healthy: true, Message: msg}
+}
+
+// testReranker 测试 Reranker 配置
+// 策略：实际调用 reranker API，验证 API Key 有效性
+func (h *ConfigHealthChecker) testReranker(config *entity.UserConfig) *HealthCheckResult {
+	if config.Provider == "" {
+		return &HealthCheckResult{Healthy: false, Message: "服务商为空"}
+	}
+	if config.APIKey == "" {
+		return &HealthCheckResult{Healthy: false, Message: "API Key 为空"}
+	}
+
+	sc := external.NewServiceConfigFromEntity(
+		config.Provider, config.APIURL, config.APIKey, config.Model, config.ExtraConfig)
+
+	// 通过 Registry 创建 Reranker 服务实例
+	svcInterface, err := h.registry.Create("reranker", config.Provider, sc)
+	if err != nil {
+		return &HealthCheckResult{
+			Healthy: false,
+			Message: "创建 Reranker 服务失败",
+			Detail:  err.Error(),
+		}
+	}
+
+	// 类型断言为 RerankerService
+	rerankerSvc, ok := svcInterface.(reranker.RerankerService)
+	if !ok {
+		return &HealthCheckResult{
+			Healthy: false,
+			Message: "Reranker 服务类型断言失败",
+		}
+	}
+
+	// 发起真实的测试请求
+	testQuery := "test connectivity"
+	testDocs := []string{"This is a test document.", "Another test document."}
+	_, err = rerankerSvc.Rerank(testQuery, testDocs, 2)
+	if err != nil {
+		// 解析错误信息
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "401") || strings.Contains(errMsg, "403") {
+			return &HealthCheckResult{
+				Healthy: false,
+				Message: "API Key 无效或无权限",
+				Detail:  errMsg,
+			}
+		}
+		if strings.Contains(errMsg, "429") {
+			return &HealthCheckResult{
+				Healthy: true,
+				Message: "配置正确（当前被限流，但连通性正常）",
+			}
+		}
+		return &HealthCheckResult{
+			Healthy: false,
+			Message: "Reranker API 调用失败",
+			Detail:  errMsg,
+		}
+	}
+
+	return &HealthCheckResult{
+		Healthy: true,
+		Message: fmt.Sprintf("Reranker API 连通正常（%s）", config.Provider),
+	}
 }
 
 // parseSupportedDimensions 从错误信息中解析支持的维度列表

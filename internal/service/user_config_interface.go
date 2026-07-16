@@ -28,6 +28,12 @@ type UserConfigService interface {
 	UpdateEmbeddingConfig(id uint, config *entity.UserConfig) error
 	DeleteEmbeddingConfig(id uint) error
 
+	// Reranker 配置
+	ListRerankerConfigs(userID uint) ([]*entity.UserConfig, error)
+	CreateRerankerConfig(userID uint, config *entity.UserConfig) error
+	UpdateRerankerConfig(id uint, config *entity.UserConfig) error
+	DeleteRerankerConfig(id uint) error
+
 	// 获取当前生效的配置（用户配置 > 系统配置 > 默认值）
 	GetActiveConfig(userID uint, configType string) (*entity.UserConfig, error)
 

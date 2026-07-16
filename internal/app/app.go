@@ -9,6 +9,7 @@ import (
 	"YoudaoNoteLm/internal/service"
 	"YoudaoNoteLm/internal/service/external"
 	externalMarkitdown "YoudaoNoteLm/internal/service/external/markitdown"
+	"YoudaoNoteLm/internal/service/external/reranker"
 	externalStorage "YoudaoNoteLm/internal/service/external/storage"
 	externalYoudao "YoudaoNoteLm/internal/service/external/youdao"
 	"YoudaoNoteLm/pkg/cache"
@@ -29,6 +30,7 @@ import (
 	_ "YoudaoNoteLm/internal/service/external/asr"
 	_ "YoudaoNoteLm/internal/service/external/embedding"
 	_ "YoudaoNoteLm/internal/service/external/llm"
+	_ "YoudaoNoteLm/internal/service/external/reranker"
 	_ "YoudaoNoteLm/internal/service/external/search"
 
 	"github.com/cloudwego/eino/components/embedding"
@@ -260,6 +262,12 @@ func (a *App) initDependencies() {
 	// 创建 EinoRetrieverWrapper 用于检索
 	retrieverCtx, retrieverCancel := milvusInitContext()
 	defer retrieverCancel()
+
+	// 创建 RerankerProvider：通过 ConfigService 动态获取用户的 Reranker 配置
+	rerankerProvider := func(ctx context.Context, userID uint) (reranker.RerankerService, error) {
+		return configSvc.GetRerankerService(userID)
+	}
+
 	ragRetriever, err := rag.NewEinoRetrieverWrapper(
 		retrieverCtx,
 		a.cfg.Milvus.GetAddress(),
@@ -267,6 +275,7 @@ func (a *App) initDependencies() {
 		sourceRepo,
 		retrieverEmbedderProvider,
 		5, // defaultTopK
+		rerankerProvider,
 	)
 	if err != nil {
 		logger.Fatal("EinoRetrieverWrapper 初始化失败", zap.Error(err))

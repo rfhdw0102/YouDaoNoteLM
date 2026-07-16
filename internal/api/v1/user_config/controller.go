@@ -38,7 +38,7 @@ func NewController(configService service.UserConfigService, tokenBlacklist servi
 func (ctrl *Controller) TestConfig(c *gin.Context) {
 	configType := c.Param("type")
 	validTypes := map[string]bool{
-		"llm": true, "search": true, "asr": true, "embedding": true,
+		"llm": true, "search": true, "asr": true, "embedding": true, "reranker": true,
 	}
 	if !validTypes[configType] {
 		response.BadRequest(c, "无效的配置类型")
@@ -515,4 +515,91 @@ func (ctrl *Controller) DeleteEmbeddingAndCollection(c *gin.Context) {
 	}
 
 	response.SuccessWithMessage(c, "删除成功，知识库数据已清除", nil)
+}
+
+// ===== Reranker Config =====
+
+func (ctrl *Controller) ListRerankerConfigs(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	configs, err := ctrl.configService.ListRerankerConfigs(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+	response.Success(c, configs)
+}
+
+func (ctrl *Controller) CreateRerankerConfig(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	var req request.UserConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, response.ParseValidationErrors(err))
+		return
+	}
+
+	config := &entity.UserConfig{
+		Name: req.Name, Provider: req.Provider, APIKey: req.APIKey,
+		APIURL: req.APIURL, Model: req.Model,
+		ExtraConfig: string(req.ExtraConfig), Enabled: true,
+	}
+
+	// 保存前验证连通性
+	if !ctrl.validateBeforeSave(c, "reranker", config) {
+		return
+	}
+
+	if err := ctrl.configService.CreateRerankerConfig(userID, config); err != nil {
+		response.BizError(c, err)
+		return
+	}
+	response.Success(c, config)
+}
+
+func (ctrl *Controller) UpdateRerankerConfig(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		response.BadRequest(c, "无效的配置ID")
+		return
+	}
+	var req request.UserConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, response.ParseValidationErrors(err))
+		return
+	}
+
+	config := &entity.UserConfig{
+		Name: req.Name, Provider: req.Provider, APIKey: req.APIKey,
+		APIURL: req.APIURL, Model: req.Model,
+		ExtraConfig: string(req.ExtraConfig),
+	}
+
+	if req.Enabled != nil {
+		config.Enabled = *req.Enabled
+	} else {
+		config.Enabled = true
+	}
+
+	// 保存前验证连通性
+	if !ctrl.validateBeforeSave(c, "reranker", config) {
+		return
+	}
+
+	if err := ctrl.configService.UpdateRerankerConfig(uint(id), config); err != nil {
+		response.BizError(c, err)
+		return
+	}
+	response.Success(c, config)
+}
+
+func (ctrl *Controller) DeleteRerankerConfig(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		response.BadRequest(c, "无效的配置ID")
+		return
+	}
+	if err := ctrl.configService.DeleteRerankerConfig(uint(id)); err != nil {
+		response.BizError(c, err)
+		return
+	}
+	response.SuccessWithMessage(c, "删除成功", nil)
 }
