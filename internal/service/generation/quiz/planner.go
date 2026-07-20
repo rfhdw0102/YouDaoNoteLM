@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// requiredQuizQuestionTypes 根据材料丰富度决定题目类型与数量。
 func requiredQuizQuestionTypes(analysis Analysis) []string {
 	conceptCount := len(analysis.KeyConcepts)
 	processCount := len(analysis.Processes)
@@ -47,6 +48,7 @@ func requiredQuizQuestionTypes(analysis Analysis) []string {
 	return types
 }
 
+// PlanQuestions 根据学习分析生成测验题目规划。
 func PlanQuestions(analysis Analysis) QuestionPlan {
 	plan := QuestionPlan{Topic: analysis.Topic}
 	types := requiredQuizQuestionTypes(analysis)
@@ -136,6 +138,7 @@ func PlanQuestions(analysis Analysis) QuestionPlan {
 	return plan
 }
 
+// ExpandContent 扩展测验题目解析并补足题量。
 func ExpandContent(plan QuestionPlan, analysis Analysis) QuestionPlan {
 	expanded := plan
 	evidenceIndex := 0
@@ -168,6 +171,7 @@ func ExpandContent(plan QuestionPlan, analysis Analysis) QuestionPlan {
 	return expanded
 }
 
+// nextQuizEvidence 按索引循环返回下一条证据的摘要。
 func nextQuizEvidence(evidence []Evidence, index *int) string {
 	if len(evidence) == 0 {
 		return ""
@@ -180,6 +184,7 @@ func nextQuizEvidence(evidence []Evidence, index *int) string {
 	return summarizeLine(strings.TrimSpace(ev.Text), 80)
 }
 
+// Render 将测验规划渲染为 JSON 字符串。
 func Render(plan QuestionPlan) string {
 	items := make([]string, 0, len(plan.Questions))
 	for _, q := range plan.Questions {
@@ -194,6 +199,7 @@ func Render(plan QuestionPlan) string {
 	return `{"questions":[` + strings.Join(items, ",") + `]}`
 }
 
+// renderPlan 将测验规划渲染为内部上下文用的文本格式。
 func renderPlan(plan QuestionPlan) string {
 	var b strings.Builder
 	if strings.TrimSpace(plan.Topic) != "" {
@@ -225,6 +231,7 @@ func renderPlan(plan QuestionPlan) string {
 	return strings.TrimSpace(b.String())
 }
 
+// AppendPlansToContext 将测验规划与扩展结果及生成规则拼入上下文。
 func AppendPlansToContext(contextValue string, plan, expanded QuestionPlan) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(contextValue))
@@ -253,6 +260,7 @@ func AppendPlansToContext(contextValue string, plan, expanded QuestionPlan) stri
 	return strings.TrimSpace(b.String())
 }
 
+// NeedsStructureRepair 判断测验输出是否结构不达标需修复。
 func NeedsStructureRepair(content string) bool {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {

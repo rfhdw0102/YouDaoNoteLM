@@ -33,16 +33,19 @@ type userLLMConfigGenerationService struct {
 	encryptionKey []byte // 接口密钥加密密钥
 }
 
+// NewGenerationServiceWithUserLLMConfig 创建支持用户自定义 LLM 配置的生成服务实例。
 func NewGenerationServiceWithUserLLMConfig(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, encryptionKey string) GenerationService {
 	return NewGenerationServiceWithUserLLMConfigAndMemory(retriever, search, repo, nil, encryptionKey)
 }
 
+// NewGenerationServiceWithUserLLMConfigAndMemory 创建带会话记忆且支持用户自定义 LLM 配置的生成服务实例。
 func NewGenerationServiceWithUserLLMConfigAndMemory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memory GenerationMemoryStore, encryptionKey string) GenerationService {
 	return newGenerationServiceWithUserLLMChatModelFactory(retriever, search, repo, memory, func(ctx context.Context, cfg *entity.UserLLMConfig) (model.BaseChatModel, error) {
 		return llm.NewChatModel(ctx, cfg)
 	}, encryptionKey)
 }
 
+// newGenerationServiceWithUserLLMChatModelFactory 使用自定义 chat model 工厂构造用户 LLM 配置生成服务。
 func newGenerationServiceWithUserLLMChatModelFactory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memory GenerationMemoryStore, factory chatModelFactory, encryptionKey string) GenerationService {
 	return &userLLMConfigGenerationService{
 		repo:    repo,
@@ -54,6 +57,7 @@ func newGenerationServiceWithUserLLMChatModelFactory(retriever rag.RAGRetriever,
 	}
 }
 
+// Generate 解析用户 LLM 配置后委托基础服务执行生成。
 func (s *userLLMConfigGenerationService) Generate(ctx context.Context, req *GenerationRequest) (*GenerationResponse, error) {
 	model, err := s.resolveModel(ctx, req)
 	if err != nil {
@@ -62,10 +66,12 @@ func (s *userLLMConfigGenerationService) Generate(ctx context.Context, req *Gene
 	return s.base(model).Generate(ctx, req)
 }
 
+// Export 委托基础服务执行内容导出。
 func (s *userLLMConfigGenerationService) Export(ctx context.Context, req *GenerationExportRequest) (*GenerationExportResult, error) {
 	return s.base(nil).Export(ctx, req)
 }
 
+// resolveModel 读取并解密用户 LLM 配置，构造对应的 GenerationModel。
 func (s *userLLMConfigGenerationService) resolveModel(ctx context.Context, req *GenerationRequest) (GenerationModel, error) {
 	if s.repo == nil || req == nil || req.UserID == 0 {
 		return nil, nil

@@ -45,10 +45,12 @@ type generationAgentOutput struct {
 	FallbackUsed bool
 }
 
+// NewGenerationService 创建不带会话记忆的 GenerationService 实例。
 func NewGenerationService(retriever rag.RAGRetriever, search SearchService, model GenerationModel) GenerationService {
 	return NewGenerationServiceWithMemory(retriever, search, model, nil)
 }
 
+// NewGenerationServiceWithMemory 创建带会话记忆的 GenerationService 实例。
 func NewGenerationServiceWithMemory(retriever rag.RAGRetriever, search SearchService, model GenerationModel, memory GenerationMemoryStore) GenerationService {
 	return &generationService{
 		retriever: retriever,
@@ -64,6 +66,7 @@ func NewGenerationServiceWithMemory(retriever rag.RAGRetriever, search SearchSer
 	}
 }
 
+// Generate 根据请求执行生成流程并返回结果。
 func (s *generationService) Generate(ctx context.Context, req *GenerationRequest) (*GenerationResponse, error) {
 	if err := validateGenerationRequest(req); err != nil {
 		return nil, err
@@ -159,6 +162,7 @@ func (s *generationService) Generate(ctx context.Context, req *GenerationRequest
 	}, nil
 }
 
+// validateGenerationRequest 校验生成请求的合法性。
 func validateGenerationRequest(req *GenerationRequest) error {
 	if req == nil {
 		return bizerrors.New(bizerrors.CodeInvalidParam, "generation request cannot be empty")
@@ -174,6 +178,7 @@ func validateGenerationRequest(req *GenerationRequest) error {
 	}
 }
 
+// retrieve 检索本地引用并筛选最相关的参考材料。
 func (s *generationService) retrieve(ctx context.Context, req *GenerationRequest, plan generationQueryPlan) (generationReferenceSelection, error) {
 	inlineLimit := optionInt(req.Options, "inline_top_k", 6)
 	inlineRefs, err := buildInlineMarkdownReferences(ctx, req.Markdown, plan, inlineLimit)
@@ -229,6 +234,7 @@ func (s *generationService) retrieve(ctx context.Context, req *GenerationRequest
 	return selectGenerationReferences(inlineRefs, ragRefs, plan, selectionLimit), nil
 }
 
+// searchWeb 执行联网搜索并返回搜索响应。
 func (s *generationService) searchWeb(ctx context.Context, req *GenerationRequest, plan generationQueryPlan) (*SearchResponse, error) {
 	if !req.UseWeb || s.search == nil {
 		return nil, nil
@@ -257,6 +263,7 @@ func (s *generationService) searchWeb(ctx context.Context, req *GenerationReques
 	return resp, nil
 }
 
+// buildGenerationQuery 从请求中构建生成查询字符串。
 func buildGenerationQuery(req *GenerationRequest) string {
 	if req == nil {
 		return ""
@@ -274,6 +281,7 @@ func buildGenerationQuery(req *GenerationRequest) string {
 	return strings.TrimSpace(req.Markdown)
 }
 
+// optionInt 从 options 中读取整型配置，不存在或非法时返回默认值。
 func optionInt(options map[string]any, key string, fallback int) int {
 	if options == nil {
 		return fallback
@@ -295,6 +303,7 @@ func optionInt(options map[string]any, key string, fallback int) int {
 	return fallback
 }
 
+// optionString 从 options 中读取字符串配置，不存在或为空时返回默认值。
 func optionString(options map[string]any, key string, fallback string) string {
 	if options == nil {
 		return fallback
@@ -308,6 +317,7 @@ func optionString(options map[string]any, key string, fallback string) string {
 	return fallback
 }
 
+// generationOrchestrationSteps 返回生成编排的步骤名称列表。
 func generationOrchestrationSteps() []string {
 	return []string{
 		"context_prepare",

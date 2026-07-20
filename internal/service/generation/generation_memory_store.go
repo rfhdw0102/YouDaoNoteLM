@@ -19,10 +19,12 @@ type generationMemoryCacheStore struct {
 	cache GenerationMemoryCache
 }
 
+// NewGenerationMemoryCacheStore 创建基于缓存的会话记忆存储实例。
 func NewGenerationMemoryCacheStore(cacheClient GenerationMemoryCache) GenerationMemoryStore {
 	return &generationMemoryCacheStore{cache: cacheClient}
 }
 
+// GetRecent 从缓存中读取指定作用域的最近记忆条目。
 func (s *generationMemoryCacheStore) GetRecent(ctx context.Context, scope GenerationMemoryScope, limit int) ([]GenerationMemoryEntry, error) {
 	if s == nil || s.cache == nil {
 		return []GenerationMemoryEntry{}, nil
@@ -43,6 +45,7 @@ func (s *generationMemoryCacheStore) GetRecent(ctx context.Context, scope Genera
 	return entries, nil
 }
 
+// Add 将一条记忆条目写入缓存。
 func (s *generationMemoryCacheStore) Add(ctx context.Context, scope GenerationMemoryScope, entry GenerationMemoryEntry) error {
 	if s == nil || s.cache == nil {
 		return nil

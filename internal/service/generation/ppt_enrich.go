@@ -17,6 +17,7 @@ import (
 	"time"
 )
 
+// enrichPPTContent 并发批量调用 LLM 补全各幻灯片的详细内容。
 func (a *pptGenerationAgent) enrichPPTContent(ctx context.Context, state pptChainState) (pptChainState, error) {
 	if a.model == nil {
 		return state, nil
@@ -162,6 +163,7 @@ func (a *pptGenerationAgent) enrichPPTContent(ctx context.Context, state pptChai
 	return state, nil
 }
 
+// batchPPTOutlinePlan 将大纲计划按批次大小切分成多个子计划。
 func batchPPTOutlinePlan(plan pptOutlinePlan, batchSize int) []pptOutlinePlan {
 	if batchSize <= 0 {
 		batchSize = pptContentEnrichBatchSize
@@ -183,6 +185,7 @@ func batchPPTOutlinePlan(plan pptOutlinePlan, batchSize int) []pptOutlinePlan {
 	return batches
 }
 
+// tryEnrichPPTContent 调用 LLM 增强一批幻灯片内容，失败时按重试策略加固输出格式。
 func (a *pptGenerationAgent) tryEnrichPPTContent(ctx context.Context, strategy generationPromptStrategy, state pptChainState, contextValue string, retry bool) (pptRichContent, bool) {
 	outputFormat := strategy.OutputFormat
 	if retry {
@@ -248,6 +251,7 @@ func (a *pptGenerationAgent) tryEnrichPPTContent(ctx context.Context, strategy g
 	return rich, true
 }
 
+// pptEnrichLogFields 构造内容增强日志的公共字段。
 func pptEnrichLogFields(state pptChainState, retry bool) []zap.Field {
 	var userID, notebookID uint
 	if state.input.Request != nil {
@@ -262,6 +266,7 @@ func pptEnrichLogFields(state pptChainState, retry bool) []zap.Field {
 	}
 }
 
+// extractFirstJSONObject 从字符串中提取首个 JSON 对象片段。
 func extractFirstJSONObject(s string) string {
 	start := strings.IndexByte(s, '{')
 	if start < 0 {
@@ -274,6 +279,7 @@ func extractFirstJSONObject(s string) string {
 	return s[start : end+1]
 }
 
+// pptRichContentHasUsableSlides 判断富内容中是否存在带有效段落的幻灯片。
 func pptRichContentHasUsableSlides(rich pptRichContent) bool {
 	if len(rich.Slides) == 0 {
 		return false
@@ -288,6 +294,7 @@ func pptRichContentHasUsableSlides(rich pptRichContent) bool {
 	return false
 }
 
+// normalizePPTBullets 规整幻灯片要点：去除标题前缀、去重并控制数量上限。
 func normalizePPTBullets(slide *pptSlidePlan) {
 	for i, bullet := range slide.Bullets {
 		if isPPTCodeBlockBullet(bullet) {
@@ -305,10 +312,12 @@ func normalizePPTBullets(slide *pptSlidePlan) {
 	}
 }
 
+// stripPPTBulletSlideTitlePrefix 去除要点开头的幻灯片标题前缀。
 func stripPPTBulletSlideTitlePrefix(bullet, title string) string {
 	return stripPPTBulletTitlePrefixes(bullet, []string{title})
 }
 
+// stripPPTBulletTitlePrefixes 去除要点开头匹配任意候选标题的前缀。
 func stripPPTBulletTitlePrefixes(bullet string, candidates []string) string {
 	bullet = strings.TrimSpace(bullet)
 	if bullet == "" || len(candidates) == 0 {
@@ -346,6 +355,7 @@ func stripPPTBulletTitlePrefixes(bullet string, candidates []string) string {
 	return bullet
 }
 
+// stripPPTBulletPrefixesOnce 尝试一次性去除要点匹配候选前缀的部分。
 func stripPPTBulletPrefixesOnce(bullet string, candidates []string) (string, bool) {
 	for _, prefix := range candidates {
 		for _, variant := range pptSlideTitlePrefixCandidates(prefix) {
@@ -358,10 +368,12 @@ func stripPPTBulletPrefixesOnce(bullet string, candidates []string) (string, boo
 	return bullet, false
 }
 
+// stripPPTBulletTitlePrefixOnce 尝试去除要点开头的单个标题前缀。
 func stripPPTBulletTitlePrefixOnce(bullet, title string) (string, bool) {
 	return stripPPTBulletPrefixesOnce(bullet, []string{title})
 }
 
+// pptSlideTitlePrefixCandidates 生成标题的可匹配前缀候选列表。
 func pptSlideTitlePrefixCandidates(title string) []string {
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -377,6 +389,7 @@ func pptSlideTitlePrefixCandidates(title string) []string {
 	return candidates
 }
 
+// cutPPTTitlePrefix 若要点以指定前缀开头且后接分隔符，则去除前缀部分。
 func cutPPTTitlePrefix(bullet, prefix string) (string, bool) {
 	if prefix == "" {
 		return bullet, false
@@ -399,6 +412,7 @@ func cutPPTTitlePrefix(bullet, prefix string) (string, bool) {
 	return after, true
 }
 
+// isPPTTitleSeparatorRune 判断 rune 是否为标题分隔符。
 func isPPTTitleSeparatorRune(r rune) bool {
 	switch r {
 	case '：', ':', '-', '—', '–', '~', '|', '/', '、', '·':
@@ -407,6 +421,7 @@ func isPPTTitleSeparatorRune(r rune) bool {
 	return false
 }
 
+// renderPPTSlides 将大纲计划渲染为基础 HTML 段落。
 func renderPPTSlides(plan pptOutlinePlan) string {
 	var b strings.Builder
 	for _, slide := range plan.Slides {

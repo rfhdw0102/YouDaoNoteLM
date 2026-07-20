@@ -24,10 +24,12 @@ const (
 	defaultGenerationTemp      = 0.7
 )
 
+// NewEinoGenerationModel 创建适配 eino chat model 的 GenerationModel 实例。
 func NewEinoGenerationModel(chat model.BaseChatModel) GenerationModel {
 	return &einoGenerationModel{chat: chat}
 }
 
+// Generate 将提示词拼装为消息并调用 eino chat model 生成内容。
 func (m *einoGenerationModel) Generate(ctx context.Context, prompt GenerationPrompt) (string, error) {
 	if m == nil || m.chat == nil {
 		return "", nil

@@ -65,6 +65,7 @@ func estimateRenderedHeight(block pptHTMLBlock, width float64) float64 {
 	}
 }
 
+// resolveContainerColumns 解析容器的列数。
 func resolveContainerColumns(block pptHTMLBlock, width float64, conservative bool) int {
 	template := strings.ToLower(strings.TrimSpace(block.Style.GridTemplateColumns))
 	if conservative && strings.Contains(template, "repeat(") && strings.Contains(template, "auto-fit") && strings.Contains(template, "minmax(") {
@@ -103,6 +104,7 @@ func resolveContainerColumns(block pptHTMLBlock, width float64, conservative boo
 	}
 }
 
+// resolveSlideBackground 解析幻灯片背景色。
 func resolveSlideBackground(style pptStyle) pptx.Color {
 	if style.BackgroundColor != nil {
 		return *style.BackgroundColor
@@ -117,6 +119,7 @@ func resolveSectionFill(style pptStyle) pptx.Color {
 	return dynamicPPTDefaultSectionFill
 }
 
+// resolveCardFill 解析卡片填充色。
 func resolveCardFill(style pptStyle) pptx.Color {
 	if style.BackgroundColor != nil {
 		return *style.BackgroundColor
@@ -124,6 +127,7 @@ func resolveCardFill(style pptStyle) pptx.Color {
 	return pptx.Color{R: 252, G: 251, B: 248}
 }
 
+// resolveTextColor 解析文本颜色，缺失则返回兜底色。
 func resolveTextColor(style pptStyle, fallback pptx.Color) pptx.Color {
 	if style.TextColor != nil {
 		return *style.TextColor
@@ -131,6 +135,7 @@ func resolveTextColor(style pptStyle, fallback pptx.Color) pptx.Color {
 	return fallback
 }
 
+// resolveBorderColor 解析边框颜色，缺失则返回兜底色。
 func resolveBorderColor(style pptStyle, fallback pptx.Color) pptx.Color {
 	if style.BorderColor != nil {
 		return *style.BorderColor
@@ -138,6 +143,7 @@ func resolveBorderColor(style pptStyle, fallback pptx.Color) pptx.Color {
 	return fallback
 }
 
+// resolveGap 解析容器间距，缺失则返回兜底值。
 func resolveGap(style pptStyle, fallback float64) float64 {
 	if style.Gap != nil && *style.Gap > 0 {
 		return *style.Gap
@@ -145,6 +151,7 @@ func resolveGap(style pptStyle, fallback float64) float64 {
 	return fallback
 }
 
+// resolveBlockFontSize 解析块字体大小，缺失则返回兜底值。
 func resolveBlockFontSize(block pptHTMLBlock, fallback int) int {
 	size := fallback
 	if block.Style.FontSize != nil && *block.Style.FontSize > 0 {
@@ -156,6 +163,7 @@ func resolveBlockFontSize(block pptHTMLBlock, fallback int) int {
 	return size
 }
 
+// defaultFontSizeForBlock 返回块类型的默认字体大小。
 func defaultFontSizeForBlock(kind string) int {
 	switch kind {
 	case "h1":
@@ -175,6 +183,7 @@ func defaultFontSizeForBlock(kind string) int {
 	}
 }
 
+// defaultFontFamilyForBlock 返回块类型的默认字体族。
 func defaultFontFamilyForBlock(kind string) string {
 	switch kind {
 	case "h1", "h2", "h3":
@@ -186,6 +195,7 @@ func defaultFontFamilyForBlock(kind string) string {
 	}
 }
 
+// resolveFontFamily 解析字体族，缺失则返回兜底值。
 func resolveFontFamily(style pptStyle, fallback string) string {
 	if strings.TrimSpace(style.FontFamily) == "" {
 		return fallback
@@ -193,6 +203,7 @@ func resolveFontFamily(style pptStyle, fallback string) string {
 	return style.FontFamily
 }
 
+// resolveAlignment 将 CSS 对齐值转换为 pptx.Alignment。
 func resolveAlignment(value string) pptx.Alignment {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "center":
@@ -206,6 +217,7 @@ func resolveAlignment(value string) pptx.Alignment {
 	}
 }
 
+// containsCJK 判断文本是否包含中日韩字符。
 func containsCJK(text string) bool {
 	for _, r := range text {
 		if (r >= 0x4E00 && r <= 0x9FFF) ||
@@ -219,6 +231,7 @@ func containsCJK(text string) bool {
 	return false
 }
 
+// charsPerLineForText 估算指定宽度下每行可容纳的字符数。
 func charsPerLineForText(text string, width float64) int {
 	density := 6.5
 	if containsCJK(text) {
@@ -231,6 +244,7 @@ func charsPerLineForText(text string, width float64) int {
 	return n
 }
 
+// estimateTextHeight 估算文本在指定宽度和字号下的高度。
 func estimateTextHeight(text string, fontSize int, width float64) float64 {
 	if fontSize <= 0 {
 		fontSize = dynamicPPTDefaultBodyFont
@@ -248,6 +262,7 @@ func estimateTextHeight(text string, fontSize int, width float64) float64 {
 	return dynamicPPTMaxFloat(lineHeight*float64(lines), 0.26)
 }
 
+// estimateTextHeightWithStyle 基于样式估算文本渲染高度。
 func estimateTextHeightWithStyle(text string, style pptStyle, fontSize int, width float64) float64 {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -282,6 +297,7 @@ func estimateTextHeightWithStyle(text string, style pptStyle, fontSize int, widt
 	return dynamicPPTMaxFloat(lineHeight*float64(lines), 0.26)
 }
 
+// parseInlineStyleMap 将内联样式字符串解析为键值映射。
 func parseInlineStyleMap(value string) map[string]string {
 	styles := map[string]string{}
 	for _, declaration := range parseInlineStyleDeclarations(value) {

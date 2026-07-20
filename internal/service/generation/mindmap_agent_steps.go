@@ -13,6 +13,7 @@ import (
 	"strings"
 )
 
+// analyzeMindmapContent 分析学习内容并初始化思维导图链状态。
 func (a *mindmapGenerationAgent) analyzeMindmapContent(ctx context.Context, input generationAgentInput) (mindmapChainState, error) {
 	return mindmapChainState{
 		input:    input,
@@ -20,16 +21,19 @@ func (a *mindmapGenerationAgent) analyzeMindmapContent(ctx context.Context, inpu
 	}, nil
 }
 
+// planMindmapOutline 基于分析结果规划思维导图大纲。
 func (a *mindmapGenerationAgent) planMindmapOutline(ctx context.Context, state mindmapChainState) (mindmapChainState, error) {
 	state.plan = planMindmap(state.analysis)
 	return state, nil
 }
 
+// expandMindmapChainContent 扩展思维导图节点内容。
 func (a *mindmapGenerationAgent) expandMindmapChainContent(ctx context.Context, state mindmapChainState) (mindmapChainState, error) {
 	state.expanded = expandMindmapContent(state.plan, state.analysis)
 	return state, nil
 }
 
+// generateMindmapDraft 生成思维导图初稿并附带修复方案。
 func (a *mindmapGenerationAgent) generateMindmapDraft(ctx context.Context, state mindmapChainState) (generationDraft, error) {
 	input := state.input
 	input.Context = appendMindmapPlansToContext(state.input.Context, state.plan, state.expanded)
@@ -45,6 +49,7 @@ func (a *mindmapGenerationAgent) generateMindmapDraft(ctx context.Context, state
 	return draft, nil
 }
 
+// repairMindmapStructure 必要时使用修复方案或 fallback 修复思维导图结构。
 func (a *mindmapGenerationAgent) repairMindmapStructure(ctx context.Context, draft generationDraft) (generationDraft, error) {
 	if mindmapNeedsStructureRepair(draft.content) {
 		if draft.mindmapRepairPlan != nil {

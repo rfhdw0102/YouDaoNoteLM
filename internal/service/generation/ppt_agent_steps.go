@@ -17,6 +17,7 @@ import (
 	"time"
 )
 
+// analyzePPTContent 分析输入学习内容，初始化链式状态。
 func (a *pptGenerationAgent) analyzePPTContent(ctx context.Context, input generationAgentInput) (pptChainState, error) {
 	return pptChainState{
 		input:    input,
@@ -24,6 +25,7 @@ func (a *pptGenerationAgent) analyzePPTContent(ctx context.Context, input genera
 	}, nil
 }
 
+// planPPTChainOutline 生成并解析 PPT 大纲，写入链式状态。
 func (a *pptGenerationAgent) planPPTChainOutline(ctx context.Context, state pptChainState) (pptChainState, error) {
 	outline, err := a.generateOutline(ctx, state.input)
 	if err != nil {
@@ -38,6 +40,7 @@ func (a *pptGenerationAgent) planPPTChainOutline(ctx context.Context, state pptC
 	return state, nil
 }
 
+// reviewPPTOutline 调用 LLM 复核并优化大纲内容。
 func (a *pptGenerationAgent) reviewPPTOutline(ctx context.Context, state pptChainState) (pptChainState, error) {
 	if a.model == nil {
 		return state, nil
@@ -67,11 +70,13 @@ func (a *pptGenerationAgent) reviewPPTOutline(ctx context.Context, state pptChai
 	return state, nil
 }
 
+// expandPPTChainContent 基于分析结果扩充大纲要点。
 func (a *pptGenerationAgent) expandPPTChainContent(ctx context.Context, state pptChainState) (pptChainState, error) {
 	state.expanded = expandPPTContent(state.outlinePlan, state.analysis)
 	return state, nil
 }
 
+// designPPTStyle 根据分析和用户选项设计 PPT 样式主题。
 func (a *pptGenerationAgent) designPPTStyle(ctx context.Context, state pptChainState) (pptChainState, error) {
 	styleHint := ""
 	if state.input.Request != nil {
@@ -87,6 +92,7 @@ func (a *pptGenerationAgent) designPPTStyle(ctx context.Context, state pptChainS
 	return state, nil
 }
 
+// generatePPTCSS 调用 LLM 生成 PPT 样式 CSS，失败时回退到兜底 CSS。
 func (a *pptGenerationAgent) generatePPTCSS(ctx context.Context, state pptChainState) (pptChainState, error) {
 	if a.model == nil {
 		state.cssBlock = fallbackPPTCSS(state.styleTheme)
@@ -117,6 +123,7 @@ func (a *pptGenerationAgent) generatePPTCSS(ctx context.Context, state pptChainS
 	return state, nil
 }
 
+// generatePPTHTML 调用 LLM 生成 PPT HTML 内容并组装最终草稿。
 func (a *pptGenerationAgent) generatePPTHTML(ctx context.Context, state pptChainState) (generationDraft, error) {
 	content := ""
 	fallbackUsed := false
@@ -155,6 +162,7 @@ func (a *pptGenerationAgent) generatePPTHTML(ctx context.Context, state pptChain
 	return generationDraft{input: state.input, content: content, fallbackUsed: fallbackUsed, pptRepairPlan: &repairPlan, pptStyleTheme: state.styleTheme}, nil
 }
 
+// polishPPTHTML 清理并规整生成的 HTML 内容。
 func (a *pptGenerationAgent) polishPPTHTML(ctx context.Context, draft generationDraft) (generationDraft, error) {
 	content := draft.content
 	if strings.TrimSpace(content) == "" {
@@ -173,6 +181,7 @@ func (a *pptGenerationAgent) polishPPTHTML(ctx context.Context, draft generation
 	return draft, nil
 }
 
+// repairPPTStructure 检测 HTML 质量问题并在必要时回退到兜底渲染。
 func (a *pptGenerationAgent) repairPPTStructure(ctx context.Context, draft generationDraft) (generationDraft, error) {
 	draft.content = stripPPTExportPlaceholders(draft.content)
 	draft.content = sanitizePPTReferenceSections(draft.content)

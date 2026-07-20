@@ -17,6 +17,7 @@ type inMemoryGenerationTaskQueue struct {
 	ch chan queuedGenerationTask
 }
 
+// NewInMemoryGenerationTaskQueue 创建并返回基于 channel 的内存队列实例。
 func NewInMemoryGenerationTaskQueue(size int) GenerationTaskQueue {
 	if size <= 0 {
 		size = generationTaskQueueSize
@@ -24,6 +25,7 @@ func NewInMemoryGenerationTaskQueue(size int) GenerationTaskQueue {
 	return &inMemoryGenerationTaskQueue{ch: make(chan queuedGenerationTask, size)}
 }
 
+// Enqueue 将任务投递到 channel，满时返回错误。
 func (q *inMemoryGenerationTaskQueue) Enqueue(ctx context.Context, item queuedGenerationTask) error {
 	select {
 	case q.ch <- item:
@@ -35,6 +37,7 @@ func (q *inMemoryGenerationTaskQueue) Enqueue(ctx context.Context, item queuedGe
 	}
 }
 
+// Dequeue 阻塞等待从 channel 取出任务。
 func (q *inMemoryGenerationTaskQueue) Dequeue(ctx context.Context) (queuedGenerationTask, error) {
 	select {
 	case item := <-q.ch:
@@ -48,6 +51,7 @@ type redisGenerationTaskQueue struct {
 	cache *cache.GenerationTaskCache
 }
 
+// NewGenerationTaskRedisQueue 创建并返回基于 Redis List 的分布式队列实例。
 func NewGenerationTaskRedisQueue(taskCache *cache.GenerationTaskCache) GenerationTaskQueue {
 	if taskCache == nil {
 		return nil
@@ -55,10 +59,12 @@ func NewGenerationTaskRedisQueue(taskCache *cache.GenerationTaskCache) Generatio
 	return &redisGenerationTaskQueue{cache: taskCache}
 }
 
+// Enqueue 将任务投递到 Redis 队列。
 func (q *redisGenerationTaskQueue) Enqueue(ctx context.Context, item queuedGenerationTask) error {
 	return q.cache.Enqueue(ctx, item.taskID, item.req)
 }
 
+// Dequeue 阻塞等待从 Redis 队列取出任务。
 func (q *redisGenerationTaskQueue) Dequeue(ctx context.Context) (queuedGenerationTask, error) {
 	var req GenerationRequest
 	taskID, err := q.cache.BlockingDequeue(ctx, &req)

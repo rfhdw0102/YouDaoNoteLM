@@ -69,6 +69,7 @@ type pptGenerationAgent struct {
 	baseGenerationAgent
 }
 
+// Generate 执行 PPT 14 步链式生成流程。
 func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgentInput) (generationAgentOutput, error) {
 	overallStart := time.Now()
 	logger.Info("[PPT] generation started",
@@ -230,6 +231,7 @@ type mindmapGenerationAgent struct {
 	baseGenerationAgent
 }
 
+// Generate 执行思维导图 9 步链式生成流程。
 func (a *mindmapGenerationAgent) Generate(ctx context.Context, input generationAgentInput) (generationAgentOutput, error) {
 	chain := compose.NewChain[generationAgentInput, generationAgentOutput]().
 		AppendLambda(compose.InvokableLambda(a.analyzeMindmapContent)).
@@ -253,6 +255,7 @@ type noteGenerationAgent struct {
 	baseGenerationAgent
 }
 
+// Generate 执行笔记 9 步链式生成流程。
 func (a *noteGenerationAgent) Generate(ctx context.Context, input generationAgentInput) (generationAgentOutput, error) {
 	chain := compose.NewChain[generationAgentInput, generationAgentOutput]().
 		AppendLambda(compose.InvokableLambda(a.analyzeNoteContent)).
@@ -276,6 +279,7 @@ type quizGenerationAgent struct {
 	baseGenerationAgent
 }
 
+// Generate 执行测验 9 步链式生成流程。
 func (a *quizGenerationAgent) Generate(ctx context.Context, input generationAgentInput) (generationAgentOutput, error) {
 	chain := compose.NewChain[generationAgentInput, generationAgentOutput]().
 		AppendLambda(compose.InvokableLambda(a.analyzeQuizContent)).

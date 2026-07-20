@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// pptNeedsHTMLQualityRepair 判断 HTML 是否存在画布缺失或弱样式等问题。
 func pptNeedsHTMLQualityRepair(content string) bool {
 	lower := strings.ToLower(content)
 	if !strings.Contains(lower, "<section") {
@@ -41,6 +42,7 @@ func pptNeedsHTMLQualityRepair(content string) bool {
 	return false
 }
 
+// pptHasSparseSlides 判断是否存在内容过少的稀疏幻灯片。
 func pptHasSparseSlides(content string) bool {
 	sections := pptExtractSections(content)
 	if len(sections) == 0 {
@@ -58,6 +60,7 @@ func pptHasSparseSlides(content string) bool {
 	return sparseCount >= 2 || (len(sections) > 0 && sparseCount == len(sections))
 }
 
+// pptExtractSections 从 HTML 中提取所有 section 块。
 func pptExtractSections(content string) []string {
 	lower := strings.ToLower(content)
 	var sections []string
@@ -80,6 +83,7 @@ func pptExtractSections(content string) []string {
 	return sections
 }
 
+// pptHasDuplicatedSlideTitles 判断单张幻灯片内是否存在重复的标题。
 func pptHasDuplicatedSlideTitles(content string) bool {
 	sections := pptExtractSections(content)
 	if len(sections) == 0 {
@@ -107,6 +111,7 @@ func pptHasDuplicatedSlideTitles(content string) bool {
 	return false
 }
 
+// pptHasMismatchedCardContent 判断卡片标题与正文是否大量不匹配。
 func pptHasMismatchedCardContent(content string) bool {
 	sections := pptExtractSections(content)
 	if len(sections) == 0 {
@@ -129,6 +134,7 @@ type pptCardPair struct {
 	body  string
 }
 
+// pptExtractContentCards 从 section 中提取卡片的标题与正文配对。
 func pptExtractContentCards(section string) []pptCardPair {
 	var cards []pptCardPair
 	lower := strings.ToLower(section)
@@ -191,6 +197,7 @@ func pptExtractContentCards(section string) []pptCardPair {
 	return cards
 }
 
+// pptCardTitleMatchesBody 判断卡片标题与正文是否相互匹配。
 func pptCardTitleMatchesBody(title, body string) bool {
 	title = strings.TrimSpace(title)
 	body = strings.TrimSpace(body)
@@ -220,6 +227,7 @@ func pptCardTitleMatchesBody(title, body string) bool {
 	return true
 }
 
+// extractSignificantWords 从文本中提取去停用词后的有效关键词。
 func extractSignificantWords(text string) []string {
 	text = strings.Map(func(r rune) rune {
 		if r == '，' || r == '。' || r == '、' || r == '：' ||
@@ -245,10 +253,12 @@ func extractSignificantWords(text string) []string {
 	return words
 }
 
+// utf8RuneCount 返回字符串的 rune 数量。
 func utf8RuneCount(s string) int {
 	return len([]rune(s))
 }
 
+// pptExtractSlideTitles 提取 section 内的各级标题与卡片/目录项文本。
 func pptExtractSlideTitles(section string) []string {
 	var titles []string
 	lower := strings.ToLower(section)
@@ -260,6 +270,7 @@ func pptExtractSlideTitles(section string) []string {
 	return titles
 }
 
+// extractTagText 提取指定 HTML 标签内的文本内容。
 func extractTagText(content, lowerContent, tag string) []string {
 	var texts []string
 	openTag := "<" + tag
@@ -290,6 +301,7 @@ func extractTagText(content, lowerContent, tag string) []string {
 	return texts
 }
 
+// extractClassText 提取带有指定 class 名的元素文本。
 func extractClassText(content, lowerContent, className string) []string {
 	var texts []string
 	searchFrom := 0
@@ -323,6 +335,7 @@ func extractClassText(content, lowerContent, className string) []string {
 	return texts
 }
 
+// containsPlannedHeading 判断标题列表中是否包含计划标题（双向包含）。
 func containsPlannedHeading(headings []string, title string) bool {
 	for _, heading := range headings {
 		if strings.Contains(heading, title) || strings.Contains(title, heading) {
@@ -332,6 +345,7 @@ func containsPlannedHeading(headings []string, title string) bool {
 	return false
 }
 
+// pptHTMLHeadings 提取 HTML 中所有 h1/h2/h3 标题文本。
 func pptHTMLHeadings(content string) []string {
 	lower := strings.ToLower(content)
 	var headings []string
@@ -365,6 +379,7 @@ func pptHTMLHeadings(content string) []string {
 	return headings
 }
 
+// isGenericPPTPlanTitle 判断标题是否为通用的封面/目录/结束页等占位标题。
 func isGenericPPTPlanTitle(title string) bool {
 	return containsAnyFold(title,
 		"cover", "agenda", "closing", "finish", "end",

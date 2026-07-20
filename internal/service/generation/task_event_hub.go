@@ -38,6 +38,7 @@ func newGenerationTaskEventHub() *generationTaskEventHub {
 	return &generationTaskEventHub{subscribers: map[uint64]*generationTaskSubscriber{}}
 }
 
+// subscribe 注册订阅者，返回事件 channel 和取消订阅函数。
 func (h *generationTaskEventHub) subscribe(userID, notebookID uint) (<-chan GenerationTaskEvent, func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -120,6 +121,7 @@ func dropOldestNonTerminal(ch chan GenerationTaskEvent) {
 	}
 }
 
+// isTerminalTaskStatus 判断任务状态是否为终态。
 func isTerminalTaskStatus(status GenerationTaskStatus) bool {
 	return status == GenerationTaskStatusCompleted ||
 		status == GenerationTaskStatusFailed ||

@@ -21,6 +21,7 @@ var invalidFilenameChars = regexp.MustCompile(`[\\/:*?"<>|]+`)
 var invalidFilenameWhitespace = regexp.MustCompile(`[\r\n\t]+`)
 var invalidFilenameHyphenSpacing = regexp.MustCompile(`\s*-\s*`)
 
+// Export 根据请求将生成内容导出为对应格式的文件。
 func (s *generationService) Export(ctx context.Context, req *GenerationExportRequest) (*GenerationExportResult, error) {
 	_ = ctx
 	if req == nil {
@@ -67,6 +68,7 @@ func (s *generationService) Export(ctx context.Context, req *GenerationExportReq
 	}
 }
 
+// newTextExportResult 构造文本类导出结果。
 func newTextExportResult(filename, contentType, content string) *GenerationExportResult {
 	return &GenerationExportResult{
 		Filename:    filename,
@@ -75,6 +77,7 @@ func newTextExportResult(filename, contentType, content string) *GenerationExpor
 	}
 }
 
+// resolveExportFilename 按标题、内容首行、回退值的优先级生成导出文件名。
 func resolveExportFilename(title, content, fallback, ext string) string {
 	for _, candidate := range []string{title, extractExportHeading(content), fallback} {
 		base := sanitizeExportFilenameBase(candidate)
@@ -85,6 +88,7 @@ func resolveExportFilename(title, content, fallback, ext string) string {
 	return fallback + ext
 }
 
+// sanitizeExportFilenameBase 清理文件名中的非法字符和空白。
 func sanitizeExportFilenameBase(value string) string {
 	base := strings.TrimSpace(value)
 	base = invalidFilenameWhitespace.ReplaceAllString(base, " ")
@@ -94,6 +98,7 @@ func sanitizeExportFilenameBase(value string) string {
 	return strings.Trim(base, ". -")
 }
 
+// extractExportHeading 从内容中提取首个非空行作为标题。
 func extractExportHeading(content string) string {
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#"))

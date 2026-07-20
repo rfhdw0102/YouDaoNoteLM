@@ -11,6 +11,7 @@ import (
 	"strings"
 )
 
+// stripPPTReferenceMetadata 移除内容中的参考资料、章节编号等元信息行。
 func stripPPTReferenceMetadata(content string) string {
 	refLinePrefixes := []string{
 		"文档列表", "文档介绍", "文档概述", "文档目录", "文档内容",
@@ -48,6 +49,7 @@ func stripPPTReferenceMetadata(content string) string {
 	return strings.Join(kept, "\n")
 }
 
+// deduplicatePPTCardTitles 去除 HTML 中重复出现的卡片标题。
 func deduplicatePPTCardTitles(content string) string {
 	sections := pptExtractSections(content)
 	if len(sections) == 0 {
@@ -82,6 +84,7 @@ func deduplicatePPTCardTitles(content string) string {
 	return result
 }
 
+// deduplicateCardTitlesInSection 在单个 section 内去除重复的卡片标题。
 func deduplicateCardTitlesInSection(section string) (string, bool) {
 	lower := strings.ToLower(section)
 	titles := extractClassText(section, lower, "card-title")
@@ -142,6 +145,7 @@ func deduplicateCardTitlesInSection(section string) (string, bool) {
 	return result, true
 }
 
+// stripPPTHTMLRepeatedTitlePrefix 去除 HTML 正文中重复出现的标题前缀。
 func stripPPTHTMLRepeatedTitlePrefix(content string) string {
 	sections := pptExtractSections(content)
 	if len(sections) == 0 {
@@ -161,6 +165,7 @@ func stripPPTHTMLRepeatedTitlePrefix(content string) string {
 	return content
 }
 
+// pptCollectSectionTitleCandidates 收集 section 内的各级标题作为前缀候选。
 func pptCollectSectionTitleCandidates(section string) []string {
 	var candidates []string
 	for _, name := range []string{"h1", "h2", "h3", "h4", "h5", "h6"} {
@@ -179,6 +184,7 @@ func pptCollectSectionTitleCandidates(section string) []string {
 	return out
 }
 
+// pptCollectHeadingTexts 提取 section 中指定级别标题的文本。
 func pptCollectHeadingTexts(section, name string) []string {
 	lower := strings.ToLower(section)
 	open := "<" + name
@@ -211,6 +217,7 @@ func pptCollectHeadingTexts(section, name string) []string {
 	return texts
 }
 
+// pptStripBodyTextTitlePrefix 去除 section 正文中重复的标题前缀，跳过标题与脚本标签。
 func pptStripBodyTextTitlePrefix(section string, titles []string) string {
 	skipTags := map[string]bool{
 		"h1": true, "h2": true, "h3": true,
@@ -253,6 +260,7 @@ func pptStripBodyTextTitlePrefix(section string, titles []string) string {
 	return b.String()
 }
 
+// pptApplyTitlePrefixStrip 在非跳过段中去除文本开头的标题前缀。
 func pptApplyTitlePrefixStrip(text string, titles []string, skip bool) string {
 	if skip || strings.TrimSpace(text) == "" {
 		return text
@@ -266,6 +274,7 @@ func pptApplyTitlePrefixStrip(text string, titles []string, skip bool) string {
 	return leading + stripped
 }
 
+// pptParseTagName 解析 HTML 标签，返回名称及是否为闭合、自闭合标签。
 func pptParseTagName(tag string) (name string, isClose bool, selfClose bool) {
 	if len(tag) < 2 || tag[0] != '<' {
 		return "", false, false
@@ -289,6 +298,7 @@ func pptParseTagName(tag string) (name string, isClose bool, selfClose bool) {
 	return strings.ToLower(inner[:end]), isClose, selfClose
 }
 
+// stripTaggedBlock 移除内容中指定标签包裹的整块内容。
 func stripTaggedBlock(content, tag string) string {
 	lower := strings.ToLower(content)
 	openTag := "<" + strings.ToLower(tag) + ">"
@@ -308,6 +318,7 @@ func stripTaggedBlock(content, tag string) string {
 	}
 }
 
+// appendPPTOutlineToContext 将大纲草案与审查指令追加到 LLM 上下文。
 func appendPPTOutlineToContext(contextValue, outline string) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(contextValue))
@@ -323,6 +334,7 @@ func appendPPTOutlineToContext(contextValue, outline string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// appendPPTPlansToContext 将大纲、结构化计划与生成规则追加到 LLM 上下文。
 func appendPPTPlansToContext(contextValue, outline string, plan pptOutlinePlan) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(contextValue))
@@ -368,6 +380,7 @@ func appendPPTPlansToContext(contextValue, outline string, plan pptOutlinePlan) 
 	return strings.TrimSpace(b.String())
 }
 
+// appendPPTRichContentToContext 将增强后的幻灯片内容追加到 LLM 上下文。
 func appendPPTRichContentToContext(contextValue string, richContent pptRichContent) string {
 	if len(richContent.Slides) == 0 {
 		return contextValue
@@ -413,6 +426,7 @@ func appendPPTRichContentToContext(contextValue string, richContent pptRichConte
 	return strings.TrimSpace(b.String())
 }
 
+// renderPPTPlanForPrompt 将结构化大纲渲染为供 LLM 阅读的纯文本。
 func renderPPTPlanForPrompt(plan pptOutlinePlan) string {
 	var b strings.Builder
 	if strings.TrimSpace(plan.Title) != "" {

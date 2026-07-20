@@ -11,6 +11,7 @@ import (
 	"strings"
 )
 
+// pptNeedsStructureRepair 判断 HTML 是否缺少必要结构（页数、样式、画布尺寸等）。
 func pptNeedsStructureRepair(content string) bool {
 	trimmed := strings.TrimSpace(content)
 	lower := strings.ToLower(trimmed)
@@ -29,6 +30,7 @@ func pptNeedsStructureRepair(content string) bool {
 	return false
 }
 
+// pptContainsInternalPromptLeak 判断内容是否泄露内部提示词。
 func pptContainsInternalPromptLeak(content string) bool {
 	text := strings.ToLower(strings.Join(strings.Fields(stripPPTVisibleText(content)), " "))
 	if text == "" {
@@ -55,6 +57,7 @@ func pptContainsInternalPromptLeak(content string) bool {
 	return false
 }
 
+// pptContainsVisiblePlaceholderText 判断内容中是否含有占位符或规划标签文本。
 func pptContainsVisiblePlaceholderText(content string) bool {
 	text := strings.ToLower(strings.Join(strings.Fields(stripPPTVisibleText(content)), " "))
 	if text == "" {
@@ -118,6 +121,7 @@ func pptContainsVisiblePlaceholderText(content string) bool {
 	return false
 }
 
+// pptCanPatchCanvas 判断内容是否可通过补丁方式修复画布尺寸。
 func pptCanPatchCanvas(content string) bool {
 	lower := strings.ToLower(strings.TrimSpace(content))
 	if strings.Count(lower, "<section") < 4 {
@@ -132,6 +136,7 @@ func pptCanPatchCanvas(content string) bool {
 	return true
 }
 
+// patchPPTCanvasHTML 为内容补齐画布 CSS 并为 section 添加 ppt-slide 类。
 func patchPPTCanvasHTML(content string) string {
 	css := `<style>
 .ppt-slide {
@@ -156,6 +161,7 @@ func patchPPTCanvasHTML(content string) string {
 	return addPPTSlideClassToSections(patched)
 }
 
+// addPPTSlideClassToSections 为缺少 class 的 section 标签补充 ppt-slide 类名。
 func addPPTSlideClassToSections(content string) string {
 	var b strings.Builder
 	lower := strings.ToLower(content)
@@ -186,6 +192,7 @@ func addPPTSlideClassToSections(content string) string {
 	return b.String()
 }
 
+// pptContainsUnrelatedBoilerplate 判断内容是否包含与源材料无关的样板文本。
 func pptContainsUnrelatedBoilerplate(content string, input generationAgentInput) bool {
 	text := strings.ToLower(strings.Join(strings.Fields(stripPPTVisibleText(content)), " "))
 	if text == "" {
@@ -224,6 +231,7 @@ func pptContainsUnrelatedBoilerplate(content string, input generationAgentInput)
 	return false
 }
 
+// pptContainsReferenceMetadata 判断文本中是否包含参考资料元信息标签。
 func pptContainsReferenceMetadata(text string) bool {
 	refTokens := []string{
 		"文档列表",
@@ -258,6 +266,7 @@ func pptContainsReferenceMetadata(text string) bool {
 	return false
 }
 
+// pptContainsRepetitiveText 判断内容是否存在高频重复词、短语或句子。
 func pptContainsRepetitiveText(content string) bool {
 	text := strings.Join(strings.Fields(stripPPTVisibleText(content)), " ")
 	if len([]rune(text)) < 40 {
@@ -308,6 +317,7 @@ func pptContainsRepetitiveText(content string) bool {
 	return false
 }
 
+// splitPPTSentences 将文本按中英文句末标点切分为句子。
 func splitPPTSentences(text string) []string {
 	text = strings.ReplaceAll(text, "!", ".")
 	text = strings.ReplaceAll(text, "?", ".")
@@ -328,6 +338,7 @@ func splitPPTSentences(text string) []string {
 	return result
 }
 
+// pptContainsExcessivePromptWords 判断内容是否含有过多提示词用语。
 func pptContainsExcessivePromptWords(content string) bool {
 	text := strings.ToLower(strings.Join(strings.Fields(stripPPTVisibleText(content)), " "))
 	if text == "" {
@@ -357,6 +368,7 @@ func pptContainsExcessivePromptWords(content string) bool {
 	return hits >= 5
 }
 
+// pptAllowedSourceText 汇总输入中允许出现的源材料文本。
 func pptAllowedSourceText(input generationAgentInput) string {
 	var parts []string
 	if input.Request != nil {
@@ -371,6 +383,7 @@ func pptAllowedSourceText(input generationAgentInput) string {
 	return strings.ToLower(strings.Join(strings.Fields(strings.Join(parts, "\n")), " "))
 }
 
+// pptNeedsPlanCoverageRepair 判断 HTML 是否遗漏了计划中的标题或页数。
 func pptNeedsPlanCoverageRepair(content string, plan *pptOutlinePlan) bool {
 	if plan == nil || len(plan.Slides) == 0 {
 		return false
@@ -386,10 +399,12 @@ func pptNeedsPlanCoverageRepair(content string, plan *pptOutlinePlan) bool {
 	return actual < expected || actual < 6 || pptMissingPlannedTitles(content, plan)
 }
 
+// pptSectionCount 统计 HTML 中 section 标签的数量。
 func pptSectionCount(content string) int {
 	return strings.Count(strings.ToLower(content), "<section")
 }
 
+// pptMissingPlannedTitles 判断 HTML 中是否缺少计划中的非通用标题。
 func pptMissingPlannedTitles(content string, plan *pptOutlinePlan) bool {
 	headings := pptHTMLHeadings(content)
 	required := 0

@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// buildPPTXBytes 根据幻灯片数据与模板构建 PPTX 二进制内容。
 func buildPPTXBytes(slides []pptExportSlide, deckTitle string, template pptExportTemplate) ([]byte, error) {
 	builder := pptx.NewPresentationBuilder(
 		pptx.WithTitle(firstNonEmpty(deckTitle, "ppt-export")),
@@ -51,6 +52,7 @@ func buildPPTXBytes(slides []pptExportSlide, deckTitle string, template pptExpor
 	return fixPPTXPackage(data, len(slides))
 }
 
+// addPPTThemeFrame 为幻灯片添加主题背景、强调条、页码与页脚等装饰元素。
 func addPPTThemeFrame(slide *pptx.SlideBuilder, slideNumber int, template pptExportTemplate) {
 	// 主内容卡片
 	slide.AddShape(pptx.ShapeRoundedRectangle).
@@ -127,6 +129,7 @@ func addPPTThemeFrame(slide *pptx.SlideBuilder, slideNumber int, template pptExp
 		End()
 }
 
+// addPPTSlideTitle 在幻灯片上添加标题文本及装饰下划线。
 func addPPTSlideTitle(slide *pptx.SlideBuilder, title string, template pptExportTemplate) {
 	slide.AddText(title).
 		SetBold(true).
@@ -146,6 +149,7 @@ func addPPTSlideTitle(slide *pptx.SlideBuilder, title string, template pptExport
 		End()
 }
 
+// calcBulletCardHeight 根据文本长度与字号估算卡片高度。
 func calcBulletCardHeight(bullet string, baseSize int) float64 {
 	length := len([]rune(strings.TrimSpace(bullet)))
 	fs := pptBulletFontSize(bullet, baseSize)
@@ -169,6 +173,7 @@ func calcBulletCardHeight(bullet string, baseSize int) float64 {
 	return h
 }
 
+// addPPTBulletCards 在幻灯片上按顺序排列多个要点卡片并自适应高度。
 func addPPTBulletCards(slide *pptx.SlideBuilder, bullets []string, startY float64, template pptExportTemplate) {
 	if len(bullets) == 0 {
 		return
@@ -202,6 +207,7 @@ func addPPTBulletCards(slide *pptx.SlideBuilder, bullets []string, startY float6
 	}
 }
 
+// addPPTBulletCard 在幻灯片指定位置绘制单个要点卡片及其编号指示器。
 func addPPTBulletCard(slide *pptx.SlideBuilder, index int, bullet string, y float64, height float64, template pptExportTemplate) {
 	slide.AddShape(pptx.ShapeRoundedRectangle).
 		SetPosition(pptx.Inches(1.04), pptx.Inches(y)).
@@ -242,6 +248,7 @@ func addPPTBulletCard(slide *pptx.SlideBuilder, index int, bullet string, y floa
 		End()
 }
 
+// pptBulletFontSize 根据要点文本长度自适应返回合适的字号。
 func pptBulletFontSize(bullet string, baseSize int) int {
 	if baseSize <= 0 {
 		baseSize = 15

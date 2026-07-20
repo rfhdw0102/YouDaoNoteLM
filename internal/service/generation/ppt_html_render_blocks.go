@@ -11,6 +11,7 @@ import (
 	"strings"
 )
 
+// pptSlideLayoutForIndex 根据页序号和标题关键词选择布局类型。
 func pptSlideLayoutForIndex(index int, slide pptSlidePlan) string {
 	title := strings.ToLower(slide.Title)
 	if slideHasCodeBlock(slide) {
@@ -32,6 +33,7 @@ func pptSlideLayoutForIndex(index int, slide pptSlidePlan) string {
 	return layouts[index%len(layouts)]
 }
 
+// slideHasCodeBlock 判断幻灯片是否包含代码块要点。
 func slideHasCodeBlock(slide pptSlidePlan) bool {
 	for _, bullet := range slide.Bullets {
 		if isPPTCodeBlockBullet(bullet) {
@@ -41,6 +43,7 @@ func slideHasCodeBlock(slide pptSlidePlan) bool {
 	return false
 }
 
+// writePPTTwoColumnSlide 渲染双栏布局：左侧要点列表，右侧洞察面板。
 func writePPTTwoColumnSlide(b *strings.Builder, slide pptSlidePlan) {
 	b.WriteString(`<div class="content-grid"><ul class="main-points">`)
 	for _, bullet := range slide.Bullets {
@@ -66,6 +69,7 @@ func writePPTTwoColumnSlide(b *strings.Builder, slide pptSlidePlan) {
 	writePPTCodeBlocks(b, slide.Bullets)
 }
 
+// writePPTCardGridSlide 渲染卡片网格布局，最多展示 4 张内容卡片。
 func writePPTCardGridSlide(b *strings.Builder, slide pptSlidePlan) {
 	b.WriteString(`<div class="card-grid">`)
 	cardIdx := 0
@@ -87,6 +91,7 @@ func writePPTCardGridSlide(b *strings.Builder, slide pptSlidePlan) {
 	writePPTCodeBlocks(b, slide.Bullets)
 }
 
+// pptCardTitleFromBullet 从要点文本中提取适合作为卡片标题的短语。
 func pptCardTitleFromBullet(bullet string, index int) string {
 	bullet = strings.TrimSpace(bullet)
 	if bullet == "" {
@@ -119,6 +124,7 @@ func pptCardTitleFromBullet(bullet string, index int) string {
 	return title
 }
 
+// pptExpandBullet 在要点过短时补充幻灯片标题前缀和句末标点。
 func pptExpandBullet(bullet, slideTitle string) string {
 	bullet = strings.TrimSpace(bullet)
 	if bullet == "" {
@@ -137,6 +143,7 @@ func pptExpandBullet(bullet, slideTitle string) string {
 	return bullet + "。"
 }
 
+// writePPTFullWidthListSlide 渲染通栏列表布局。
 func writePPTFullWidthListSlide(b *strings.Builder, slide pptSlidePlan) {
 	b.WriteString(`<div class="full-width-list"><ul>`)
 	for _, bullet := range slide.Bullets {
@@ -151,6 +158,7 @@ func writePPTFullWidthListSlide(b *strings.Builder, slide pptSlidePlan) {
 	writePPTCodeBlocks(b, slide.Bullets)
 }
 
+// writePPTComparisonSlide 渲染左右两栏对比布局。
 func writePPTComparisonSlide(b *strings.Builder, slide pptSlidePlan) {
 	var textBullets []string
 	for _, bullet := range slide.Bullets {
@@ -189,6 +197,7 @@ func writePPTComparisonSlide(b *strings.Builder, slide pptSlidePlan) {
 	writePPTCodeBlocks(b, slide.Bullets)
 }
 
+// pptComparisonTitleFromBullets 从对比要点中提取栏目标题。
 func pptComparisonTitleFromBullets(bullets []string, slideTitle, side string) string {
 	if len(bullets) == 0 {
 		if slideTitle != "" {
@@ -211,6 +220,7 @@ func pptComparisonTitleFromBullets(bullets []string, slideTitle, side string) st
 	return string(runes[:limit])
 }
 
+// writePPTQuoteSlide 渲染引用块布局，突出展示名言或观点。
 func writePPTQuoteSlide(b *strings.Builder, slide pptSlidePlan) {
 	quote := slide.Title
 	if len(slide.Bullets) > 0 {
@@ -232,6 +242,7 @@ func writePPTQuoteSlide(b *strings.Builder, slide pptSlidePlan) {
 	writePPTCodeBlocks(b, slide.Bullets)
 }
 
+// writePPTCodeBlocks 渲染要点中的代码块部分。
 func writePPTCodeBlocks(b *strings.Builder, bullets []string) {
 	for _, bullet := range bullets {
 		if !isPPTCodeBlockBullet(bullet) {
@@ -247,6 +258,7 @@ func writePPTCodeBlocks(b *strings.Builder, bullets []string) {
 	}
 }
 
+// writePPTCodeSlide 渲染代码主题幻灯片：文本要点列表加代码块。
 func writePPTCodeSlide(b *strings.Builder, slide pptSlidePlan) {
 	var textBullets []string
 	for _, bullet := range slide.Bullets {
@@ -266,6 +278,7 @@ func writePPTCodeSlide(b *strings.Builder, slide pptSlidePlan) {
 	writePPTCodeBlocks(b, slide.Bullets)
 }
 
+// pptCardTitle 返回卡片标题，空标题时回退为序号占位。
 func pptCardTitle(slideTitle string, index int) string {
 	slideTitle = strings.TrimSpace(slideTitle)
 	if slideTitle == "" {
@@ -274,6 +287,7 @@ func pptCardTitle(slideTitle string, index int) string {
 	return slideTitle
 }
 
+// pptComparisonLeftTitle 返回对比布局左栏标题。
 func pptComparisonLeftTitle(slideTitle string) string {
 	slideTitle = strings.TrimSpace(slideTitle)
 	if slideTitle == "" {
@@ -282,6 +296,7 @@ func pptComparisonLeftTitle(slideTitle string) string {
 	return slideTitle + " · A"
 }
 
+// pptComparisonRightTitle 返回对比布局右栏标题。
 func pptComparisonRightTitle(slideTitle string) string {
 	slideTitle = strings.TrimSpace(slideTitle)
 	if slideTitle == "" {
@@ -290,6 +305,7 @@ func pptComparisonRightTitle(slideTitle string) string {
 	return slideTitle + " · B"
 }
 
+// sanitizePPTPlanVisibleText 清理大纲计划中所有可见文本的格式标记。
 func sanitizePPTPlanVisibleText(plan pptOutlinePlan) pptOutlinePlan {
 	plan.Title = cleanPPTVisibleText(plan.Title)
 	for i := range plan.Slides {
@@ -303,6 +319,7 @@ func sanitizePPTPlanVisibleText(plan pptOutlinePlan) pptOutlinePlan {
 	return plan
 }
 
+// cleanPPTVisibleText 清理单段文本中的 Markdown 与多余空白。
 func cleanPPTVisibleText(value string) string {
 	value = strings.ReplaceAll(value, "&nbsp;", " ")
 
@@ -331,6 +348,7 @@ func cleanPPTVisibleText(value string) string {
 	}
 }
 
+// stripFencedCodeBlockForPPT 提取反引号围栏代码块内的代码内容。
 func stripFencedCodeBlockForPPT(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
 	if !strings.HasPrefix(trimmed, "```") {
@@ -359,6 +377,7 @@ func stripFencedCodeBlockForPPT(value string) (string, bool) {
 	return inner, true
 }
 
+// isPPTCodeBlockBullet 判断要点是否为多行代码块。
 func isPPTCodeBlockBullet(bullet string) bool {
 	trimmed := strings.TrimSpace(bullet)
 	return strings.HasPrefix(trimmed, "```") && strings.Contains(trimmed, "\n")

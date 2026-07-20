@@ -48,6 +48,7 @@ func supplementBullet(title string, detail int) string {
 	return templates[idx]
 }
 
+// pickPoint 按索引从要点列表取一条，越界则循环取。
 func pickPoint(points []string, index int) string {
 	if len(points) == 0 {
 		return ""
@@ -58,6 +59,7 @@ func pickPoint(points []string, index int) string {
 	return points[index%len(points)]
 }
 
+// buildPPTFallbackPoints 从输入材料中提炼 PPT fallback 要点列表。
 func buildPPTFallbackPoints(input generationAgentInput, limit int) []string {
 	if limit <= 0 {
 		limit = 9

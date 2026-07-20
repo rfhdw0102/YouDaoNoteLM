@@ -16,6 +16,7 @@ type generationQueryPlan struct {
 	Keywords   []string
 }
 
+// buildGenerationQueryPlan 根据请求构建本地与联网查询计划。
 func buildGenerationQueryPlan(req *GenerationRequest) generationQueryPlan {
 	if req == nil {
 		return generationQueryPlan{}
@@ -42,6 +43,7 @@ func buildGenerationQueryPlan(req *GenerationRequest) generationQueryPlan {
 	}
 }
 
+// extractMarkdownHeadings 从 Markdown 中提取限定数量的标题。
 func extractMarkdownHeadings(markdown string, limit int) []string {
 	var headings []string
 	for _, line := range strings.Split(markdown, "\n") {
@@ -61,6 +63,7 @@ func extractMarkdownHeadings(markdown string, limit int) []string {
 	return headings
 }
 
+// extractGenerationKeywords 从提示词和 Markdown 中提取关键词。
 func extractGenerationKeywords(prompt, markdown string, limit int) []string {
 	if limit <= 0 {
 		return nil
@@ -109,6 +112,7 @@ func appendKeywordLineCandidates(candidates []string, lines []string, limit int)
 	return candidates
 }
 
+// balancedSampleIndexes 返回均匀分布的采样索引列表。
 func balancedSampleIndexes(count, limit int) []int {
 	if count <= 0 || limit <= 0 {
 		return nil
@@ -131,6 +135,7 @@ func balancedSampleIndexes(count, limit int) []int {
 	return indexes
 }
 
+// splitKeywordCandidates 按分隔符将字符串切分为关键词候选。
 func splitKeywordCandidates(value string) []string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -156,6 +161,7 @@ func splitKeywordCandidates(value string) []string {
 	return result
 }
 
+// generationTypeIntent 返回各生成类型对应的意图关键词。
 func generationTypeIntent(typ GenerationType) []string {
 	switch typ {
 	case GenerationTypeMindmap:
@@ -171,6 +177,7 @@ func generationTypeIntent(typ GenerationType) []string {
 	}
 }
 
+// compactQuery 拼接查询片段并按字符上限截断。
 func compactQuery(parts []string, maxRunes int) string {
 	seen := map[string]struct{}{}
 	var compacted []string

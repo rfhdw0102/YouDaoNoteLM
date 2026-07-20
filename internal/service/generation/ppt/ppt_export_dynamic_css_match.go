@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// computeNodeStyle 计算节点最终样式，合并继承样式与匹配的 CSS 规则。
 func computeNodeStyle(node *html.Node, inheritedText pptStyle, doc *pptHTMLDocument) pptStyle {
 	style := inheritTextStyle(inheritedText)
 
@@ -25,6 +26,7 @@ func computeNodeStyle(node *html.Node, inheritedText pptStyle, doc *pptHTMLDocum
 	return style
 }
 
+// matchingCSSRules 返回与节点选择器匹配的 CSS 规则列表。
 func matchingCSSRules(node *html.Node, rules []pptCSSRule) []pptCSSRule {
 	matches := make([]pptCSSRule, 0, len(rules))
 	for _, rule := range rules {
@@ -35,6 +37,7 @@ func matchingCSSRules(node *html.Node, rules []pptCSSRule) []pptCSSRule {
 	return matches
 }
 
+// matchesCSSSelector 判断节点是否匹配由多段组成的选择器（含祖先关系）。
 func matchesCSSSelector(node *html.Node, parts []pptCSSSelectorPart) bool {
 	if len(parts) == 0 || node == nil {
 		return false
@@ -54,6 +57,7 @@ func matchesCSSSelector(node *html.Node, parts []pptCSSSelectorPart) bool {
 	return partIndex < 0
 }
 
+// matchesSelectorPart 判断节点是否匹配单段选择器（标签与类名）。
 func matchesSelectorPart(node *html.Node, part pptCSSSelectorPart) bool {
 	if node == nil || node.Type != html.ElementNode {
 		return false
@@ -73,6 +77,7 @@ func matchesSelectorPart(node *html.Node, part pptCSSSelectorPart) bool {
 	return true
 }
 
+// isFirstElementChild 判断节点是否为其父节点的首个元素子节点。
 func isFirstElementChild(node *html.Node) bool {
 	if node == nil || node.Parent == nil {
 		return false
@@ -86,6 +91,7 @@ func isFirstElementChild(node *html.Node) bool {
 	return false
 }
 
+// parseCSSRules 解析 CSS 文本，提取变量与规则列表。
 func parseCSSRules(css string, existingVars map[string]string, startOrder int) (map[string]string, []pptCSSRule) {
 	vars := make(map[string]string)
 	for key, value := range existingVars {
@@ -138,6 +144,7 @@ type cssBlock struct {
 	body     string
 }
 
+// splitTopLevelCSSBlocks 将 CSS 文本拆分为顶层选择器与对应块体。
 func splitTopLevelCSSBlocks(css string) []cssBlock {
 	var blocks []cssBlock
 	for i := 0; i < len(css); {
@@ -180,6 +187,7 @@ func splitTopLevelCSSBlocks(css string) []cssBlock {
 	return blocks
 }
 
+// skipAtRule 跳过 CSS 中的 @ 规则，返回新的索引位置。
 func skipAtRule(css string, index int) int {
 	for index < len(css) && css[index] != '{' && css[index] != ';' {
 		index++
@@ -204,6 +212,7 @@ func skipAtRule(css string, index int) int {
 	return index
 }
 
+// stripCSSComments 移除 CSS 中的注释内容。
 func stripCSSComments(css string) string {
 	var b strings.Builder
 	for i := 0; i < len(css); i++ {
@@ -220,6 +229,7 @@ func stripCSSComments(css string) string {
 	return b.String()
 }
 
+// parseCSSSelector 解析选择器字符串，返回分段、特异性与是否解析成功。
 func parseCSSSelector(selector string) ([]pptCSSSelectorPart, int, bool) {
 	tokens := strings.Fields(selector)
 	if len(tokens) == 0 {
@@ -267,10 +277,12 @@ func parseCSSSelector(selector string) ([]pptCSSSelectorPart, int, bool) {
 	return parts, specificity, len(parts) > 0
 }
 
+// isCSSWhitespace 判断字节是否为 CSS 中的空白字符。
 func isCSSWhitespace(value byte) bool {
 	return value == ' ' || value == '\n' || value == '\r' || value == '\t'
 }
 
+// inheritTextStyle 返回可被子节点继承的文本相关样式。
 func inheritTextStyle(style pptStyle) pptStyle {
 	return pptStyle{
 		TextColor:           cloneColor(style.TextColor),
@@ -285,6 +297,7 @@ func inheritTextStyle(style pptStyle) pptStyle {
 	}
 }
 
+// mergePPTStyle 将 patch 中的非空样式字段合并到 base 上。
 func mergePPTStyle(base, patch pptStyle) pptStyle {
 	if patch.ClearBackground {
 		base.BackgroundColor = nil

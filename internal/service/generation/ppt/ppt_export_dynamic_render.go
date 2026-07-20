@@ -23,6 +23,7 @@ func renderMeasuredDynamicBlock(slide *pptx.SlideBuilder, measured measuredDynam
 	}
 }
 
+// renderTextAt 在测量位置渲染文本块。
 func renderTextAt(slide *pptx.SlideBuilder, measured measuredDynamicBlock) {
 	block := measured.Block
 	if strings.TrimSpace(block.Text) == "" {
@@ -61,6 +62,7 @@ func renderTextAt(slide *pptx.SlideBuilder, measured measuredDynamicBlock) {
 	}
 }
 
+// renderInlineRunsAt 按权重分配宽度渲染内联文本运行。
 func renderInlineRunsAt(slide *pptx.SlideBuilder, measured measuredDynamicBlock) {
 	block := measured.Block
 	x := measured.X
@@ -103,6 +105,7 @@ func renderInlineRunsAt(slide *pptx.SlideBuilder, measured measuredDynamicBlock)
 	}
 }
 
+// renderPlainTextAt 在指定位置渲染纯文本块。
 func renderPlainTextAt(slide *pptx.SlideBuilder, measured measuredDynamicBlock, block pptHTMLBlock) {
 	fontSize := resolveBlockFontSize(block, defaultFontSizeForBlock(block.Kind))
 	fontFamily := resolveFontFamily(block.Style, defaultFontFamilyForBlock(block.Kind))
@@ -120,6 +123,7 @@ func renderPlainTextAt(slide *pptx.SlideBuilder, measured measuredDynamicBlock, 
 	text.End()
 }
 
+// inlineRunsWidthWeight 计算内联运行序列的总宽度权重。
 func inlineRunsWidthWeight(runs []pptHTMLTextRun, block pptHTMLBlock) float64 {
 	total := 0.0
 	for _, run := range runs {
@@ -131,6 +135,7 @@ func inlineRunsWidthWeight(runs []pptHTMLTextRun, block pptHTMLBlock) float64 {
 	return total
 }
 
+// inlineRunWidthWeight 计算单个内联运行的宽度权重。
 func inlineRunWidthWeight(run pptHTMLTextRun, block pptHTMLBlock) float64 {
 	size := resolveBlockFontSize(block, defaultFontSizeForBlock(block.Kind))
 	weight := float64(len([]rune(run.Text))) * float64(size)
@@ -143,6 +148,7 @@ func inlineRunWidthWeight(run pptHTMLTextRun, block pptHTMLBlock) float64 {
 	return weight
 }
 
+// renderDynamicBlock 渲染单个动态块。
 func renderDynamicBlock(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, block pptHTMLBlock) {
 	switch block.Kind {
 	case "section-number":
@@ -156,6 +162,7 @@ func renderDynamicBlock(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, block
 	}
 }
 
+// renderSectionNumber 渲染幻灯片序号。
 func renderSectionNumber(slide *pptx.SlideBuilder, block pptHTMLBlock) {
 	fontSize := resolveBlockFontSize(block, 13)
 	text := slide.AddText(block.Text).
@@ -171,6 +178,7 @@ func renderSectionNumber(slide *pptx.SlideBuilder, block pptHTMLBlock) {
 	text.End()
 }
 
+// renderContainerBlock 渲染容器块。
 func renderContainerBlock(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, block pptHTMLBlock) {
 	cursor.y += edgeOr(block.Style.Margin, "top", 0)
 	switch block.Layout {
@@ -184,6 +192,7 @@ func renderContainerBlock(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, blo
 	cursor.y += edgeOr(block.Style.Margin, "bottom", 0)
 }
 
+// renderGridContainer 渲染网格布局容器。
 func renderGridContainer(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, block pptHTMLBlock) {
 	if len(block.Children) == 0 {
 		return
@@ -236,6 +245,7 @@ func renderBlockInRect(slide *pptx.SlideBuilder, block pptHTMLBlock, x, y, width
 	}
 }
 
+// renderCardBlock 渲染卡片块。
 func renderCardBlock(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, block pptHTMLBlock) {
 	cursor.y += edgeOr(block.Style.Margin, "top", 0)
 	height := estimateRenderedHeight(block, cursor.width)
@@ -243,6 +253,7 @@ func renderCardBlock(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, block pp
 	cursor.y += height + edgeOr(block.Style.Margin, "bottom", dynamicPPTDefaultGap)
 }
 
+// renderCardInRect 在矩形区域内渲染卡片块。
 func renderCardInRect(slide *pptx.SlideBuilder, block pptHTMLBlock, x, y, width, height float64) {
 	renderCardChrome(slide, block, x, y, width, height)
 	innerCursor := &pptLayoutCursor{
@@ -258,6 +269,7 @@ func renderCardInRect(slide *pptx.SlideBuilder, block pptHTMLBlock, x, y, width,
 	}
 }
 
+// renderCardChrome 渲染卡片外观（填充与边框）。
 func renderCardChrome(slide *pptx.SlideBuilder, block pptHTMLBlock, x, y, width, height float64) {
 	fill := resolveCardFill(block.Style)
 	borderColor := resolveBorderColor(block.Style, dynamicPPTDefaultSectionBorder)
@@ -288,6 +300,7 @@ func renderCardChrome(slide *pptx.SlideBuilder, block pptHTMLBlock, x, y, width,
 	}
 }
 
+// renderTextBlock 渲染文本块。
 func renderTextBlock(slide *pptx.SlideBuilder, cursor *pptLayoutCursor, block pptHTMLBlock) {
 	if strings.TrimSpace(block.Text) == "" {
 		return

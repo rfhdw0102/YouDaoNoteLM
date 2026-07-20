@@ -20,6 +20,7 @@ type generationTaskCacheStore struct {
 	cache *cache.GenerationTaskCache
 }
 
+// NewGenerationTaskCacheStore 创建并返回基于 Redis 缓存的任务存储实例。
 func NewGenerationTaskCacheStore(taskCache *cache.GenerationTaskCache) GenerationTaskStore {
 	if taskCache == nil {
 		return nil
@@ -27,10 +28,12 @@ func NewGenerationTaskCacheStore(taskCache *cache.GenerationTaskCache) Generatio
 	return &generationTaskCacheStore{cache: taskCache}
 }
 
+// Save 将任务序列化后存入 Redis。
 func (s *generationTaskCacheStore) Save(ctx context.Context, task *GenerationTask) error {
 	return s.cache.Save(ctx, task.TaskID, task.UserID, task.Sequence, task)
 }
 
+// Get 按任务 ID 从 Redis 读取并反序列化任务。
 func (s *generationTaskCacheStore) Get(ctx context.Context, taskID string) (*GenerationTask, error) {
 	var task GenerationTask
 	if err := s.cache.Get(ctx, taskID, &task); err != nil {
@@ -39,6 +42,7 @@ func (s *generationTaskCacheStore) Get(ctx context.Context, taskID string) (*Gen
 	return &task, nil
 }
 
+// List 按过滤条件查询用户任务列表并排序。
 func (s *generationTaskCacheStore) List(ctx context.Context, filter GenerationTaskListFilter) ([]*GenerationTask, error) {
 	if filter.Limit <= 0 || filter.Limit > 100 {
 		filter.Limit = 100
@@ -70,10 +74,12 @@ type inMemoryGenerationTaskStore struct {
 	tasks map[string]*GenerationTask
 }
 
+// NewInMemoryGenerationTaskStore 创建并返回内存版任务存储实例。
 func NewInMemoryGenerationTaskStore() GenerationTaskStore {
 	return &inMemoryGenerationTaskStore{tasks: map[string]*GenerationTask{}}
 }
 
+// Save 将任务副本存入内存 map。
 func (s *inMemoryGenerationTaskStore) Save(_ context.Context, task *GenerationTask) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -82,6 +88,7 @@ func (s *inMemoryGenerationTaskStore) Save(_ context.Context, task *GenerationTa
 	return nil
 }
 
+// Get 按任务 ID 从内存 map 读取任务副本。
 func (s *inMemoryGenerationTaskStore) Get(_ context.Context, taskID string) (*GenerationTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -93,6 +100,7 @@ func (s *inMemoryGenerationTaskStore) Get(_ context.Context, taskID string) (*Ge
 	return &cp, nil
 }
 
+// List 按过滤条件从内存 map 查询任务列表并排序。
 func (s *inMemoryGenerationTaskStore) List(_ context.Context, filter GenerationTaskListFilter) ([]*GenerationTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -117,6 +125,7 @@ func (s *inMemoryGenerationTaskStore) List(_ context.Context, filter GenerationT
 	return tasks, nil
 }
 
+// sortGenerationTasks 按 sequence、createdAt、taskID 稳定排序任务。
 func sortGenerationTasks(tasks []*GenerationTask) {
 	sort.SliceStable(tasks, func(i, j int) bool {
 		if tasks[i].Sequence != tasks[j].Sequence {
@@ -129,6 +138,7 @@ func sortGenerationTasks(tasks []*GenerationTask) {
 	})
 }
 
+// cloneGenerationTask 深拷贝任务对象及其引用字段。
 func cloneGenerationTask(task *GenerationTask) *GenerationTask {
 	if task == nil {
 		return nil

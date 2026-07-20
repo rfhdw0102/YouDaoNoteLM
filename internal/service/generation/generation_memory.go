@@ -35,6 +35,7 @@ type GenerationMemoryStore interface {
 	Add(ctx context.Context, scope GenerationMemoryScope, entry GenerationMemoryEntry) error
 }
 
+// buildGenerationMemoryContext 将记忆条目拼接为 Agent 可用的上下文字符串。
 func buildGenerationMemoryContext(entries []GenerationMemoryEntry) string {
 	var b strings.Builder
 	written := 0
@@ -70,6 +71,7 @@ func buildGenerationMemoryContext(entries []GenerationMemoryEntry) string {
 	return strings.TrimSpace(b.String())
 }
 
+// appendGenerationMemoryContext 将记忆上下文追加到基础上下文后返回。
 func appendGenerationMemoryContext(base string, entries []GenerationMemoryEntry) string {
 	memory := buildGenerationMemoryContext(entries)
 	if memory == "" {
@@ -82,6 +84,7 @@ func appendGenerationMemoryContext(base string, entries []GenerationMemoryEntry)
 	return base + "\n\n" + memory
 }
 
+// buildGenerationMemoryEntry 根据请求和生成内容构建记忆条目。
 func buildGenerationMemoryEntry(req *GenerationRequest, content string) GenerationMemoryEntry {
 	entry := GenerationMemoryEntry{
 		OutputSummary: summarizeGenerationMemoryText(content),
@@ -94,6 +97,7 @@ func buildGenerationMemoryEntry(req *GenerationRequest, content string) Generati
 	return entry
 }
 
+// generationMemoryScopeFromRequest 从请求中提取记忆作用域。
 func generationMemoryScopeFromRequest(req *GenerationRequest) GenerationMemoryScope {
 	if req == nil {
 		return GenerationMemoryScope{}
@@ -105,6 +109,7 @@ func generationMemoryScopeFromRequest(req *GenerationRequest) GenerationMemorySc
 	}
 }
 
+// summarizeGenerationMemoryText 压缩空白并按上限截断记忆文本。
 func summarizeGenerationMemoryText(value string) string {
 	value = strings.Join(strings.Fields(value), " ")
 	if value == "" {

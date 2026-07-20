@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// fixPPTXPackage 修正 PPTX 压缩包，补全缺失的 presentation 与关系文件。
 func fixPPTXPackage(data []byte, slideCount int) ([]byte, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
@@ -69,6 +70,7 @@ func fixPPTXPackage(data []byte, slideCount int) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// writePPTXZipEntry 向 PPTX 压缩包写入一条指定内容的条目。
 func writePPTXZipEntry(writer *zip.Writer, name string, data []byte) error {
 	entry, err := writer.Create(name)
 	if err != nil {
@@ -78,6 +80,7 @@ func writePPTXZipEntry(writer *zip.Writer, name string, data []byte) error {
 	return err
 }
 
+// copyPPTXZipEntry 将原压缩包中的条目原样复制到新压缩包。
 func copyPPTXZipEntry(writer *zip.Writer, file *zip.File) error {
 	reader, err := file.Open()
 	if err != nil {
@@ -94,6 +97,7 @@ func copyPPTXZipEntry(writer *zip.Writer, file *zip.File) error {
 	return err
 }
 
+// pptxPresentationXML 生成 presentation.xml 内容，包含幻灯片列表。
 func pptxPresentationXML(slideCount int) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -115,6 +119,7 @@ func pptxPresentationXML(slideCount int) string {
 	return b.String()
 }
 
+// pptxSlideMasterXML 生成 slideMaster1.xml 的基础内容。
 func pptxSlideMasterXML() string {
 	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sldMaster xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
@@ -140,6 +145,7 @@ func pptxSlideMasterXML() string {
 </p:sldMaster>`
 }
 
+// pptxSlideRelationshipXML 生成幻灯片与布局的关系描述 XML。
 func pptxSlideRelationshipXML() string {
 	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">

@@ -5,11 +5,13 @@ import (
 	"strings"
 )
 
+// renderDynamicHTMLSlide 测量并渲染一个动态 HTML 幻灯片。
 func renderDynamicHTMLSlide(slide *pptx.SlideBuilder, doc *pptHTMLDocument, slideData pptHTMLSlide) {
 	measured := measureDynamicHTMLSlide(doc, slideData, newDynamicLayoutConfig())
 	renderMeasuredDynamicHTMLSlide(slide, doc, measured)
 }
 
+// renderMeasuredDynamicHTMLSlide 渲染已测量的动态 HTML 幻灯片。
 func renderMeasuredDynamicHTMLSlide(slide *pptx.SlideBuilder, doc *pptHTMLDocument, measured measuredDynamicHTMLSlide) {
 	slide.SetBackgroundColor(resolveSlideBackground(doc.BodyStyle))
 
@@ -19,6 +21,7 @@ func renderMeasuredDynamicHTMLSlide(slide *pptx.SlideBuilder, doc *pptHTMLDocume
 	}
 }
 
+// renderSectionFrame 渲染 section 边框并返回其几何信息。
 func renderSectionFrame(slide *pptx.SlideBuilder, style pptStyle) pptSectionFrame {
 	frame := pptSectionFrame{
 		x:             dynamicPPTOuterMarginX,
@@ -62,6 +65,7 @@ func renderSectionFrame(slide *pptx.SlideBuilder, style pptStyle) pptSectionFram
 	return frame
 }
 
+// renderSectionFrameAt 在指定位置渲染 section 边框。
 func renderSectionFrameAt(slide *pptx.SlideBuilder, frame pptSectionFrame, style pptStyle) {
 	shapeType := pptx.ShapeRoundedRectangle
 	if dynamicPPTValueOrInt(style.BorderRadius, 28) <= 0 {
@@ -88,6 +92,7 @@ func renderSectionFrameAt(slide *pptx.SlideBuilder, frame pptSectionFrame, style
 	}
 }
 
+// measureDynamicHTMLSlide 测量动态 HTML 幻灯片的布局。
 func measureDynamicHTMLSlide(doc *pptHTMLDocument, slideData pptHTMLSlide, config dynamicLayoutConfig) measuredDynamicHTMLSlide {
 	frame := pptSectionFrame{
 		x:             config.OuterMarginX,
@@ -115,6 +120,7 @@ func measureDynamicHTMLSlide(doc *pptHTMLDocument, slideData pptHTMLSlide, confi
 	}
 }
 
+// measureDynamicBlocks 测量一组动态块的布局。
 func measureDynamicBlocks(blocks []pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) []measuredDynamicBlock {
 	measured := make([]measuredDynamicBlock, 0, len(blocks))
 	for _, block := range blocks {
@@ -127,6 +133,7 @@ func measureDynamicBlocks(blocks []pptHTMLBlock, cursor *pptLayoutCursor, config
 	return measured
 }
 
+// measureDynamicBlock 测量单个动态块的布局。
 func measureDynamicBlock(block pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) measuredDynamicBlock {
 	switch block.Kind {
 	case "section-number":
@@ -146,6 +153,7 @@ func measureDynamicBlock(block pptHTMLBlock, cursor *pptLayoutCursor, config dyn
 	}
 }
 
+// measureContainerBlock 测量容器块的布局。
 func measureContainerBlock(block pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) measuredDynamicBlock {
 	startY := cursor.y + edgeOr(block.Style.Margin, "top", 0)
 	cursor.y = startY
@@ -168,6 +176,7 @@ func measureContainerBlock(block pptHTMLBlock, cursor *pptLayoutCursor, config d
 	return measured
 }
 
+// measureGridChildren 测量网格子块的布局。
 func measureGridChildren(block pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) []measuredDynamicBlock {
 	if len(block.Children) == 0 {
 		return nil
@@ -209,6 +218,7 @@ func measureGridChildren(block pptHTMLBlock, cursor *pptLayoutCursor, config dyn
 	return measured
 }
 
+// measureDynamicBlockInRect 在矩形区域内测量动态块。
 func measureDynamicBlockInRect(block pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) measuredDynamicBlock {
 	switch block.Kind {
 	case "card":
@@ -221,6 +231,7 @@ func measureDynamicBlockInRect(block pptHTMLBlock, cursor *pptLayoutCursor, conf
 	}
 }
 
+// measureCardBlock 测量卡片块的布局。
 func measureCardBlock(block pptHTMLBlock, cursor *pptLayoutCursor, config dynamicLayoutConfig) measuredDynamicBlock {
 	cursor.y += edgeOr(block.Style.Margin, "top", 0)
 	measured := measureCardAt(block, cursor.x, cursor.y, cursor.width, config)
@@ -228,6 +239,7 @@ func measureCardBlock(block pptHTMLBlock, cursor *pptLayoutCursor, config dynami
 	return measured
 }
 
+// measureCardAt 在指定位置测量卡片块的布局。
 func measureCardAt(block pptHTMLBlock, x, y, width float64, config dynamicLayoutConfig) measuredDynamicBlock {
 	contentWidth := width - edgeOr(block.Style.Padding, "left", 0.22) - edgeOr(block.Style.Padding, "right", 0.22)
 	if contentWidth < 0.5 {
@@ -253,6 +265,7 @@ func measureCardAt(block pptHTMLBlock, x, y, width float64, config dynamicLayout
 	}
 }
 
+// measureTextBlock 测量文本块的布局。
 func measureTextBlock(block pptHTMLBlock, cursor *pptLayoutCursor) measuredDynamicBlock {
 	if strings.TrimSpace(block.Text) == "" {
 		return measuredDynamicBlock{Block: block}

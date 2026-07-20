@@ -4,6 +4,7 @@ import (
 	"strings"
 )
 
+// applyStyleDeclarations 将样式声明映射应用到 pptStyle 上。
 func applyStyleDeclarations(style pptStyle, declarations map[string]string) pptStyle {
 	for rawKey, rawValue := range declarations {
 		key := strings.ToLower(strings.TrimSpace(rawKey))
@@ -139,6 +140,7 @@ func applyStyleDeclarations(style pptStyle, declarations map[string]string) pptS
 	return style
 }
 
+// applyOrderedStyleDeclarations 按顺序将样式声明应用到 pptStyle 上。
 func applyOrderedStyleDeclarations(style pptStyle, declarations []pptStyleDeclaration) pptStyle {
 	for _, declaration := range declarations {
 		style = applyStyleDeclarations(style, map[string]string{
@@ -148,6 +150,7 @@ func applyOrderedStyleDeclarations(style pptStyle, declarations []pptStyleDeclar
 	return style
 }
 
+// newDynamicLayoutConfig 创建并返回动态布局配置实例。
 func newDynamicLayoutConfig() dynamicLayoutConfig {
 	return dynamicLayoutConfig{
 		SlideWidth:          dynamicPPTSlideWidth,

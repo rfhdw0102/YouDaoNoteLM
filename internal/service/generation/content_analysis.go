@@ -12,11 +12,13 @@ import (
 	"strings"
 )
 
+// fallbackMindmapContent 生成思维导图兜底内容。
 func fallbackMindmapContent(input generationAgentInput) string {
 	analysis := analyzeLearningContent(input)
 	return renderMindmap(expandMindmapContent(planMindmap(analysis), analysis))
 }
 
+// appendMindmapPlansToContext 将思维导图规划与扩展结果拼入上下文。
 func appendMindmapPlansToContext(contextValue string, plan, expanded mindmapPlan) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(contextValue))
@@ -33,6 +35,7 @@ func appendMindmapPlansToContext(contextValue string, plan, expanded mindmapPlan
 	return strings.TrimSpace(b.String())
 }
 
+// renderMindmapPlan 将思维导图规划渲染为 Markdown 文本。
 func renderMindmapPlan(plan mindmapPlan) string {
 	var b strings.Builder
 	b.WriteString("# ")
@@ -56,10 +59,12 @@ func renderMindmapPlan(plan mindmapPlan) string {
 	return strings.TrimSpace(b.String())
 }
 
+// learningDeckSections 返回学习卡片的固定章节标题。
 func learningDeckSections() []string {
 	return []string{"背景与目标", "概念框架", "机制与流程", "案例与应用", "易错辨析", "总结复盘"}
 }
 
+// analyzeLearningContent 对输入材料进行结构化分析，生成各类型生成器共用的学习摘要。
 func analyzeLearningContent(input generationAgentInput) learningContentAnalysis {
 	markdown := ""
 	prompt := ""
@@ -119,6 +124,7 @@ func analyzeLearningContent(input generationAgentInput) learningContentAnalysis 
 	return analysis
 }
 
+// focusPPTSectionsByPrompt 按用户 prompt 过滤 PPT 章节，返回聚焦结果与是否命中。
 func focusPPTSectionsByPrompt(sections []pptSourceSection, prompt string) ([]pptSourceSection, bool) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" || len(sections) == 0 {
@@ -136,6 +142,7 @@ func focusPPTSectionsByPrompt(sections []pptSourceSection, prompt string) ([]ppt
 	return focused, true
 }
 
+// focusPPTReferencesByPrompt 按用户 prompt 与聚焦章节过滤参考资料。
 func focusPPTReferencesByPrompt(refs []GenerationReference, prompt string, sections []pptSourceSection) []GenerationReference {
 	if len(refs) == 0 {
 		return refs
@@ -159,6 +166,7 @@ func focusPPTReferencesByPrompt(refs []GenerationReference, prompt string, secti
 	return focused
 }
 
+// pptReferenceMatchesFocus 判断参考资料是否命中聚焦章节或 prompt。
 func pptReferenceMatchesFocus(ref GenerationReference, prompt string, sectionTitles []string) bool {
 	for _, title := range sectionTitles {
 		if pptPromptMatchesFocusText(ref.Heading, title) ||
@@ -174,6 +182,7 @@ func pptReferenceMatchesFocus(ref GenerationReference, prompt string, sectionTit
 		pptPromptMatchesFocusText(prompt, ref.ChapterPath)
 }
 
+// pptPromptMatchesFocusText 判断 prompt 与文本是否在关键词层面匹配。
 func pptPromptMatchesFocusText(prompt, text string) bool {
 	prompt = strings.ToLower(strings.TrimSpace(prompt))
 	text = strings.ToLower(strings.TrimSpace(text))
@@ -192,6 +201,7 @@ func pptPromptMatchesFocusText(prompt, text string) bool {
 	return false
 }
 
+// pointsFromPPTSections 从 PPT 章节汇总并去重要点，最多返回 limit 条。
 func pointsFromPPTSections(sections []pptSourceSection, limit int) []string {
 	var points []string
 	for _, section := range sections {
@@ -204,6 +214,7 @@ func pointsFromPPTSections(sections []pptSourceSection, limit int) []string {
 	return points
 }
 
+// pptSectionsFromReferences 按标题归并参考资料，构造 PPT 章节列表。
 func pptSectionsFromReferences(refs []GenerationReference, limit int) []pptSourceSection {
 	sectionsByTitle := map[string]int{}
 	sections := make([]pptSourceSection, 0, len(refs))
@@ -229,6 +240,7 @@ func pptSectionsFromReferences(refs []GenerationReference, limit int) []pptSourc
 	return sections
 }
 
+// evidenceFromReferences 将参考资料转换为学习证据列表。
 func evidenceFromReferences(refs []GenerationReference) []learningEvidence {
 	evidence := make([]learningEvidence, 0, len(refs))
 	for _, ref := range refs {
@@ -241,6 +253,7 @@ func evidenceFromReferences(refs []GenerationReference) []learningEvidence {
 	return evidence
 }
 
+// evidenceFromSearch 将搜索结果转换为学习证据列表。
 func evidenceFromSearch(results []SearchResult) []learningEvidence {
 	evidence := make([]learningEvidence, 0, len(results))
 	for _, result := range results {
@@ -253,6 +266,7 @@ func evidenceFromSearch(results []SearchResult) []learningEvidence {
 	return evidence
 }
 
+// containsAnyFold 判断 value 是否包含任一关键词（大小写不敏感）。
 func containsAnyFold(value string, terms ...string) bool {
 	value = strings.ToLower(value)
 	for _, term := range terms {
@@ -263,6 +277,7 @@ func containsAnyFold(value string, terms ...string) bool {
 	return false
 }
 
+// extractPPTSourceSections 从 Markdown 中解析出最多 maxSections 个章节及其要点。
 func extractPPTSourceSections(markdown string, maxSections int) []pptSourceSection {
 	if maxSections <= 0 {
 		maxSections = 18
@@ -332,6 +347,7 @@ func extractPPTSourceSections(markdown string, maxSections int) []pptSourceSecti
 	return sections
 }
 
+// mergeCodeBlockLines 将代码块多行合并为单行条目，保留有效代码片段。
 func mergeCodeBlockLines(lines []string) []string {
 	var result []string
 	var codeBuf strings.Builder
@@ -379,6 +395,7 @@ func mergeCodeBlockLines(lines []string) []string {
 	return result
 }
 
+// requiredPPTSlideTitles 返回 PPT 必备的幻灯片标题列表。
 func requiredPPTSlideTitles() []string {
 	return []string{"封面", "目录", "背景与目标", "概念框架", "机制与流程", "案例与应用", "易错辨析", "总结复盘"}
 }

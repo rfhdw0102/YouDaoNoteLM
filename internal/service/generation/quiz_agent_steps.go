@@ -13,6 +13,7 @@ import (
 	"strings"
 )
 
+// analyzeQuizContent 分析学习内容并初始化测验链状态。
 func (a *quizGenerationAgent) analyzeQuizContent(ctx context.Context, input generationAgentInput) (quizChainState, error) {
 	return quizChainState{
 		input:    input,
@@ -20,16 +21,19 @@ func (a *quizGenerationAgent) analyzeQuizContent(ctx context.Context, input gene
 	}, nil
 }
 
+// planQuizQuestions 基于分析结果规划测验题目。
 func (a *quizGenerationAgent) planQuizQuestions(ctx context.Context, state quizChainState) (quizChainState, error) {
 	state.plan = planQuizQuestions(state.analysis)
 	return state, nil
 }
 
+// expandQuizChainContent 扩展测验题目内容。
 func (a *quizGenerationAgent) expandQuizChainContent(ctx context.Context, state quizChainState) (quizChainState, error) {
 	state.expanded = expandQuizContent(state.plan, state.analysis)
 	return state, nil
 }
 
+// generateQuizDraft 生成测验初稿并附带修复方案。
 func (a *quizGenerationAgent) generateQuizDraft(ctx context.Context, state quizChainState) (generationDraft, error) {
 	input := state.input
 	input.Context = appendQuizPlansToContext(state.input.Context, state.plan, state.expanded)
@@ -45,6 +49,7 @@ func (a *quizGenerationAgent) generateQuizDraft(ctx context.Context, state quizC
 	return draft, nil
 }
 
+// repairQuizStructure 必要时使用修复方案或 fallback 修复测验结构。
 func (a *quizGenerationAgent) repairQuizStructure(ctx context.Context, draft generationDraft) (generationDraft, error) {
 	if quizNeedsStructureRepair(draft.content) {
 		if draft.quizRepairPlan != nil {

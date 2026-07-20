@@ -78,6 +78,7 @@ func exportPPTWithDOMToPPTX(ctx context.Context, content, deckTitle string) ([]b
 	return data, nil
 }
 
+// resolvePPTDOMExporterScriptPath 解析 DOM 导出器 Node 脚本的路径。
 func resolvePPTDOMExporterScriptPath() (string, error) {
 	if fromEnv := strings.TrimSpace(os.Getenv("PPT_DOM_EXPORTER_SCRIPT")); fromEnv != "" {
 		return fromEnv, nil

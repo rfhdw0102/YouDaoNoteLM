@@ -9,10 +9,12 @@ import (
 	"strings"
 )
 
+// planPPTOutline 根据学习内容分析生成 PPT 大纲计划。
 func planPPTOutline(analysis learningContentAnalysis) pptOutlinePlan {
 	return planDynamicPPTOutline(analysis)
 }
 
+// planStaticPPTOutline 静态规划 PPT 大纲，作为无 LLM 调用时的兜底。
 func planStaticPPTOutline(analysis learningContentAnalysis) pptOutlinePlan {
 	plan := pptOutlinePlan{Title: analysis.Topic}
 	for _, title := range requiredPPTSlideTitles() {
@@ -54,6 +56,7 @@ func planStaticPPTOutline(analysis learningContentAnalysis) pptOutlinePlan {
 	return plan
 }
 
+// planDynamicPPTOutline 动态生成 PPT 大纲，包含封面、目录、内容页和总结页。
 func planDynamicPPTOutline(analysis learningContentAnalysis) pptOutlinePlan {
 	plan := pptOutlinePlan{Title: analysis.Topic}
 	contentSlides := pptContentSlidesFromAnalysis(analysis)
@@ -87,6 +90,7 @@ func planDynamicPPTOutline(analysis learningContentAnalysis) pptOutlinePlan {
 	return plan
 }
 
+// pptContentSlidesFromAnalysis 从分析结果的章节派生内容页切片。
 func pptContentSlidesFromAnalysis(analysis learningContentAnalysis) []pptSlidePlan {
 	sections := analysis.Sections
 	if len(sections) == 0 {
@@ -129,6 +133,7 @@ func pptContentSlidesFromAnalysis(analysis learningContentAnalysis) []pptSlidePl
 	return slides
 }
 
+// chunkPPTPoints 将要点按指定大小切片成多组。
 func chunkPPTPoints(points []string, size int) [][]string {
 	points = uniqueNonEmpty(points)
 	if len(points) == 0 {
@@ -148,6 +153,7 @@ func chunkPPTPoints(points []string, size int) [][]string {
 	return chunks
 }
 
+// sectionsFromFlatPoints 将扁平要点按每组 4 条聚合成章节。
 func sectionsFromFlatPoints(points []string, maxSections int) []pptSourceSection {
 	points = uniqueNonEmpty(points)
 	if len(points) == 0 {
@@ -170,6 +176,7 @@ func sectionsFromFlatPoints(points []string, maxSections int) []pptSourceSection
 	return sections
 }
 
+// supplementalPPTSlides 在缺少内容章节时补充背景、关系、应用等幻灯片。
 func supplementalPPTSlides(analysis learningContentAnalysis, count int) []pptSlidePlan {
 	if len(analysis.Sections) > 0 {
 		return nil
@@ -197,6 +204,7 @@ func supplementalPPTSlides(analysis learningContentAnalysis, count int) []pptSli
 	return candidates[:count]
 }
 
+// appendRealEvidencePPTSlides 向幻灯片集合追加未使用过的真实证据要点。
 func appendRealEvidencePPTSlides(slides []pptSlidePlan, analysis learningContentAnalysis, count int) []pptSlidePlan {
 	if count <= 0 || len(analysis.Evidence) == 0 {
 		return slides
@@ -236,6 +244,7 @@ func appendRealEvidencePPTSlides(slides []pptSlidePlan, analysis learningContent
 	return slides
 }
 
+// pptSectionPurpose 根据章节位置返回该章节幻灯片的目的说明。
 func pptSectionPurpose(title string, index, total int) string {
 	switch {
 	case index == 0:
@@ -247,6 +256,7 @@ func pptSectionPurpose(title string, index, total int) string {
 	}
 }
 
+// expandPPTContent 基于证据和概念池扩充每张幻灯片的要点数量。
 func expandPPTContent(plan pptOutlinePlan, analysis learningContentAnalysis) pptOutlinePlan {
 	minBullets := 4
 	if analysis.Sparse {

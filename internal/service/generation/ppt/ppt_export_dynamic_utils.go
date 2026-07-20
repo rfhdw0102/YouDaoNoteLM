@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// edgeOr 读取 pptEdges 的指定边，未设置时返回兜底值。
 func edgeOr(edges pptEdges, side string, fallback float64) float64 {
 	if !edges.Set {
 		return fallback
@@ -24,6 +25,7 @@ func edgeOr(edges pptEdges, side string, fallback float64) float64 {
 	}
 }
 
+// resolveCSSVars 解析字符串中的 CSS var() 引用。
 func resolveCSSVars(value string, vars map[string]string) string {
 	resolved := value
 	for range 6 {
@@ -43,6 +45,7 @@ func resolveCSSVars(value string, vars map[string]string) string {
 	return resolved
 }
 
+// normalizeFontFamily 规范化字体族名称。
 func normalizeFontFamily(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.Trim(value, `"'`)
@@ -63,11 +66,13 @@ func normalizeFontFamily(value string) string {
 	}
 }
 
+// isCSSNoneValue 判断 CSS 值是否表示无（none/0/transparent）。
 func isCSSNoneValue(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
 	return value == "none" || value == "0" || value == "0px" || value == "transparent"
 }
 
+// parseClassSet 解析节点的 class 属性为集合。
 func parseClassSet(node *html.Node) map[string]bool {
 	classes := map[string]bool{}
 	for _, className := range strings.Fields(getHTMLAttribute(node, "class")) {
@@ -79,6 +84,7 @@ func parseClassSet(node *html.Node) map[string]bool {
 	return classes
 }
 
+// getHTMLAttribute 获取节点指定属性值。
 func getHTMLAttribute(node *html.Node, key string) string {
 	for _, attr := range node.Attr {
 		if strings.EqualFold(attr.Key, key) {
@@ -88,6 +94,7 @@ func getHTMLAttribute(node *html.Node, key string) string {
 	return ""
 }
 
+// extractNodeText 提取节点及其后代的可见文本（带空格分隔）。
 func extractNodeText(node *html.Node) string {
 	var b strings.Builder
 	var walk func(*html.Node)
@@ -110,6 +117,7 @@ func extractNodeText(node *html.Node) string {
 	return b.String()
 }
 
+// extractRawNodeText 提取节点及其后代的原始文本。
 func extractRawNodeText(node *html.Node) string {
 	var b strings.Builder
 	var walk func(*html.Node)
@@ -129,6 +137,7 @@ func extractRawNodeText(node *html.Node) string {
 	return b.String()
 }
 
+// cloneColor 克隆颜色指针。
 func cloneColor(color *pptx.Color) *pptx.Color {
 	if color == nil {
 		return nil
@@ -137,6 +146,7 @@ func cloneColor(color *pptx.Color) *pptx.Color {
 	return &value
 }
 
+// cloneInt 克隆 int 指针。
 func cloneInt(value *int) *int {
 	if value == nil {
 		return nil
@@ -145,6 +155,7 @@ func cloneInt(value *int) *int {
 	return &copyValue
 }
 
+// cloneFloat64 克隆 float64 指针。
 func cloneFloat64(value *float64) *float64 {
 	if value == nil {
 		return nil
@@ -153,14 +164,17 @@ func cloneFloat64(value *float64) *float64 {
 	return &copyValue
 }
 
+// intPtr 返回 int 值的指针。
 func intPtr(value int) *int {
 	return &value
 }
 
+// float64Ptr 返回 float64 值的指针。
 func float64Ptr(value float64) *float64 {
 	return &value
 }
 
+// dynamicPPTValueOrInt 返回指针值，为空或非正时返回兜底值。
 func dynamicPPTValueOrInt(value *int, fallback int) int {
 	if value == nil || *value <= 0 {
 		return fallback
@@ -168,6 +182,7 @@ func dynamicPPTValueOrInt(value *int, fallback int) int {
 	return *value
 }
 
+// dynamicPPTMaxInt 返回两个 int 中的较大值。
 func dynamicPPTMaxInt(a, b int) int {
 	if a > b {
 		return a
@@ -175,6 +190,7 @@ func dynamicPPTMaxInt(a, b int) int {
 	return b
 }
 
+// dynamicPPTMinInt 返回两个 int 中的较小值。
 func dynamicPPTMinInt(a, b int) int {
 	if a < b {
 		return a
@@ -182,6 +198,7 @@ func dynamicPPTMinInt(a, b int) int {
 	return b
 }
 
+// dynamicPPTMaxFloat 返回两个 float64 中的较大值。
 func dynamicPPTMaxFloat(a, b float64) float64 {
 	if a > b {
 		return a

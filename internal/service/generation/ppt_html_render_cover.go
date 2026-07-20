@@ -10,6 +10,7 @@ import (
 	"strings"
 )
 
+// writePPTCoverSlide 渲染封面页：主标题、副标题与标签。
 func writePPTCoverSlide(b *strings.Builder, plan pptOutlinePlan, slide pptSlidePlan, index int) {
 	b.WriteString(`<div class="cover-meta"><span class="section-number">`)
 	b.WriteString(fmt.Sprintf("%02d", index+1))
@@ -40,6 +41,7 @@ func writePPTCoverSlide(b *strings.Builder, plan pptOutlinePlan, slide pptSlideP
 	}
 }
 
+// pptCoverSubtitle 根据主题和要点组合生成封面副标题。
 func pptCoverSubtitle(plan pptOutlinePlan, slide pptSlidePlan) string {
 	candidates := uniqueNonEmpty(append([]string{}, slide.Bullets...))
 	if len(candidates) == 0 {
@@ -55,6 +57,7 @@ func pptCoverSubtitle(plan pptOutlinePlan, slide pptSlidePlan) string {
 	return fmt.Sprintf("围绕 %s，聚焦 %s", title, strings.Join(candidates, "、"))
 }
 
+// pptContentSlideTitles 提取计划中所有内容页标题，过滤封面、目录与结束页。
 func pptContentSlideTitles(plan pptOutlinePlan) []string {
 	var titles []string
 	for i, slide := range plan.Slides {
@@ -70,10 +73,12 @@ func pptContentSlideTitles(plan pptOutlinePlan) []string {
 	return uniqueNonEmpty(titles)
 }
 
+// writePPTSummarySlideBody 渲染总结页正文（仅基于单张幻灯片）。
 func writePPTSummarySlideBody(b *strings.Builder, slide pptSlidePlan) {
 	writePPTSummarySlideBodyForPlan(b, pptOutlinePlan{Slides: []pptSlidePlan{slide}}, slide)
 }
 
+// writePPTSummarySlideBodyForPlan 基于完整计划渲染总结页的核心结论与后续行动。
 func writePPTSummarySlideBodyForPlan(b *strings.Builder, plan pptOutlinePlan, slide pptSlidePlan) {
 	primary, actions := pptSummaryContent(plan, slide)
 	if len(actions) == 0 {
@@ -90,6 +95,7 @@ func writePPTSummarySlideBodyForPlan(b *strings.Builder, plan pptOutlinePlan, sl
 	b.WriteString(`</ul></div></div>`)
 }
 
+// pptSummaryContent 提取总结页的核心结论与后续行动列表。
 func pptSummaryContent(plan pptOutlinePlan, slide pptSlidePlan) (string, []string) {
 	if len(slide.Bullets) > 0 {
 		return slide.Bullets[0], append([]string{}, slide.Bullets[1:]...)
@@ -111,6 +117,7 @@ func pptSummaryContent(plan pptOutlinePlan, slide pptSlidePlan) (string, []strin
 	return primary, actions
 }
 
+// pptSlideProgressPercent 计算幻灯片进度百分比。
 func pptSlideProgressPercent(index, total int) int {
 	if total <= 0 {
 		return 100
@@ -124,6 +131,7 @@ func pptSlideProgressPercent(index, total int) int {
 	return int(float64(index)/float64(total)*100 + 0.5)
 }
 
+// pptInsightTokens 从幻灯片要点中提取最多 2 条洞察摘要。
 func pptInsightTokens(slide pptSlidePlan) []string {
 	candidates := append([]string{}, slide.Bullets...)
 	if len(candidates) == 0 {

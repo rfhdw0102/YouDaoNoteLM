@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// extractTitle 从 Markdown 中提取首个标题文本，无则返回 fallback。
 func extractTitle(markdown, fallback string) string {
 	for _, line := range strings.Split(markdown, "\n") {
 		line = strings.TrimSpace(line)
@@ -22,6 +23,7 @@ func extractTitle(markdown, fallback string) string {
 	return fallback
 }
 
+// extractKeyPoints 从 Markdown 中提取最多 limit 条要点。
 func extractKeyPoints(markdown string, limit int) []string {
 	var points []string
 	lines := strings.Split(markdown, "\n")
@@ -47,6 +49,7 @@ func extractKeyPoints(markdown string, limit int) []string {
 	return points
 }
 
+// appendReferenceSection 向生成结果追加参考资料章节。
 func appendReferenceSection(b *strings.Builder, refs []GenerationReference) {
 	if len(refs) == 0 {
 		return
@@ -58,6 +61,7 @@ func appendReferenceSection(b *strings.Builder, refs []GenerationReference) {
 	}
 }
 
+// summarizeLine 压缩空白并按字符数截断单行文本。
 func summarizeLine(value string, limit int) string {
 	value = strings.Join(strings.Fields(value), " ")
 	if len([]rune(value)) <= limit {
@@ -67,6 +71,7 @@ func summarizeLine(value string, limit int) string {
 	return string(runes[:limit])
 }
 
+// htmlEscape 转义 HTML 特殊字符。
 func htmlEscape(value string) string {
 	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
 	return replacer.Replace(value)

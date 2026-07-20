@@ -17,6 +17,7 @@ import (
 	"strings"
 )
 
+// Generate 编排并执行 5 步链式生成流程。
 func (a *baseGenerationAgent) Generate(ctx context.Context, input generationAgentInput) (generationAgentOutput, error) {
 	chain := compose.NewChain[generationAgentInput, generationAgentOutput]().
 		AppendLambda(compose.InvokableLambda(a.generateDraft)).
@@ -32,6 +33,7 @@ func (a *baseGenerationAgent) Generate(ctx context.Context, input generationAgen
 	return runner.Invoke(ctx, input)
 }
 
+// generateDraft 调用 LLM 生成初稿，模型不可用时使用 fallback。
 func (a *baseGenerationAgent) generateDraft(ctx context.Context, input generationAgentInput) (generationDraft, error) {
 	content := ""
 	fallbackUsed := false
@@ -56,6 +58,7 @@ func (a *baseGenerationAgent) generateDraft(ctx context.Context, input generatio
 	return generationDraft{input: input, content: content, fallbackUsed: fallbackUsed}, nil
 }
 
+// structureCheck 校验初稿结构，内容为空时回退到 fallback。
 func (a *baseGenerationAgent) structureCheck(ctx context.Context, draft generationDraft) (generationDraft, error) {
 	if strings.TrimSpace(draft.content) == "" {
 		draft.content = a.fallback(draft.input)
@@ -64,10 +67,12 @@ func (a *baseGenerationAgent) structureCheck(ctx context.Context, draft generati
 	return draft, nil
 }
 
+// factEnhance 事实增强基类空实现，留给子类重写。
 func (a *baseGenerationAgent) factEnhance(ctx context.Context, draft generationDraft) (generationDraft, error) {
 	return draft, nil
 }
 
+// formatValidate 校验内容格式，不合格时回退到 fallback。
 func (a *baseGenerationAgent) formatValidate(ctx context.Context, draft generationDraft) (generationDraft, error) {
 	draft.formatValid = a.validator(draft.content)
 	if !draft.formatValid {
@@ -78,6 +83,7 @@ func (a *baseGenerationAgent) formatValidate(ctx context.Context, draft generati
 	return draft, nil
 }
 
+// finalize 整理初稿并输出最终生成结果。
 func (a *baseGenerationAgent) finalize(ctx context.Context, draft generationDraft) (generationAgentOutput, error) {
 	return generationAgentOutput{
 		Content:      strings.TrimSpace(draft.content),

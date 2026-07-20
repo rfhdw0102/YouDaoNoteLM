@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// extractInlineTextRuns 提取节点内的内联文本运行序列。
 func extractInlineTextRuns(node *html.Node, doc *pptHTMLDocument, inheritedText pptStyle) []pptHTMLTextRun {
 	var runs []pptHTMLTextRun
 	var walk func(*html.Node, pptStyle)
@@ -46,6 +47,7 @@ func extractInlineTextRuns(node *html.Node, doc *pptHTMLDocument, inheritedText 
 	return mergeAdjacentInlineRuns(runs)
 }
 
+// normalizeInlineText 规范化内联文本空白字符。
 func normalizeInlineText(value string) string {
 	value = strings.ReplaceAll(value, "&nbsp;", " ")
 	value = stdhtml.UnescapeString(value)
@@ -71,6 +73,7 @@ func normalizeInlineText(value string) string {
 	return collapsed
 }
 
+// startsWithPPTMarkdownSyntaxMarker 判断文本是否以 Markdown 标记开头。
 func startsWithPPTMarkdownSyntaxMarker(value string) bool {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -82,10 +85,12 @@ func startsWithPPTMarkdownSyntaxMarker(value string) bool {
 	return false
 }
 
+// isInlineWhitespace 判断字符是否为内联空白字符。
 func isInlineWhitespace(r rune) bool {
 	return r == ' ' || r == '\n' || r == '\r' || r == '\t'
 }
 
+// textFromRuns 拼接文本运行序列为完整字符串。
 func textFromRuns(runs []pptHTMLTextRun) string {
 	var b strings.Builder
 	for _, run := range runs {
@@ -94,6 +99,7 @@ func textFromRuns(runs []pptHTMLTextRun) string {
 	return strings.TrimSpace(b.String())
 }
 
+// prependInlineRunPrefix 在文本运行序列前插入前缀。
 func prependInlineRunPrefix(runs []pptHTMLTextRun, prefix string, style pptStyle) []pptHTMLTextRun {
 	if strings.TrimSpace(prefix) == "" {
 		return runs
@@ -104,10 +110,12 @@ func prependInlineRunPrefix(runs []pptHTMLTextRun, prefix string, style pptStyle
 	return mergeAdjacentInlineRuns(prefixed)
 }
 
+// inheritInlineTextStyle 继承内联文本样式。
 func inheritInlineTextStyle(style pptStyle) pptStyle {
 	return inheritTextStyle(style)
 }
 
+// mergeAdjacentInlineRuns 合并相邻同样式文本运行。
 func mergeAdjacentInlineRuns(runs []pptHTMLTextRun) []pptHTMLTextRun {
 	merged := make([]pptHTMLTextRun, 0, len(runs))
 	for _, run := range runs {
@@ -123,6 +131,7 @@ func mergeAdjacentInlineRuns(runs []pptHTMLTextRun) []pptHTMLTextRun {
 	return merged
 }
 
+// inlineStylesEqual 判断两个内联样式是否相等。
 func inlineStylesEqual(a, b pptStyle) bool {
 	return colorsEqual(a.TextColor, b.TextColor) &&
 		intPointersEqual(a.FontSize, b.FontSize) &&
@@ -130,6 +139,7 @@ func inlineStylesEqual(a, b pptStyle) bool {
 		a.FontFamily == b.FontFamily
 }
 
+// colorsEqual 判断两个颜色指针是否相等。
 func colorsEqual(a, b *pptx.Color) bool {
 	if a == nil || b == nil {
 		return a == b
@@ -137,6 +147,7 @@ func colorsEqual(a, b *pptx.Color) bool {
 	return *a == *b
 }
 
+// intPointersEqual 判断两个 int 指针是否相等。
 func intPointersEqual(a, b *int) bool {
 	if a == nil || b == nil {
 		return a == b

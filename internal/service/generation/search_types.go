@@ -57,6 +57,7 @@ type SearchService interface {
 	SearchAndSummarize(ctx context.Context, req *SearchRequest) (*SearchResponse, error)
 }
 
+// firstNonEmpty 返回第一个非空字符串，全空时返回空串。
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -66,6 +67,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// truncate 将字符串截断到 maxLen 长度并追加省略号。
 func truncate(s string, maxLen int) string {
 	if maxLen <= 0 || len(s) <= maxLen {
 		return s

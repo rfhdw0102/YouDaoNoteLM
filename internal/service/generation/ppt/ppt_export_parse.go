@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// Export 将内容导出为 PPT 文件并返回导出结果。
 func Export(ctx context.Context, content, title, templateID string) (*ExportResult, error) {
 	filename := resolveExportFilename(title, content, "ppt-export", ".pptx")
 
@@ -44,6 +45,7 @@ func Export(ctx context.Context, content, title, templateID string) (*ExportResu
 	}, nil
 }
 
+// resolvePPTExportTemplate 根据模板 ID 解析对应的 PPT 导出模板。
 func resolvePPTExportTemplate(templateID string) (pptExportTemplate, error) {
 	id := strings.ToLower(strings.TrimSpace(templateID))
 	template, ok := pptExportTemplates[id]
@@ -53,6 +55,7 @@ func resolvePPTExportTemplate(templateID string) (pptExportTemplate, error) {
 	return template, nil
 }
 
+// parsePPTExportSlides 从内容中解析出幻灯片列表。
 func parsePPTExportSlides(content string) ([]pptExportSlide, error) {
 	matches := pptSectionPattern.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
@@ -79,6 +82,7 @@ func parsePPTExportSlides(content string) ([]pptExportSlide, error) {
 	return slides, nil
 }
 
+// extractPPTSlideTitle 从单个 section 中提取标题文本。
 func extractPPTSlideTitle(section string) string {
 	for _, pattern := range []*regexp.Regexp{pptH1Pattern, pptH2Pattern} {
 		match := pattern.FindStringSubmatch(section)
@@ -89,6 +93,7 @@ func extractPPTSlideTitle(section string) string {
 	return ""
 }
 
+// extractPPTSlideBullets 从单个 section 中提取要点列表。
 func extractPPTSlideBullets(section string) []string {
 	matches := pptBulletPattern.FindAllStringSubmatch(section, -1)
 	bullets := make([]string, 0, len(matches))
@@ -101,6 +106,7 @@ func extractPPTSlideBullets(section string) []string {
 	return uniqueNonEmpty(bullets)
 }
 
+// normalizePPTExportText 规范化导出文本，清理 HTML 转义与多余空白。
 func normalizePPTExportText(value string) string {
 	value = strings.ReplaceAll(value, "&nbsp;", " ")
 	value = stripSimpleHTML(value)

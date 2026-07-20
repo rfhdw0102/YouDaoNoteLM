@@ -12,6 +12,7 @@ type generationPromptStrategy struct {
 	OutputFormat string
 }
 
+// promptStrategyFor 根据生成类型返回对应的提示词策略。
 func promptStrategyFor(typ GenerationType) generationPromptStrategy {
 	common := "以本地笔记为主要依据，联网搜索只作为补充背景。保持不同来源的边界，不编造缺乏依据的结论。参考资料会由系统在响应元数据中单独展示，不要在生成正文中添加参考资料、References、来源列表或引用附录。上下文中的 Local References、Web Results 是供你参考的素材，你应该将其中的内容融入幻灯片正文，而不是把参考资料标签、文档名、章节路径（如'文档列表'、'文档介绍'、'专题五'、'第一章'、'【重点知识联系与剖析】'等）作为可见文字输出到幻灯片上。如果参考资料中有有用的内容，直接将其融入幻灯片的正文叙述中，不要保留参考资料的元信息标签。"
 	switch typ {
@@ -234,6 +235,7 @@ func promptStrategyFor(typ GenerationType) generationPromptStrategy {
 	}
 }
 
+// pptOutlinePromptStrategy 返回 PPT 大纲生成的提示词策略。
 func pptOutlinePromptStrategy() generationPromptStrategy {
 	return generationPromptStrategy{
 		System: "你是一位资深咨询顾问，擅长将冗长的文字报告提炼为精炼的演示文稿。你的工作分两步：第一步，阅读用户 Markdown 材料，按内容逻辑将其划分为若干主题部分；第二步，基于划分的部分生成 PPT 大纲。\n\n" +
@@ -283,6 +285,7 @@ func pptOutlinePromptStrategy() generationPromptStrategy {
 	}
 }
 
+// pptCSSPromptStrategy 返回 PPT 样式生成的提示词策略。
 func pptCSSPromptStrategy() generationPromptStrategy {
 	return generationPromptStrategy{
 		System: "你是 PPT 视觉设计专家，只负责生成 <style> 块，不负责生成 HTML 结构。\n\n" +
@@ -300,6 +303,7 @@ func pptCSSPromptStrategy() generationPromptStrategy {
 	}
 }
 
+// pptOutlineReviewPromptStrategy 返回 PPT 大纲审查修正的提示词策略。
 func pptOutlineReviewPromptStrategy() generationPromptStrategy {
 	return generationPromptStrategy{
 		System: "你是一位资深咨询顾问，擅长审查和修正演示文稿大纲。你会收到一份已生成的 PPT 大纲和原始 Markdown 材料。你的任务是审查大纲并返回修正后的大纲。\n\n" +
@@ -334,6 +338,7 @@ func pptOutlineReviewPromptStrategy() generationPromptStrategy {
 	}
 }
 
+// pptContentEnrichPromptStrategy 返回 PPT 内容充实的提示词策略。
 func pptContentEnrichPromptStrategy() generationPromptStrategy {
 	return generationPromptStrategy{
 		System: `你是一位资深咨询顾问，擅长将冗长的文字报告提炼为精炼的演示文稿。你的任务是将 PPT 大纲中的简短要点扩展为充实、完整的演示文稿内容。

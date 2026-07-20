@@ -14,6 +14,7 @@ import (
 	"YoudaoNoteLm/internal/service/generation/quiz"
 )
 
+// validateMindmapContent 校验思维导图内容是否符合最小结构要求。
 func validateMindmapContent(content string) bool {
 	return mindmap.ValidateContent(content)
 }
@@ -22,14 +23,17 @@ func validatePPTContent(content string) bool {
 	return ppt.ValidateContent(content)
 }
 
+// validateQuizContent 校验测验内容是否符合最小结构要求。
 func validateQuizContent(content string) bool {
 	return quiz.ValidateContent(content)
 }
 
+// validateNoteContent 校验笔记内容是否符合最小结构要求。
 func validateNoteContent(content string) bool {
 	return note.ValidateContent(content)
 }
 
+// stripSimpleHTML 简单移除 HTML 标签后返回纯文本。
 func stripSimpleHTML(content string) string {
 	var b strings.Builder
 	inTag := false

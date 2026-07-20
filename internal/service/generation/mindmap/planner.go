@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// dynamicMindmapBranches 根据分析结果动态构建思维导图一级分支。
 func dynamicMindmapBranches(analysis Analysis) []BranchPlan {
 	var branches []BranchPlan
 
@@ -124,6 +125,7 @@ func dynamicMindmapBranches(analysis Analysis) []BranchPlan {
 	return branches
 }
 
+// PlanMindmap 根据学习分析生成思维导图初始规划。
 func PlanMindmap(analysis Analysis) Plan {
 	plan := Plan{Title: analysis.Topic}
 	branches := dynamicMindmapBranches(analysis)
@@ -149,6 +151,7 @@ func PlanMindmap(analysis Analysis) Plan {
 	return plan
 }
 
+// ExpandContent 扩展思维导图节点详情并补充证据。
 func ExpandContent(plan Plan, analysis Analysis) Plan {
 	expanded := plan
 	evidenceIndex := 0
@@ -178,6 +181,7 @@ func ExpandContent(plan Plan, analysis Analysis) Plan {
 	return expanded
 }
 
+// appendMindmapNodes 将一组值转换为节点并追加到 nodes。
 func appendMindmapNodes(nodes []NodePlan, branchTitle string, values []string, analysis Analysis) []NodePlan {
 	for _, value := range values {
 		value = strings.TrimSpace(value)
@@ -189,6 +193,7 @@ func appendMindmapNodes(nodes []NodePlan, branchTitle string, values []string, a
 	return nodes
 }
 
+// newMindmapNode 创建带若干详情的思维导图节点。
 func newMindmapNode(title string, details ...string) NodePlan {
 	node := NodePlan{Title: strings.TrimSpace(title)}
 	for _, detail := range details {
@@ -200,6 +205,7 @@ func newMindmapNode(title string, details ...string) NodePlan {
 	return node
 }
 
+// expandMindmapNodeDetails 扩展单个节点的详情列表，保证条数充足。
 func expandMindmapNodeDetails(branchTitle string, node NodePlan, analysis Analysis, evidence string) []string {
 	details := uniqueNonEmpty(node.Details)
 	if len(details) == 0 {
@@ -225,6 +231,7 @@ func expandMindmapNodeDetails(branchTitle string, node NodePlan, analysis Analys
 	return details
 }
 
+// mindmapNodeReviewDetail 按分支类型返回节点的复习提示文案。
 func mindmapNodeReviewDetail(branchTitle, nodeTitle string) string {
 	switch branchTitle {
 	case "核心概念":
@@ -244,6 +251,7 @@ func mindmapNodeReviewDetail(branchTitle, nodeTitle string) string {
 	}
 }
 
+// nextMindmapEvidence 按索引循环返回下一条证据的摘要。
 func nextMindmapEvidence(evidence []Evidence, index *int) string {
 	if len(evidence) == 0 {
 		return ""
@@ -256,6 +264,7 @@ func nextMindmapEvidence(evidence []Evidence, index *int) string {
 	return summarizeLine(strings.TrimSpace(ev.Text), 90)
 }
 
+// mindmapNodeDetail 按分支类型返回节点的通用说明文案。
 func mindmapNodeDetail(branchTitle, value string, analysis Analysis) string {
 	if strings.Contains(value, "解释补充") {
 		return "该节点为解释补充，用于补足学习结构。"
@@ -277,6 +286,7 @@ func mindmapNodeDetail(branchTitle, value string, analysis Analysis) string {
 	}
 }
 
+// mindmapNodeDetailFromEvidence 按关键词匹配证据，返回节点详情文案。
 func mindmapNodeDetailFromEvidence(value string, analysis Analysis) string {
 	// 如果值包含解释补充标记，返回通用提示
 	if strings.Contains(value, "解释补充") {
@@ -315,6 +325,7 @@ func mindmapNodeDetailFromEvidence(value string, analysis Analysis) string {
 	}
 }
 
+// mindmapBranchExpansionDetail 按分支类型返回分支补充说明文案。
 func mindmapBranchExpansionDetail(branchTitle string, analysis Analysis) string {
 	switch branchTitle {
 	case "核心概念":
@@ -337,6 +348,7 @@ func mindmapBranchExpansionDetail(branchTitle string, analysis Analysis) string 
 	}
 }
 
+// mindmapExpansionNodeTitle 生成分支扩展节点的标题。
 func mindmapExpansionNodeTitle(branchTitle string, position int) string {
 	return supplementBullet(branchTitle, position)
 }
@@ -359,6 +371,7 @@ func uniqueMindmapNodes(nodes []NodePlan) []NodePlan {
 	return result
 }
 
+// Render 将思维导图规划渲染为 Markdown 文本。
 func Render(plan Plan) string {
 	var b strings.Builder
 	b.WriteString("# ")
@@ -382,6 +395,7 @@ func Render(plan Plan) string {
 	return strings.TrimSpace(b.String())
 }
 
+// NeedsStructureRepair 判断思维导图输出是否结构不达标需修复。
 func NeedsStructureRepair(content string) bool {
 	trimmed := strings.TrimSpace(content)
 	if len([]rune(strings.ReplaceAll(trimmed, "#", ""))) < 20 {
@@ -398,6 +412,7 @@ func NeedsStructureRepair(content string) bool {
 	return false
 }
 
+// supplementBullet 按编号循环生成针对 title 的补充要点模板。
 func supplementBullet(title string, detail int) string {
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -415,6 +430,7 @@ func supplementBullet(title string, detail int) string {
 	return templates[idx]
 }
 
+// hasSupplementBullet 判断要点列表中是否已包含补充要点。
 func hasSupplementBullet(values []string) bool {
 	for _, value := range values {
 		if strings.Contains(value, "解释补充") || strings.Contains(value, "补充要点") {
@@ -424,6 +440,7 @@ func hasSupplementBullet(values []string) bool {
 	return false
 }
 
+// hasSupplementMindmapNode 判断节点列表中是否已包含补充节点。
 func hasSupplementMindmapNode(nodes []NodePlan) bool {
 	for _, node := range nodes {
 		if strings.Contains(node.Title, "解释补充") {

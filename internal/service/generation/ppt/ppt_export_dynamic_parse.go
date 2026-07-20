@@ -10,6 +10,7 @@ import (
 	"strings"
 )
 
+// buildDynamicHTMLPPTX 根据动态 HTML 内容构建 PPTX 字节流。
 func buildDynamicHTMLPPTX(content, deckTitle string) ([]byte, error) {
 	doc, err := parseDynamicHTMLDocument(content)
 	if err != nil {
@@ -52,6 +53,7 @@ func buildDynamicHTMLPPTX(content, deckTitle string) ([]byte, error) {
 	return fixPPTXPackage(data, len(doc.Slides))
 }
 
+// parseDynamicHTMLDocument 解析动态 HTML 内容为文档对象。
 func parseDynamicHTMLDocument(content string) (*pptHTMLDocument, error) {
 	root, err := html.Parse(strings.NewReader(content))
 	if err != nil {
@@ -90,6 +92,7 @@ func parseDynamicHTMLDocument(content string) (*pptHTMLDocument, error) {
 	return doc, nil
 }
 
+// collectStyleTagContents 收集所有 style 标签的内容。
 func collectStyleTagContents(root *html.Node) []string {
 	var values []string
 	var walk func(*html.Node)
@@ -111,6 +114,7 @@ func collectStyleTagContents(root *html.Node) []string {
 	return values
 }
 
+// findFirstHTMLElement 查找首个指定名称的 HTML 元素节点。
 func findFirstHTMLElement(root *html.Node, name string) *html.Node {
 	var found *html.Node
 	var walk func(*html.Node)
@@ -130,6 +134,7 @@ func findFirstHTMLElement(root *html.Node, name string) *html.Node {
 	return found
 }
 
+// findHTMLSections 查找所有 section 元素节点。
 func findHTMLSections(root *html.Node) []*html.Node {
 	var sections []*html.Node
 	var walk func(*html.Node)
@@ -149,6 +154,7 @@ func findHTMLSections(root *html.Node) []*html.Node {
 	return sections
 }
 
+// parseHTMLSection 解析 section 节点为幻灯片数据。
 func parseHTMLSection(section *html.Node, doc *pptHTMLDocument) pptHTMLSlide {
 	sectionStyle := computeNodeStyle(section, inheritTextStyle(doc.BodyStyle), doc)
 	blocks := parseHTMLChildren(section, doc, inheritTextStyle(sectionStyle))
@@ -158,6 +164,7 @@ func parseHTMLSection(section *html.Node, doc *pptHTMLDocument) pptHTMLSlide {
 	}
 }
 
+// parseHTMLChildren 解析节点的子节点为块列表。
 func parseHTMLChildren(node *html.Node, doc *pptHTMLDocument, inheritedText pptStyle) []pptHTMLBlock {
 	var blocks []pptHTMLBlock
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
@@ -166,6 +173,7 @@ func parseHTMLChildren(node *html.Node, doc *pptHTMLDocument, inheritedText pptS
 	return blocks
 }
 
+// parseHTMLBlocks 解析 HTML 节点为块列表。
 func parseHTMLBlocks(node *html.Node, doc *pptHTMLDocument, inheritedText pptStyle) []pptHTMLBlock {
 	if node == nil {
 		return nil
@@ -323,6 +331,7 @@ func parseHTMLBlocks(node *html.Node, doc *pptHTMLDocument, inheritedText pptSty
 	}
 }
 
+// shouldIgnoreHTMLElement 判断 HTML 标签是否应被忽略。
 func shouldIgnoreHTMLElement(tag string) bool {
 	switch tag {
 	case "html", "head", "body", "style", "script", "meta", "title", "link":
@@ -332,6 +341,7 @@ func shouldIgnoreHTMLElement(tag string) bool {
 	}
 }
 
+// isLayoutContainer 判断节点是否为布局容器。
 func isLayoutContainer(tag string, classes map[string]bool, style pptStyle, node *html.Node) bool {
 	if tag == "section" {
 		return true
@@ -348,6 +358,7 @@ func isLayoutContainer(tag string, classes map[string]bool, style pptStyle, node
 	return false
 }
 
+// resolveContainerLayout 解析容器的布局类型。
 func resolveContainerLayout(classes map[string]bool, style pptStyle) string {
 	switch {
 	case classes["row"]:
@@ -363,6 +374,7 @@ func resolveContainerLayout(classes map[string]bool, style pptStyle) string {
 	}
 }
 
+// isCardBlock 判断节点是否为卡片块。
 func isCardBlock(tag string, classes map[string]bool, style pptStyle, node *html.Node) bool {
 	if tag != "div" && tag != "aside" {
 		return false
@@ -373,10 +385,12 @@ func isCardBlock(tag string, classes map[string]bool, style pptStyle, node *html
 	return hasCardVisualStyle(style)
 }
 
+// hasCardVisualStyle 判断样式是否具有卡片视觉特征。
 func hasCardVisualStyle(style pptStyle) bool {
 	return style.BackgroundColor != nil || style.BorderColor != nil || style.BorderLeftColor != nil || style.BorderRadius != nil
 }
 
+// countMeaningfulElementChildren 统计有效子元素数量。
 func countMeaningfulElementChildren(node *html.Node) int {
 	count := 0
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
@@ -391,6 +405,7 @@ func countMeaningfulElementChildren(node *html.Node) int {
 	return count
 }
 
+// parseHTMLList 解析 ul/ol 列表为块列表。
 func parseHTMLList(node *html.Node, doc *pptHTMLDocument, inheritedText pptStyle, ordered bool) []pptHTMLBlock {
 	var blocks []pptHTMLBlock
 	index := 1

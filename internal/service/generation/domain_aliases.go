@@ -59,6 +59,7 @@ func quizAnalysisFromLearning(analysis learningContentAnalysis) quiz.Analysis {
 	}
 }
 
+// mindmapEvidenceFromLearning 将通用学习证据转换为思维导图子包证据。
 func mindmapEvidenceFromLearning(values []learningEvidence) []mindmap.Evidence {
 	result := make([]mindmap.Evidence, 0, len(values))
 	for _, value := range values {
@@ -86,6 +87,7 @@ func noteEvidenceFromLearning(values []learningEvidence) []note.Evidence {
 	return result
 }
 
+// quizEvidenceFromLearning 将通用学习证据转换为测验子包证据。
 func quizEvidenceFromLearning(values []learningEvidence) []quiz.Evidence {
 	result := make([]quiz.Evidence, 0, len(values))
 	for _, value := range values {

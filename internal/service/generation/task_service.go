@@ -51,10 +51,12 @@ type GenerationTaskQueue interface {
 
 const generationTaskQueueSize = 1024
 
+// NewGenerationTaskService 创建并返回使用默认内存队列的任务服务实例。
 func NewGenerationTaskService(base GenerationService, store GenerationTaskStore) GenerationTaskService {
 	return NewGenerationTaskServiceWithQueue(base, store, nil)
 }
 
+// NewGenerationTaskServiceWithQueue 创建并返回使用指定队列的任务服务实例，并启动 worker。
 func NewGenerationTaskServiceWithQueue(base GenerationService, store GenerationTaskStore, queue GenerationTaskQueue) GenerationTaskService {
 	if store == nil {
 		store = NewInMemoryGenerationTaskStore()
@@ -72,6 +74,7 @@ func NewGenerationTaskServiceWithQueue(base GenerationService, store GenerationT
 	return svc
 }
 
+// Submit 创建 pending 任务并入队，推送 pending 事件。
 func (s *generationTaskService) Submit(ctx context.Context, req *GenerationRequest) (*GenerationTask, error) {
 	if s.base == nil {
 		return nil, bizerrors.New(bizerrors.CodeInternalServiceError, "generation service is not configured")
@@ -127,6 +130,7 @@ func (s *generationTaskService) Submit(ctx context.Context, req *GenerationReque
 	return task, nil
 }
 
+// GetTask 按任务 ID 查询任务，校验所属用户。
 func (s *generationTaskService) GetTask(ctx context.Context, userID uint, taskID string) (*GenerationTask, error) {
 	if taskID == "" {
 		return nil, bizerrors.New(bizerrors.CodeInvalidParam, "task id cannot be empty")
@@ -141,6 +145,7 @@ func (s *generationTaskService) GetTask(ctx context.Context, userID uint, taskID
 	return task, nil
 }
 
+// ListTasks 按用户和笔记本查询任务列表。
 func (s *generationTaskService) ListTasks(ctx context.Context, userID, notebookID uint, limit int) ([]*GenerationTask, error) {
 	if userID == 0 {
 		return nil, bizerrors.New(bizerrors.CodeUnauthorized, "user is not authenticated")
@@ -159,6 +164,7 @@ func (s *generationTaskService) ListTasks(ctx context.Context, userID, notebookI
 	return tasks, nil
 }
 
+// CancelTask 取消 pending 或 running 状态的任务。
 func (s *generationTaskService) CancelTask(ctx context.Context, userID uint, taskID string) error {
 	if taskID == "" {
 		return bizerrors.New(bizerrors.CodeInvalidParam, "task id cannot be empty")
@@ -190,6 +196,7 @@ func (s *generationTaskService) CancelTask(ctx context.Context, userID uint, tas
 	}
 }
 
+// worker 串行消费队列中的任务并执行。
 func (s *generationTaskService) worker() {
 	for {
 		item, err := s.queue.Dequeue(context.Background())
@@ -206,6 +213,7 @@ func (s *generationTaskService) worker() {
 	}
 }
 
+// failDequeuedTask 将出队失败的任务标记为 failed 并推送事件。
 func (s *generationTaskService) failDequeuedTask(taskID string, cause error) {
 	ctx := context.Background()
 	task, err := s.store.Get(ctx, taskID)
@@ -226,6 +234,7 @@ func (s *generationTaskService) failDequeuedTask(taskID string, cause error) {
 	s.publishTask(task)
 }
 
+// run 执行单个任务：标记 running，调用底层生成服务，按结果更新终态。
 func (s *generationTaskService) run(taskID string, req *GenerationRequest) {
 	ctx := context.Background()
 	task, err := s.store.Get(ctx, taskID)
@@ -315,6 +324,7 @@ func (s *generationTaskService) run(taskID string, req *GenerationRequest) {
 	)
 }
 
+// SubscribeTasks 订阅指定用户和笔记本的任务状态变更事件。
 func (s *generationTaskService) SubscribeTasks(ctx context.Context, userID, notebookID uint) (<-chan GenerationTaskEvent, func(), error) {
 	if userID == 0 {
 		return nil, nil, bizerrors.New(bizerrors.CodeUnauthorized, "user is not authenticated")
@@ -329,6 +339,7 @@ func (s *generationTaskService) SubscribeTasks(ctx context.Context, userID, note
 	return ch, unsubscribe, nil
 }
 
+// publishTask 克隆任务并向事件中心推送任务事件。
 func (s *generationTaskService) publishTask(task *GenerationTask) {
 	if task == nil || s.events == nil {
 		return

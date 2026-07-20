@@ -5,10 +5,12 @@ import (
 	"strings"
 )
 
+// requiredNoteSections 返回笔记的固定章节标题列表。
 func requiredNoteSections() []string {
 	return []string{"摘要", "关键概念", "原理与机制", "过程与步骤", "应用场景", "易错点", "总结"}
 }
 
+// PlanOutline 根据学习分析生成笔记大纲规划。
 func PlanOutline(analysis Analysis) OutlinePlan {
 	plan := OutlinePlan{Title: analysis.Topic}
 	summaryParts := append([]string{}, analysis.KeyConcepts...)
@@ -61,6 +63,7 @@ func PlanOutline(analysis Analysis) OutlinePlan {
 	return plan
 }
 
+// appendNotePoints 将 values 追加到 points，最多取 limit 条。
 func appendNotePoints(points []string, values []string, limit int) []string {
 	for i, value := range values {
 		value = strings.TrimSpace(value)
@@ -75,6 +78,7 @@ func appendNotePoints(points []string, values []string, limit int) []string {
 	return points
 }
 
+// ExpandContent 扩展笔记要点并补充证据。
 func ExpandContent(plan OutlinePlan, analysis Analysis) OutlinePlan {
 	expanded := plan
 	evidenceIndex := 0
@@ -101,6 +105,7 @@ func ExpandContent(plan OutlinePlan, analysis Analysis) OutlinePlan {
 	return expanded
 }
 
+// expandNotePoint 在要点后追加证据摘要，丰富内容表达。
 func expandNotePoint(sectionTitle, point string, analysis Analysis, evidence string) string {
 	point = strings.TrimSpace(point)
 	if point == "" {
@@ -124,10 +129,12 @@ func nextNoteEvidence(evidence []Evidence, index *int) string {
 	return summarizeLine(strings.TrimSpace(ev.Text), 80)
 }
 
+// noteExpansionPointTitle 生成笔记扩展要点的标题。
 func noteExpansionPointTitle(sectionTitle string, position int) string {
 	return supplementBullet(sectionTitle, position)
 }
 
+// Render 将笔记大纲渲染为 Markdown 文本。
 func Render(plan OutlinePlan) string {
 	var b strings.Builder
 	b.WriteString("# ")
@@ -158,6 +165,7 @@ func Render(plan OutlinePlan) string {
 	return strings.TrimSpace(b.String())
 }
 
+// renderPlan 将笔记规划渲染为内部上下文用的文本格式。
 func renderPlan(plan OutlinePlan) string {
 	var b strings.Builder
 	if strings.TrimSpace(plan.Title) != "" {
@@ -190,6 +198,7 @@ func renderPlan(plan OutlinePlan) string {
 	return strings.TrimSpace(b.String())
 }
 
+// AppendPlansToContext 将笔记规划与扩展结果及生成规则拼入上下文。
 func AppendPlansToContext(contextValue string, plan, expanded OutlinePlan) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(contextValue))
@@ -212,6 +221,7 @@ func AppendPlansToContext(contextValue string, plan, expanded OutlinePlan) strin
 	return strings.TrimSpace(b.String())
 }
 
+// NeedsStructureRepair 判断笔记输出是否结构不达标需修复。
 func NeedsStructureRepair(content string) bool {
 	trimmed := strings.TrimSpace(content)
 	if !strings.HasPrefix(trimmed, "#") {

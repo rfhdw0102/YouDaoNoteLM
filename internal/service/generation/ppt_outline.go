@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// generateOutline 调用 LLM 生成 PPT 大纲文本，失败时回退到静态版本。
 func (a *pptGenerationAgent) generateOutline(ctx context.Context, input generationAgentInput) (string, error) {
 	if a.model == nil {
 		return fallbackPPTOutline(input), nil
@@ -40,6 +41,7 @@ func (a *pptGenerationAgent) generateOutline(ctx context.Context, input generati
 	return outline, nil
 }
 
+// fallbackPPTContent 在 LLM 不可用时生成本地兜底的 PPT 内容。
 func fallbackPPTContent(input generationAgentInput) string {
 	analysis := analyzeLearningContent(input)
 	styleHint := ""
@@ -55,6 +57,7 @@ func fallbackPPTContent(input generationAgentInput) string {
 	return renderStyledPPTSlides(expandPPTContent(planPPTOutline(analysis), analysis), theme)
 }
 
+// fallbackPPTOutline 将本地静态大纲计划渲染为 Markdown 文本。
 func fallbackPPTOutline(input generationAgentInput) string {
 	plan := planPPTOutline(analyzeLearningContent(input))
 	var outline strings.Builder
@@ -78,6 +81,7 @@ func fallbackPPTOutline(input generationAgentInput) string {
 	return strings.TrimSpace(outline.String())
 }
 
+// isPPTPlanningLabel 判断文本是否为规划用途的标签行（如页面目的等）。
 func isPPTPlanningLabel(text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
 	if lower == "" {
@@ -102,6 +106,7 @@ func isPPTPlanningLabel(text string) bool {
 	return false
 }
 
+// normalizePPTSlideTitle 规整幻灯片标题，去除多余分隔符和后缀。
 func normalizePPTSlideTitle(title string) string {
 	title = strings.TrimSpace(title)
 	title = strings.TrimRight(title, "?？")
@@ -123,6 +128,7 @@ func normalizePPTSlideTitle(title string) string {
 	return title
 }
 
+// parsePPTOutlineMarkdown 将大纲 Markdown 文本解析为结构化计划。
 func parsePPTOutlineMarkdown(outline string) (pptOutlinePlan, bool) {
 	lines := strings.Split(strings.TrimSpace(outline), "\n")
 	plan := pptOutlinePlan{}
@@ -177,6 +183,7 @@ func parsePPTOutlineMarkdown(outline string) (pptOutlinePlan, bool) {
 	return plan, true
 }
 
+// deduplicatePPTPlanBullets 去除幻灯片要点中的重复项。
 func deduplicatePPTPlanBullets(plan pptOutlinePlan) pptOutlinePlan {
 	seen := make(map[string]bool)
 	for i := range plan.Slides {
@@ -197,6 +204,7 @@ func deduplicatePPTPlanBullets(plan pptOutlinePlan) pptOutlinePlan {
 	return plan
 }
 
+// ensurePPTPlanFrame 确保大纲包含封面、目录和结束页的完整结构。
 func ensurePPTPlanFrame(plan pptOutlinePlan) pptOutlinePlan {
 	if strings.TrimSpace(plan.Title) == "" {
 		plan.Title = "演示文稿"
@@ -244,6 +252,7 @@ func ensurePPTPlanFrame(plan pptOutlinePlan) pptOutlinePlan {
 	return plan
 }
 
+// purposeForPPTSlide 根据幻灯片位置和标题推断其用途说明。
 func purposeForPPTSlide(title string, index, total int) string {
 	switch {
 	case index == 0 || isCoverSlideTitle(title):
@@ -257,18 +266,22 @@ func purposeForPPTSlide(title string, index, total int) string {
 	}
 }
 
+// isCoverSlideTitle 判断标题是否为封面页。
 func isCoverSlideTitle(title string) bool {
 	return containsAnyFold(title, "封面", "cover", "title")
 }
 
+// isAgendaSlideTitle 判断标题是否为目录页。
 func isAgendaSlideTitle(title string) bool {
 	return containsAnyFold(title, "目录", "agenda", "outline")
 }
 
+// isEndingSlideTitle 判断标题是否为结束页。
 func isEndingSlideTitle(title string) bool {
 	return containsAnyFold(title, "结束", "总结", "closing", "end", "finish")
 }
 
+// stripPPTVisibleText 去除内容中的 Markdown 标记，仅保留可见文本。
 func stripPPTVisibleText(content string) string {
 	text := stripSimpleHTML(content)
 	text = strings.ReplaceAll(text, "**", "")
@@ -281,12 +294,14 @@ func stripPPTVisibleText(content string) string {
 	return text
 }
 
+// stripPPTExportPlaceholders 移除导出占位符块（如文件路径、预览链接）。
 func stripPPTExportPlaceholders(content string) string {
 	cleaned := stripTaggedBlock(content, "PPT_FILE")
 	cleaned = stripTaggedBlock(cleaned, "PREVIEW_LINK")
 	return strings.TrimSpace(cleaned)
 }
 
+// stripPPTPlanningArtifacts 移除规划用的标签行，保留有效内容。
 func stripPPTPlanningArtifacts(content string) string {
 	planLinePrefixes := []string{
 		"页面目的", "页面目标", "页面意图", "本页目的", "本页目标", "本页意图",

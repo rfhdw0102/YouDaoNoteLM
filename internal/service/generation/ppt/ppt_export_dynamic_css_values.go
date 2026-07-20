@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// parseInlineStyleDeclarations 解析内联样式声明字符串为声明列表。
 func parseInlineStyleDeclarations(value string) []pptStyleDeclaration {
 	declarations := make([]pptStyleDeclaration, 0)
 	for _, part := range strings.Split(value, ";") {
@@ -30,6 +31,7 @@ func parseInlineStyleDeclarations(value string) []pptStyleDeclaration {
 	return declarations
 }
 
+// parsePPTColor 解析颜色字符串为 pptx.Color。
 func parsePPTColor(value string) (pptx.Color, bool) {
 	value = strings.TrimSpace(strings.ToLower(value))
 	if value == "" {
@@ -53,6 +55,7 @@ func parsePPTColor(value string) (pptx.Color, bool) {
 	return pptx.Color{}, false
 }
 
+// extractFirstColorToken 从字符串中提取首个颜色 token。
 func extractFirstColorToken(value string) (pptx.Color, bool) {
 	tokens := strings.FieldsFunc(value, func(r rune) bool {
 		return r == ' ' || r == ',' || r == '(' || r == ')' || r == ';'
@@ -76,6 +79,7 @@ func extractFirstColorToken(value string) (pptx.Color, bool) {
 	return pptx.Color{}, false
 }
 
+// parseHexColor 解析十六进制颜色字符串。
 func parseHexColor(value string) (pptx.Color, bool) {
 	hex := strings.TrimPrefix(strings.TrimSpace(value), "#")
 	if len(hex) == 3 {
@@ -93,6 +97,7 @@ func parseHexColor(value string) (pptx.Color, bool) {
 	return pptx.Color{R: uint8(r), G: uint8(g), B: uint8(b)}, true
 }
 
+// parseRGBColor 解析 rgb/rgba 颜色字符串。
 func parseRGBColor(value string) (pptx.Color, bool) {
 	value = strings.TrimSpace(value)
 	value = strings.TrimPrefix(value, "rgba(")
@@ -111,6 +116,7 @@ func parseRGBColor(value string) (pptx.Color, bool) {
 	return pptx.Color{R: uint8(r), G: uint8(g), B: uint8(b)}, true
 }
 
+// namedPPTColors 返回内置命名颜色映射表。
 func namedPPTColors() map[string]pptx.Color {
 	return map[string]pptx.Color{
 		"white":       pptx.White,
@@ -126,6 +132,7 @@ func namedPPTColors() map[string]pptx.Color {
 	}
 }
 
+// parseCSSFontSize 解析 CSS 字体大小字符串为磅值。
 func parseCSSFontSize(value string) int {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
@@ -159,6 +166,7 @@ func parseCSSFontSize(value string) int {
 	}
 }
 
+// parseCSSFontWeight 解析 CSS 字体粗细字符串为数值。
 func parseCSSFontWeight(value string) int {
 	value = strings.ToLower(strings.TrimSpace(value))
 	switch value {
@@ -179,6 +187,7 @@ func parseCSSFontWeight(value string) int {
 	}
 }
 
+// parseCSSLineHeight 解析 CSS 行高为英寸值。
 func parseCSSLineHeight(value string, inheritedFontSize *int) float64 {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" || value == "normal" {
@@ -200,6 +209,7 @@ func parseCSSLineHeight(value string, inheritedFontSize *int) float64 {
 	return 0
 }
 
+// parseCSSSpacingInches 解析 CSS 间距字符串为英寸值。
 func parseCSSSpacingInches(value string) float64 {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
@@ -255,6 +265,7 @@ func parseCSSBorder(value string) (int, pptx.Color, bool) {
 	return width, color, hasColor
 }
 
+// parseCSSBorderWidth 解析 CSS 边框宽度字符串为数值。
 func parseCSSBorderWidth(value string) int {
 	value = strings.ToLower(strings.TrimSpace(value))
 	switch {
@@ -275,6 +286,7 @@ func parseCSSBorderWidth(value string) int {
 	}
 }
 
+// parseCSSRadius 解析 CSS 圆角字符串为数值。
 func parseCSSRadius(value string) int {
 	value = strings.ToLower(strings.TrimSpace(value))
 	switch {
@@ -295,6 +307,7 @@ func parseCSSRadius(value string) int {
 	}
 }
 
+// parseCSSBoxEdges 解析 CSS 盒模型四边间距为 pptEdges。
 func parseCSSBoxEdges(value string) (pptEdges, bool) {
 	parts := strings.Fields(strings.TrimSpace(value))
 	if len(parts) == 0 {
@@ -324,6 +337,7 @@ func parseCSSBoxEdges(value string) (pptEdges, bool) {
 	return edges, true
 }
 
+// updateEdge 更新 pptEdges 的指定边。
 func updateEdge(edges pptEdges, side string, value float64) pptEdges {
 	edges.Set = true
 	switch side {

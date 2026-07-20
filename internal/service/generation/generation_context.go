@@ -25,6 +25,7 @@ type generationReferenceSelection struct {
 	WebSupplementReason  string
 }
 
+// buildInlineMarkdownReferences 解析输入 Markdown 并按相关性筛选内联引用片段。
 func buildInlineMarkdownReferences(ctx context.Context, markdown string, plan generationQueryPlan, limit int) ([]GenerationReference, error) {
 	parser := rag.NewMarkdownParser()
 	docs, err := parser.Parse(ctx, strings.NewReader(markdown))
@@ -82,6 +83,7 @@ func buildInlineMarkdownReferences(ctx context.Context, markdown string, plan ge
 	return refs, nil
 }
 
+// scoreInlineReference 根据关键词命中和内容特征为内联引用打分。
 func scoreInlineReference(content, heading string, plan generationQueryPlan) float64 {
 	score := 1.0
 	haystack := strings.ToLower(strings.Join([]string{heading, content}, "\n"))
@@ -111,6 +113,7 @@ func scoreInlineReference(content, heading string, plan generationQueryPlan) flo
 	return score
 }
 
+// relevantGenerationTerms 汇总查询计划中的相关关键词列表。
 func relevantGenerationTerms(plan generationQueryPlan) []string {
 	terms := append([]string{}, plan.Keywords...)
 	terms = append(terms, splitKeywordCandidates(plan.LocalQuery)...)
@@ -126,6 +129,7 @@ func looksDefinitionLike(content string) bool {
 		strings.Contains(content, "definition")
 }
 
+// looksListRich 判断内容是否包含较多列表项。
 func looksListRich(content string) bool {
 	count := 0
 	for _, line := range strings.Split(content, "\n") {
@@ -137,10 +141,12 @@ func looksListRich(content string) bool {
 	return count >= 2
 }
 
+// looksCodeBlock 判断内容是否包含代码块。
 func looksCodeBlock(content string) bool {
 	return strings.Contains(content, "```")
 }
 
+// refContentLimit 根据引用是否含代码块返回摘要长度上限。
 func refContentLimit(ref GenerationReference) int {
 	if strings.Contains(ref.Content, "```") {
 		return 500
@@ -148,6 +154,7 @@ func refContentLimit(ref GenerationReference) int {
 	return 120
 }
 
+// mergeGenerationReferences 合并内联与 RAG 引用并按相关性去重排序。
 func mergeGenerationReferences(inlineRefs, ragRefs []GenerationReference, limit int) []GenerationReference {
 	if limit <= 0 {
 		limit = len(inlineRefs) + len(ragRefs)
@@ -191,6 +198,7 @@ func mergeGenerationReferences(inlineRefs, ragRefs []GenerationReference, limit 
 	return merged
 }
 
+// selectGenerationReferences 筛选本地引用并评估是否需要联网补充。
 func selectGenerationReferences(inlineRefs, ragRefs []GenerationReference, plan generationQueryPlan, limit int) generationReferenceSelection {
 	if limit <= 0 {
 		limit = len(inlineRefs) + len(ragRefs)
@@ -232,6 +240,7 @@ func selectGenerationReferences(inlineRefs, ragRefs []GenerationReference, plan 
 	}
 }
 
+// classifyGenerationLocalReference 按主题覆盖度将本地引用分类为 strong/weak/irrelevant。
 func classifyGenerationLocalReference(ref GenerationReference, plan generationQueryPlan) (string, []string) {
 	headingText := strings.ToLower(strings.TrimSpace(strings.Join([]string{ref.Heading, ref.ChapterPath}, "\n")))
 	contentText := strings.ToLower(strings.TrimSpace(ref.Content))
@@ -287,6 +296,7 @@ func classifyGenerationLocalReference(ref GenerationReference, plan generationQu
 	}
 }
 
+// filterGenerationTerms 过滤并去重关键词，剔除通用词。
 func filterGenerationTerms(values []string) []string {
 	seen := map[string]struct{}{}
 	result := make([]string, 0, len(values))
@@ -304,6 +314,7 @@ func filterGenerationTerms(values []string) []string {
 	return result
 }
 
+// isGenericGenerationTerm 判断关键词是否为通用停用词或过于宽泛的词。
 func isGenericGenerationTerm(value string) bool {
 	if isASCIIStopword(value) {
 		return true
@@ -321,6 +332,7 @@ func isGenericGenerationTerm(value string) bool {
 	}
 }
 
+// generationWebSupplementReason 根据本地引用数量和覆盖度返回需要联网补充的原因。
 func generationWebSupplementReason(strongLocalCount, strongCoverageCount int) string {
 	switch {
 	case strongLocalCount == 0:
@@ -332,6 +344,7 @@ func generationWebSupplementReason(strongLocalCount, strongCoverageCount int) st
 	}
 }
 
+// normalizeReferenceContent 规范化引用内容用于去重比对。
 func normalizeReferenceContent(content string) string {
 	content = strings.ToLower(strings.Join(strings.Fields(content), " "))
 	var b strings.Builder
@@ -343,6 +356,7 @@ func normalizeReferenceContent(content string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// isInlineReference 判断引用是否来自输入 Markdown。
 func isInlineReference(ref GenerationReference) bool {
 	return ref.SourceName == "input_markdown"
 }
@@ -354,6 +368,7 @@ func generationReferenceLabel(ref GenerationReference) string {
 	return firstNonEmpty(ref.SourceName, fmt.Sprintf("source-%d", ref.SourceID))
 }
 
+// pruneGenerationSearchResults 过滤无效搜索结果并按分数截断。
 func pruneGenerationSearchResults(results []SearchResult, limit int) []SearchResult {
 	if limit <= 0 {
 		limit = len(results)
@@ -377,6 +392,7 @@ func pruneGenerationSearchResults(results []SearchResult, limit int) []SearchRes
 	return kept
 }
 
+// buildGenerationContext 拼接请求、引用和搜索结果为 Agent 上下文字符串。
 func buildGenerationContext(req *GenerationRequest, refs []GenerationReference, searchSummary string, searchResults []SearchResult) string {
 	var b strings.Builder
 	b.WriteString("User Request:\n")
@@ -414,6 +430,7 @@ func buildGenerationContext(req *GenerationRequest, refs []GenerationReference, 
 	return b.String()
 }
 
+// uniqueNonEmpty 去除空白和重复项后返回字符串列表。
 func uniqueNonEmpty(values []string) []string {
 	seen := map[string]struct{}{}
 	result := make([]string, 0, len(values))
@@ -431,6 +448,7 @@ func uniqueNonEmpty(values []string) []string {
 	return result
 }
 
+// containsString 判断目标字符串是否存在于列表中。
 func containsString(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {
@@ -440,6 +458,7 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
+// isASCIIAlphaToken 判断字符串是否全由 ASCII 字母组成。
 func isASCIIAlphaToken(value string) bool {
 	if value == "" {
 		return false
@@ -452,6 +471,7 @@ func isASCIIAlphaToken(value string) bool {
 	return true
 }
 
+// isASCIIStopword 判断字符串是否为 ASCII 停用词。
 func isASCIIStopword(value string) bool {
 	switch value {
 	case "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is",

@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// renderStyledPPTSlides 将大纲计划渲染为带主题样式的完整 HTML 幻灯片。
 func renderStyledPPTSlides(plan pptOutlinePlan, theme pptStyleTheme) string {
 	plan = sanitizePPTPlanVisibleText(plan)
 	var b strings.Builder
@@ -368,6 +369,7 @@ li:last-child { border-bottom: none; }
 	return strings.TrimSpace(b.String())
 }
 
+// writePPTContentSlideBody 根据布局类型渲染内容页主体。
 func writePPTContentSlideBody(b *strings.Builder, slide pptSlidePlan, index int) {
 	bullets := slide.Bullets
 	if len(bullets) == 0 {

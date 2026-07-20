@@ -23,6 +23,7 @@ var styleHintMap = []struct {
 	{[]string{"暖色", "warm", "叙事", "narrative", "故事", "story", "温暖", "温暖色调", "治愈", "healing", "柔和", "soft", "温馨", "cozy", "橙", "orange", "粉", "pink", "日落", "sunset", " autobiograph"}, 3, "用户要求暖色/叙事风格"},
 }
 
+// extractStyleHintFromPrompt 从用户提示词中识别风格关键词并返回主题索引。
 func extractStyleHintFromPrompt(prompt string) (int, string) {
 	promptLower := strings.ToLower(prompt)
 	words := splitKeywordCandidates(promptLower)
@@ -42,6 +43,7 @@ func extractStyleHintFromPrompt(prompt string) (int, string) {
 	return -1, ""
 }
 
+// designPPTStyleTheme 综合用户偏好与内容特征选择最终的 PPT 样式主题。
 func designPPTStyleTheme(analysis learningContentAnalysis, plan pptOutlinePlan, userPrompt string, styleHint string) pptStyleTheme {
 	themes := []pptStyleTheme{
 		{
@@ -127,6 +129,7 @@ func designPPTStyleTheme(analysis learningContentAnalysis, plan pptOutlinePlan, 
 	return theme
 }
 
+// matchThemeByName 按风格名称匹配对应主题索引。
 func matchThemeByName(style string) (int, bool) {
 	style = strings.ToLower(strings.TrimSpace(style))
 	if style == "" {
@@ -152,6 +155,7 @@ func matchThemeByName(style string) (int, bool) {
 	return 0, false
 }
 
+// pptThemeVisualDescription 返回指定主题的视觉特征描述。
 func pptThemeVisualDescription(name string) string {
 	switch name {
 	case "简约商务":
@@ -166,6 +170,7 @@ func pptThemeVisualDescription(name string) string {
 	return ""
 }
 
+// appendPPTStyleToContext 将样式主题信息追加到 LLM 上下文中。
 func appendPPTStyleToContext(contextValue string, theme pptStyleTheme) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(contextValue))
@@ -196,6 +201,7 @@ func appendPPTStyleToContext(contextValue string, theme pptStyleTheme) string {
 	return strings.TrimSpace(b.String())
 }
 
+// ensurePPTSlideAttributes 为 section 标签补充 ppt-slide 类名与标记属性。
 func ensurePPTSlideAttributes(content string) string {
 	lower := strings.ToLower(content)
 	if !strings.Contains(lower, "<section") {
@@ -236,6 +242,7 @@ func ensurePPTSlideAttributes(content string) string {
 	return b.String()
 }
 
+// ensurePPTCanvasSize 确保 CSS 中包含 1920×1080 画布尺寸规则。
 func ensurePPTCanvasSize(content string) string {
 	lower := strings.ToLower(content)
 	if strings.Contains(lower, "width:1920px") || strings.Contains(lower, "width: 1920px") {
@@ -261,6 +268,7 @@ func ensurePPTCanvasSize(content string) string {
 	return content[:insertPos] + canvasCSS + "\n" + content[insertPos:]
 }
 
+// ensurePPTStyleBlock 在缺少 style 块时补全最小化 CSS。
 func ensurePPTStyleBlock(content string) string {
 	lower := strings.ToLower(content)
 	if strings.Contains(lower, "<style") {
@@ -278,6 +286,7 @@ func ensurePPTStyleBlock(content string) string {
 	return minimalCSS + "\n" + content
 }
 
+// extractCSSBlock 从 LLM 输出中提取 style 标签包裹的 CSS 内容。
 func extractCSSBlock(output string) string {
 	lower := strings.ToLower(output)
 	start := strings.Index(lower, "<style")
@@ -291,6 +300,7 @@ func extractCSSBlock(output string) string {
 	return output[start : end+len("</style>")]
 }
 
+// fallbackPPTCSS 生成主题对应的兜底 CSS 样式表。
 func fallbackPPTCSS(theme pptStyleTheme) string {
 	return fmt.Sprintf(`<style>
 :root {
@@ -356,6 +366,7 @@ ul { list-style: none; padding-left: 0; }
 		theme.FontBody)
 }
 
+// pptAccentSoft 返回主题对应的浅色强调色。
 func pptAccentSoft(theme pptStyleTheme) string {
 	switch theme.Name {
 	case "科技深色":
@@ -369,6 +380,7 @@ func pptAccentSoft(theme pptStyleTheme) string {
 	}
 }
 
+// pptThemeBorder 返回主题对应的边框颜色。
 func pptThemeBorder(theme pptStyleTheme) string {
 	switch theme.Name {
 	case "科技深色":
@@ -382,6 +394,7 @@ func pptThemeBorder(theme pptStyleTheme) string {
 	}
 }
 
+// pptThemePanel 返回主题对应的面板背景色。
 func pptThemePanel(theme pptStyleTheme) string {
 	switch theme.Name {
 	case "科技深色":
@@ -395,6 +408,7 @@ func pptThemePanel(theme pptStyleTheme) string {
 	}
 }
 
+// pptThemeCoverGradient 返回主题对应的封面渐变背景。
 func pptThemeCoverGradient(theme pptStyleTheme) string {
 	switch theme.Name {
 	case "科技深色":
@@ -408,6 +422,7 @@ func pptThemeCoverGradient(theme pptStyleTheme) string {
 	}
 }
 
+// pptCSSHasCanvasSize 判断 CSS 中是否已声明画布尺寸。
 func pptCSSHasCanvasSize(css string) bool {
 	lower := strings.ToLower(css)
 	hasWidth := strings.Contains(lower, "width:1920px") || strings.Contains(lower, "width: 1920px")
@@ -415,6 +430,7 @@ func pptCSSHasCanvasSize(css string) bool {
 	return hasWidth && hasHeight
 }
 
+// injectPPTCanvasSizeIntoCSS 在 CSS 末尾注入画布尺寸规则。
 func injectPPTCanvasSizeIntoCSS(css string) string {
 	lower := strings.ToLower(css)
 	styleClose := strings.Index(lower, "</style>")
@@ -425,6 +441,7 @@ func injectPPTCanvasSizeIntoCSS(css string) string {
 	return css[:styleClose] + canvasCSS + css[styleClose:]
 }
 
+// appendPPTCSSToContext 将预生成 CSS 与复用规则追加到 LLM 上下文。
 func appendPPTCSSToContext(contextValue string, cssBlock string) string {
 	if strings.TrimSpace(cssBlock) == "" {
 		return contextValue
