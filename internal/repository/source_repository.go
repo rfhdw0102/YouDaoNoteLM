@@ -148,3 +148,11 @@ func (r *sourceRepository) FindSummaryByID(id uint) (string, error) {
 	}
 	return source.Summary, nil
 }
+
+// FindReadyByNotebookID 获取笔记本下所有就绪资料（fallback 用）
+func (r *sourceRepository) FindReadyByNotebookID(notebookID uint) ([]*entity.Source, error) {
+	var sources []*entity.Source
+	err := r.db.Where("notebook_id = ? AND status = ?", notebookID, "ready").
+		Find(&sources).Error
+	return sources, err
+}

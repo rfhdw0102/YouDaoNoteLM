@@ -5,6 +5,7 @@ import (
 	dto "YoudaoNoteLm/internal/model/dto/response"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/repository"
+	"YoudaoNoteLm/pkg/config"
 	"YoudaoNoteLm/pkg/jwt"
 	"YoudaoNoteLm/pkg/logger"
 	"context"
@@ -88,6 +89,12 @@ func (s *authService) Login(ctx context.Context, req *request.LoginRequest) (*dt
 		return nil, err
 	}
 
+	// 将 access/refresh token 的 jti 登记到用户 token 集合，供登出时批量吊销
+	// 失败只告警不影响登录主流程（集合登记失败时退化为单 token 黑名单行为）
+	refreshTTL := config.Get().JWT.GetRefreshTokenExp()
+	s.registerUserToken(ctx, user.ID, tokenPair.AccessToken, refreshTTL)
+	s.registerUserToken(ctx, user.ID, tokenPair.RefreshToken, refreshTTL)
+
 	// 构建响应
 	userResp := s.userService.GetUserResponse(user)
 	return &dto.LoginResponse{
@@ -95,6 +102,21 @@ func (s *authService) Login(ctx context.Context, req *request.LoginRequest) (*dt
 		RefreshToken: tokenPair.RefreshToken,
 		User:         *userResp,
 	}, nil
+}
+
+// registerUserToken 解析 token 拿 jti 并登记到用户 token 集合
+// 登记失败只告警，不阻断主流程（退化为单 token 黑名单行为）
+func (s *authService) registerUserToken(ctx context.Context, userID uint, tokenString string, ttl time.Duration) {
+	claims, err := jwt.ParseUnverified(tokenString)
+	if err != nil {
+		logger.Warn("解析 token 提取 jti 失败，跳过登记用户 token 集合",
+			zap.Uint("user_id", userID), zap.Error(err))
+		return
+	}
+	if err := s.tokenBlacklist.AddUserToken(ctx, userID, claims.ID, ttl); err != nil {
+		logger.Warn("登记 token 到用户集合失败",
+			zap.Uint("user_id", userID), zap.String("jti", claims.ID), zap.Error(err))
+	}
 }
 
 // handleLoginFailure 处理登录失败
@@ -150,12 +172,22 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*d
 	if err := s.tokenBlacklist.RevokeToken(ctx, refreshToken); err != nil {
 		logger.Error("吊销旧 refresh token 失败", zap.Uint("user_id", user.ID), zap.Error(err))
 	}
+	// 旧 refresh token 已拉黑，从用户集合移除避免登出时重复拉黑
+	if err := s.tokenBlacklist.RemoveUserToken(ctx, user.ID, claims.ID); err != nil {
+		logger.Warn("从用户集合移除旧 refresh jti 失败",
+			zap.Uint("user_id", user.ID), zap.String("jti", claims.ID), zap.Error(err))
+	}
 
 	// 生成新的 token 对
 	tokenPair, err := jwt.GenerateTokenPair(user.ID, user.Username)
 	if err != nil {
 		return nil, err
 	}
+
+	// 登记新 access/refresh token 的 jti 到用户集合
+	refreshTTL := config.Get().JWT.GetRefreshTokenExp()
+	s.registerUserToken(ctx, user.ID, tokenPair.AccessToken, refreshTTL)
+	s.registerUserToken(ctx, user.ID, tokenPair.RefreshToken, refreshTTL)
 
 	userResp := s.userService.GetUserResponse(user)
 	return &dto.LoginResponse{
@@ -165,22 +197,45 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*d
 	}, nil
 }
 
-// Logout 用户登出，将 access token 和 refresh token 加入黑名单
+// Logout 用户登出，批量吊销该用户所有会话（包括其他页面/设备的 token）
+// 拿不到 uid 或批量吊销失败时，退回单 token 拉黑兜底
 func (s *authService) Logout(ctx context.Context, accessToken string, refreshToken string) error {
-	// 吊销 access token
+	// 从 token 解析 uid（access/refresh 任一可用，容错过期 token）
+	var userID uint
+	if accessToken != "" {
+		if claims, err := jwt.ParseUnverified(accessToken); err == nil {
+			userID = claims.UserID
+		}
+	}
+	if userID == 0 && refreshToken != "" {
+		if claims, err := jwt.ParseUnverified(refreshToken); err == nil {
+			userID = claims.UserID
+		}
+	}
+
+	// 拿到 uid：批量拉黑该用户集合中所有 token（一处登出，全部掉线）
+	if userID != 0 {
+		refreshTTL := config.Get().JWT.GetRefreshTokenExp()
+		n, err := s.tokenBlacklist.RevokeUserTokens(ctx, userID, refreshTTL)
+		if err == nil {
+			logger.Info("批量吊销用户 token 成功", zap.Uint("user_id", userID), zap.Int("count", n))
+			return nil
+		}
+		logger.Error("批量吊销用户 token 失败，退回单 token 拉黑",
+			zap.Uint("user_id", userID), zap.Error(err))
+	}
+
+	// 兜底：uid 解析失败或批量吊销失败时，单独拉黑传入的 token
 	if accessToken != "" {
 		if err := s.tokenBlacklist.RevokeToken(ctx, accessToken); err != nil {
 			return fmt.Errorf("吊销 access token 失败: %w", err)
 		}
 	}
-
-	// 吊销 refresh token
 	if refreshToken != "" {
 		if err := s.tokenBlacklist.RevokeToken(ctx, refreshToken); err != nil {
 			return fmt.Errorf("吊销 refresh token 失败: %w", err)
 		}
 	}
-
 	return nil
 }
 

@@ -131,6 +131,16 @@ func ParseToken(tokenString string) (*CustomClaims, error) {
 	return nil, ErrTokenInvalid
 }
 
+// ParseUnverified 解析 token 提取 claims，不做签名和有效期校验
+// 用于从 token 字符串提取 jti/user_id 等信息（如登录后登记到用户 token 集合、登出时从已过期 token 拿 uid）
+func ParseUnverified(tokenString string) (*CustomClaims, error) {
+	claims := &CustomClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(tokenString, claims); err != nil {
+		return nil, fmt.Errorf("解析 token 失败: %w", err)
+	}
+	return claims, nil
+}
+
 // RefreshAccessToken 用 Refresh Token 换取新的 Access Token
 func RefreshAccessToken(refreshTokenString string) (*TokenPair, error) {
 	claims, err := ParseToken(refreshTokenString)

@@ -47,7 +47,8 @@ export default function SourcesPanel() {
     currentNotebookId, getCurrentNotebook, toggleSourceSelection,
     removeSource, batchRemoveSources, deleteFailedSources, renameSource,
     importFile, previewAudio, confirmAudio, searchSourcesStream, importFromURL, importSearchResults, fetchSourceContent, getSourceDownloadURL, fetchSources,
-    reimportSelected
+    reimportSelected,
+    mainAgentSearchActive, mainAgentSearchResults, mainAgentSearchSummary, clearMainAgentSearch,
   } = useNotebookStore();
   const notebook = getCurrentNotebook();
 
@@ -106,6 +107,35 @@ export default function SourcesPanel() {
       setAudioTranscribing(false);
     }
   }, [notebook?.sources, audioPreview, audioTranscribing]);
+
+  // 主从协同：监听主 agent 触发的搜索结果，同步到本地搜索面板状态（和普通搜索共用同一面板）
+  useEffect(() => {
+    if (!mainAgentSearchActive) {
+      // 主 agent 搜索结束（完成/取消/出错），停止 loading（防止取消后持续转圈）
+      setIsSearching(false);
+      return;
+    }
+    setIsSearchPanelOpen(true);
+    setIsSearchPanelCollapsed(false);
+    setSelectedResults(new Set());
+
+    if (mainAgentSearchResults.length > 0) {
+      setSearchResults(mainAgentSearchResults);
+      setSearchSummary(mainAgentSearchSummary || '搜索完成');
+      setIsSearching(false);
+      setSearchProgress('');
+    } else if (mainAgentSearchSummary) {
+      setIsSearching(false);
+      setSearchSummary(mainAgentSearchSummary);
+      setSearchProgress('');
+    } else {
+      // 还在搜索中
+      setIsSearching(true);
+      setSearchResults([]);
+      setSearchSummary('');
+      setSearchProgress('AI 正在搜索和分析...');
+    }
+  }, [mainAgentSearchActive, mainAgentSearchResults, mainAgentSearchSummary]);
 
   if (!notebook || !currentNotebookId) return null;
 
@@ -394,6 +424,8 @@ export default function SourcesPanel() {
     setSearchSummary('');
     setSearchProgress('');
     setSelectedResults(new Set());
+    // 清理主 agent 搜索状态，避免下次搜索时 useEffect 不重新触发
+    clearMainAgentSearch();
   };
 
   const handleCollapseSearchPanel = () => {

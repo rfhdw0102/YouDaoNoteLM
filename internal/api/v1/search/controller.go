@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
+	"time"
 
 	"YoudaoNoteLm/internal/middleware"
 	"YoudaoNoteLm/internal/model/dto/request"
@@ -75,19 +77,53 @@ func (ctrl *Controller) SearchStream(c *gin.Context) {
 
 	c.Stream(func(w io.Writer) bool {
 		eventCh := ctrl.searchService.SearchStream(c.Request.Context(), userID, uint(nbID), req.Query)
-		for event := range eventCh {
-			data, err := json.Marshal(event)
-			if err != nil {
-				logger.Warn("SSE 序列化事件失败", zap.Error(err))
-				continue
+
+		// 用 http.ResponseController 管理写超时和 Flush(返回 error)
+		// Gin 1.10+ 的 ResponseWriter 支持 Unwrap,能让 RC 访问到底层连接的 SetWriteDeadline
+		rc := http.NewResponseController(c.Writer)
+		const writeTimeout = 10 * time.Second      // 单次写超时:TCP 写应在 1s 内,10s 发不出去说明客户端断网
+		const heartbeatInterval = 15 * time.Second // 心跳间隔:在 LLM 调用期间(可能 10-30s)也能检测断开
+
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+
+		// writeSSE 发送一行 SSE 数据,带写超时检测。返回 false 表示客户端已断开,应退出。
+		writeSSE := func(data string) bool {
+			if err := rc.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+				logger.Warn("SSE 设置写超时失败(降级为无超时)", zap.Error(err))
 			}
-			_, err = fmt.Fprintf(w, "data: %s\n\n", data)
-			if err != nil {
+			if _, err := w.Write([]byte(data)); err != nil {
+				logger.Info("SSE 写入失败,客户端可能已断开", zap.Error(err))
 				return false
 			}
-			c.Writer.Flush()
+			if err := rc.Flush(); err != nil {
+				logger.Info("SSE Flush 失败,客户端可能已断开", zap.Error(err))
+				return false
+			}
+			return true
 		}
-		return false
+
+		for {
+			select {
+			case event, ok := <-eventCh:
+				if !ok {
+					return false // 搜索结束,eventCh 关闭
+				}
+				data, err := json.Marshal(event)
+				if err != nil {
+					logger.Warn("SSE 序列化事件失败", zap.Error(err))
+					continue
+				}
+				if !writeSSE(fmt.Sprintf("data: %s\n\n", data)) {
+					return false // 写失败/超时,客户端断开,退出触发 ctx cancel
+				}
+			case <-ticker.C:
+				// SSE comment 心跳(: 开头的行),前端 fetch reader 只解析 data: 行,会忽略
+				if !writeSSE(": heartbeat\n\n") {
+					return false // 心跳写失败,客户端断开
+				}
+			}
+		}
 	})
 }
 

@@ -13,8 +13,6 @@ type SearchAgentInterface interface {
 	Execute(ctx context.Context, userID, notebookID uint, task string) (*SearchAgentResult, error)
 	// ExecuteStream 流式执行搜索任务，通过 channel 逐个推送事件，完成后关闭 channel
 	ExecuteStream(ctx context.Context, userID, notebookID uint, task string) <-chan *SearchAgentEvent
-	// ExecuteWithImport 执行搜索并自动导入任务（主Agent调用模式）
-	ExecuteWithImport(ctx context.Context, userID, notebookID uint, task string) (*SearchAgentResult, error)
 }
 
 // SearchAgentResult Agent 执行结果（与 agent/search.AgentResult 对应）
@@ -45,6 +43,4 @@ type SearchAgentService interface {
 	ImportFromURL(userID, notebookID uint, url string) (taskID string, sourceID uint, err error)
 	// ImportSearchResults 批量导入搜索结果（带标题），返回任务 ID 和创建的 Source ID 列表
 	ImportSearchResults(userID, notebookID uint, items []SearchResultItem) (taskID string, sourceIDs []uint, err error)
-	// SearchAndImport 搜索并自动导入：Agent 自主执行多轮搜索并自动导入结果（主Agent调用模式）
-	SearchAndImport(ctx context.Context, userID, notebookID uint, query string) (*response.SearchResponse, error)
 }

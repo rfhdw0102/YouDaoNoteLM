@@ -36,5 +36,10 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, statusCheck gin.Handl
 		cfg.PUT("/embedding/:id", ctrl.UpdateEmbeddingConfig)
 		cfg.DELETE("/embedding/:id", ctrl.DeleteEmbeddingConfig)
 		cfg.DELETE("/embedding/:id/collection", ctrl.DeleteEmbeddingAndCollection)
+
+		cfg.GET("/reranker", ctrl.ListRerankerConfigs)
+		cfg.POST("/reranker", ctrl.CreateRerankerConfig)
+		cfg.PUT("/reranker/:id", ctrl.UpdateRerankerConfig)
+		cfg.DELETE("/reranker/:id", ctrl.DeleteRerankerConfig)
 	}
 }

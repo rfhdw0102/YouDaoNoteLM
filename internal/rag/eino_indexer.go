@@ -116,8 +116,8 @@ func (w *EinoIndexerWrapper) Store(ctx context.Context, userID uint, docs []*sch
 		}
 	}
 
-	// 分批写入，每批最多 20 个文档
-	batchSize := 20
+	// 分批写入，每批最多 10 个文档
+	batchSize := 10
 	for i := 0; i < len(docs); i += batchSize {
 		end := i + batchSize
 		if end > len(docs) {

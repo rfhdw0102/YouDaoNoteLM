@@ -5,6 +5,7 @@ import * as notebookApi from '../api/notebook';
 import * as sourceApi from '../api/source';
 import * as importApi from '../api/import';
 import * as searchApi from '../api/search';
+import type { SearchResultItem } from '../api/search';
 import * as chatApi from '../api/chat';
 import * as generationApi from '../api/generation';
 import { getErrorMessage, getChatErrorMessage } from '../utils/error';
@@ -15,11 +16,8 @@ let currentStreamAbortController: AbortController | null = null;
 let generationTaskSocket: WebSocket | null = null;
 let generationTaskSocketNotebookId: string | null = null;
 let generationTaskReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-// 待处理的生成任务 ID（用于在 completed 事件到达时创建 note）
 const pendingGeneratedTaskIds = new Set<string>();
-// 已创建 note 的任务 ID（去重，避免重复创建）
 const createdGeneratedNoteTaskIds = new Set<string>();
-// 任务 ID → notebook ID 映射，切换笔记本时用于清理其他笔记本的待处理记录
 const pendingTaskNotebookMap = new Map<string, string>();
 
 interface GenerationTaskItem {
@@ -113,13 +111,9 @@ function closeGenerationTaskSocket() {
   }
 }
 
-// 清理不属于当前笔记本的待处理任务记录。
-// 场景：用户在笔记本 A 提交任务后切到笔记本 B，A 的 completed 事件会被后端 notebookID 过滤丢弃，
-// 导致 taskId 永久留在 pendingGeneratedTaskIds，note 永远不创建。
-// 切换时主动清理其他笔记本的记录，让这些任务只能通过 snapshot 触发（用户切回时仍能处理）。
 function clearPendingTasksForOtherNotebooks(currentNotebookId: string) {
-  for (const [taskId, nbId] of pendingTaskNotebookMap.entries()) {
-    if (nbId !== currentNotebookId) {
+  for (const [taskId, notebookId] of pendingTaskNotebookMap.entries()) {
+    if (notebookId !== currentNotebookId) {
       pendingGeneratedTaskIds.delete(taskId);
       createdGeneratedNoteTaskIds.delete(taskId);
       pendingTaskNotebookMap.delete(taskId);
@@ -134,6 +128,11 @@ interface NotebookState {
   streamingConversationId: string | null;  // 当前正在流式生成的会话 ID
   loading: boolean;
   streamingContent: string;  // For real-time display
+  // 主从协同：主 agent 触发的搜索（null/false 表示无搜索，SourcesPanel 监听打开搜索面板）
+  mainAgentSearchActive: boolean;
+  mainAgentSearchResults: SearchResultItem[];
+  mainAgentSearchSummary: string;
+  clearMainAgentSearch: () => void;
   // Generation state
   generatingType: NoteType | null;
   generationTaskId: string | null;
@@ -260,6 +259,10 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   taskIdBySourceId: {},
   loading: false,
   streamingContent: '',
+  mainAgentSearchActive: false,
+  mainAgentSearchResults: [],
+  mainAgentSearchSummary: '',
+  clearMainAgentSearch: () => set({ mainAgentSearchActive: false, mainAgentSearchResults: [], mainAgentSearchSummary: '' }),
   generatingType: null,
   generationTaskId: null,
   generationTaskStatus: null,
@@ -1340,8 +1343,18 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
             ),
           }));
         },
-        onDone: () => {
-          console.log('Stream completed');
+        onDone: (data) => {
+          console.log('Stream completed, data:', data);
+          // 后端将引用附加到 EventDone 的 data 字段（原子发送，消除竞态）
+          const doneReferences = Array.isArray(data)
+            ? (data as chatApi.ReferenceData[]).map((ref) => ({
+                sourceId: String(ref.source_id),
+                sourceName: ref.source_name,
+                parentBlockId: ref.parent_block_id,
+                chunkContent: ref.chunk_content,
+                score: ref.score,
+              }))
+            : undefined;
           set((state) => ({
             streamingConversationId: null,
             notebooks: state.notebooks.map((n) =>
@@ -1352,11 +1365,15 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
                       c.id === conversationId
                         ? {
                             ...c,
-                            messages: c.messages.map((m) =>
-                              m.id === assistantMessageId
-                                ? { ...m, isStreaming: false }
-                                : m
-                            ),
+                            messages: c.messages.map((m) => {
+                              if (m.id !== assistantMessageId) return m;
+                              const updates: Partial<ChatMessage> = { isStreaming: false };
+                              // 仅当消息尚无引用时才设置（onReference 可能已先到达）
+                              if (doneReferences && doneReferences.length > 0 && !m.references) {
+                                updates.references = doneReferences;
+                              }
+                              return { ...m, ...updates };
+                            }),
                             updatedAt: new Date().toISOString(),
                           }
                         : c
@@ -1371,6 +1388,8 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           const friendlyMessage = getChatErrorMessage(error);
           set((state) => ({
             streamingConversationId: null,
+            mainAgentSearchActive: false,
+            generatingType: null,
             notebooks: state.notebooks.map((n) =>
               n.id === notebookId
                 ? {
@@ -1391,6 +1410,71 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
                 : n
             ),
           }));
+        },
+        onSearchStarted: () => {
+          console.log('[MainAgent] search started');
+          set({
+            mainAgentSearchActive: true,
+            mainAgentSearchResults: [],
+            mainAgentSearchSummary: '',
+          });
+        },
+        onSearchResults: (results, summary) => {
+          console.log('[MainAgent] search results:', results.length);
+          set({
+            mainAgentSearchResults: results,
+            mainAgentSearchSummary: summary || '搜索完成',
+          });
+        },
+        onSearchBusy: (message) => {
+          console.log('[MainAgent] search busy:', message);
+          const busyMessage = message || '请等待当前搜索任务完成';
+          accumulatedContent = busyMessage;
+          set((state) => ({
+            streamingConversationId: null,
+            notebooks: state.notebooks.map((n) =>
+              n.id === notebookId
+                ? {
+                    ...n,
+                    conversations: n.conversations.map((c) =>
+                      c.id === conversationId
+                        ? {
+                            ...c,
+                            messages: c.messages.map((m) =>
+                              m.id === assistantMessageId
+                                ? { ...m, content: busyMessage, isStreaming: false }
+                                : m
+                            ),
+                          }
+                        : c
+                    ),
+                  }
+                : n
+            ),
+          }));
+        },
+        onGenerationStarted: (type) => {
+          console.log('[MainAgent] generation started:', type);
+          set({ generatingType: type as NoteType, generationError: null });
+        },
+        onGenerationResult: (type, content) => {
+          console.log('[MainAgent] generation result:', type);
+          // 生成结果作为 Note 添加到 NotesPanel（和前端 generateNote 行为一致）
+          const typeLabel: Record<string, string> = { mindmap: '思维导图', ppt: '演示文稿', quiz: '测验', note: '笔记' };
+          const firstLine = content?.split('\n')[0] || '';
+          const autoTitle = firstLine.replace(/^#+\s*/, '').trim() || `新${typeLabel[type] || type}`;
+          const note: Note = {
+            id: `note-gen-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            title: autoTitle.slice(0, 40),
+            type: type as NoteType,
+            content,
+            isSource: false,
+            notebookId,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          get().addNote(notebookId, note);
+          set({ generatingType: null });
         },
       }, abortController);
     } catch (err) {
@@ -1645,9 +1729,6 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
     closeGenerationTaskSocket();
     generationTaskSocketNotebookId = notebookId;
-    // 切换笔记本时清理其他笔记本的待处理任务记录，
-    // 避免后端 notebookID 过滤导致这些任务永远停留在 pendingGeneratedTaskIds。
-    // 用户切回原笔记本时，snapshot 会重新触发已完成任务的处理。
     clearPendingTasksForOtherNotebooks(notebookId);
 
     const connect = () => {
@@ -1799,15 +1880,18 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
   generateNote: async (notebookId, type, opts) => {
     const state = get();
+
     const notebook = state.notebooks.find((n) => n.id === notebookId);
     if (!notebook) return;
 
+    // 获取选中的已入库资料来源
     const selectedSources = notebook.sources.filter((s) => s.selected && s.vectorized && s.status !== 'error');
     if (selectedSources.length === 0) {
       set({ generationError: '请先在左侧资料来源中选中至少一份资料' });
       return;
     }
 
+    // 并发获取所有 source 的 markdown 内容
     set({ generationError: null });
     get().connectGenerationTasks(notebookId);
     try {
@@ -1827,10 +1911,11 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
       const validResults = sourceResults.filter((r): r is { name: string; content: string } => r !== null);
       if (validResults.length === 0) {
-        set({ generationError: '无法获取资料内容，请检查资料来源状态' });
+        set({ generationError: '无法获取资料内容，请检查资料来源状态', generatingType: null });
         return;
       }
 
+      // 拼接 markdown
       const markdown = validResults
         .map(({ name, content }) => `# ${name}\n\n${content}`)
         .join('\n\n---\n\n');
@@ -1869,6 +1954,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           ...getGenerationSummary(generationTasks),
         };
       });
+      return;
     } catch (err) {
       const msg = (err instanceof Error && err.message) ? err.message : '生成失败，请重试';
       set({ generationError: msg });

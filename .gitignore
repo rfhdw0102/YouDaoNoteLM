@@ -151,3 +151,5 @@ frontend/test-screenshots/
 # Docker (仅排除构建产物，不排除源文件)
 # configs/config.docker.yaml.example
 /configs/docker_config.yaml
+/chat_Agent.md
+/rag.md

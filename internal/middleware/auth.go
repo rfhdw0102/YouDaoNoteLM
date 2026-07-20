@@ -27,15 +27,24 @@ const (
 // Auth JWT 认证中间件（仅接受 Access Token，检查黑名单）
 func Auth(blacklist service.TokenBlacklistService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token, ok := accessTokenFromRequest(c)
-		if !ok {
+		// 从 Header 获取 Authorization
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
 			response.Unauthorized(c, "请提供认证令牌")
 			c.Abort()
 			return
 		}
 
+		// 解析 Bearer Token
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			response.Unauthorized(c, "令牌格式错误")
+			c.Abort()
+			return
+		}
+
 		// 解析 Token
-		claims, err := jwt.ParseToken(token)
+		claims, err := jwt.ParseToken(parts[1])
 		if err != nil {
 			// 根据错误类型返回对应业务错误码
 			if err == jwt.ErrTokenExpired {
@@ -73,24 +82,6 @@ func Auth(blacklist service.TokenBlacklistService) gin.HandlerFunc {
 
 		c.Next()
 	}
-}
-
-func accessTokenFromRequest(c *gin.Context) (string, bool) {
-	authHeader := c.GetHeader("Authorization")
-	if authHeader != "" {
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			return "", false
-		}
-		return parts[1], true
-	}
-	if token := strings.TrimSpace(c.Query("token")); token != "" {
-		return token, true
-	}
-	if token := strings.TrimSpace(c.Query("access_token")); token != "" {
-		return token, true
-	}
-	return "", false
 }
 
 // GetUserID 从上下文获取用户 ID

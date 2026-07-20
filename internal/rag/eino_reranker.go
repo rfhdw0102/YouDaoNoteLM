@@ -16,15 +16,12 @@ type einoRerankerConfig struct {
 }
 
 // einoReranker 基于 eino-ext score 包的 Reranker
-// 利用 LLM 的首因效应和近因效应，将高分文档放在开头和结尾
 type einoReranker struct {
 	transformer document.Transformer
 	config      *einoRerankerConfig
 }
 
 // newEinoReranker 创建 Score Reranker
-// 基于论文 https://arxiv.org/abs/2307.03172 的发现：
-// LLM 对输入上下文开头和结尾的信息处理效果更好
 func newEinoReranker(ctx context.Context, config *einoRerankerConfig) (*einoReranker, error) {
 	if config == nil {
 		config = &einoRerankerConfig{}

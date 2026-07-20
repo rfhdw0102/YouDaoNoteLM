@@ -23,4 +23,6 @@ type SourceRepository interface {
 	FindUnvectorizedByUserID(userID uint) ([]*entity.Source, error)
 	// FindSummaryByID 获取资料摘要
 	FindSummaryByID(id uint) (string, error)
+	// FindReadyByNotebookID 获取笔记本下所有就绪资料（fallback 用）
+	FindReadyByNotebookID(notebookID uint) ([]*entity.Source, error)
 }

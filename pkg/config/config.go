@@ -115,12 +115,13 @@ type Config struct {
 
 // AgentConfig 搜索 Agent 运行参数（零值时使用代码内默认值，无需在 yaml 配置）
 type AgentConfig struct {
-	MaxSearchRounds          int           `mapstructure:"max_search_rounds"`           // 最大搜索轮数，默认 2
-	MaxIterations            int           `mapstructure:"max_iterations"`              // ReAct 最大迭代数，默认 4（自动导入模式默认 5）
-	ExecuteTimeout           time.Duration `mapstructure:"execute_timeout"`             // 搜索超时，默认 3min
-	ExecuteWithImportTimeout time.Duration `mapstructure:"execute_with_import_timeout"` // 搜索+导入超时，默认 5min
-	MaxConcurrent            int           `mapstructure:"max_concurrent"`              // per-user 最大并发，默认 1
-	CancelTimeout            time.Duration `mapstructure:"cancel_timeout"`              // 中断后等待安全点超时，默认 5s
+	MaxSearchRounds         int           `mapstructure:"max_search_rounds"`          // 最大搜索轮数，默认 2
+	MaxIterations           int           `mapstructure:"max_iterations"`             // ReAct 最大迭代数，默认 4
+	ExecuteTimeout          time.Duration `mapstructure:"execute_timeout"`            // 搜索超时，默认 3min
+	ExecuteWithImportTimeout time.Duration `mapstructure:"execute_with_import_timeout"` // 含导入的搜索超时，默认 5min
+	MaxConcurrent           int           `mapstructure:"max_concurrent"`             // per-user 最大并发，默认 1
+	CancelTimeout           time.Duration `mapstructure:"cancel_timeout"`             // 中断后等待安全点超时，默认 5s
+	MainAgentEnabled        bool          `mapstructure:"main_agent_enabled"`         // 主从协同开关，默认 false（关闭时行为等价于现有）
 }
 
 // MilvusConfig Milvus 向量数据库配置

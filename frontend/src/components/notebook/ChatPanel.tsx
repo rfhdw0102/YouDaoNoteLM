@@ -445,8 +445,8 @@ export default function ChatPanel() {
 
   if (!notebook || !currentNotebookId) return null;
 
-  // 只有已入库且选中的资料才算资料来源
-  const selectedSources = notebook.sources.filter((s) => s.selected && s.vectorized && s.status !== 'error');
+  // 选中且非错误状态的资料都传给后端（未向量化的资料由后端自行处理）
+  const selectedSources = notebook.sources.filter((s) => s.selected && s.status !== 'error');
 
   const handleSend = async () => {
     if (!input.trim() || isStreaming || !conversation?.id) return;

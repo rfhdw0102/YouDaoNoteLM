@@ -3,6 +3,7 @@ package service
 import (
 	"YoudaoNoteLm/internal/service/external/asr"
 	"YoudaoNoteLm/internal/service/external/embedding"
+	"YoudaoNoteLm/internal/service/external/reranker"
 	"YoudaoNoteLm/internal/service/external/search"
 	"YoudaoNoteLm/internal/service/external/storage"
 	"context"
@@ -40,6 +41,7 @@ type ConfigService interface {
 	GetSearchEngine(userID uint) (search.SearchEngine, error)
 	GetASRService(userID uint) (asr.ASRService, error)
 	GetEmbeddingService(userID uint) (embedding.EmbeddingService, error)
+	GetRerankerService(userID uint) (reranker.RerankerService, error)
 	GetLLMClient(userID uint) (llm.LLMClient, error)
 	GetChatModelConfig(userID uint) (*ChatModelConfig, error)
 	GetUserLLMConfig(userID uint) (*entity.UserLLMConfig, error)
@@ -310,6 +312,65 @@ func (s *configService) GetEmbeddingService(userID uint) (embedding.EmbeddingSer
 		return nil, fmt.Errorf("embedding provider 返回的类型不正确")
 	}
 	return embedSvc, nil
+}
+
+// GetRerankerService 获取用户的 Reranker 服务
+// Reranker 是可选组件，未配置时返回 nil, nil
+func (s *configService) GetRerankerService(userID uint) (reranker.RerankerService, error) {
+	ctx := context.Background()
+
+	// 只查用户配置（先查缓存）
+	cacheKey := userConfigCacheKey(userID, "reranker")
+	var userCfg entity.UserConfig
+	if err := s.cache.Get(ctx, cacheKey, &userCfg); err == nil && userCfg.Enabled {
+		apiKey, err := s.decryptAPIKey(userCfg.APIKey)
+		if err != nil {
+			return nil, err
+		}
+		sc := external.NewServiceConfigFromEntity(
+			userCfg.Provider, userCfg.APIURL, apiKey,
+			userCfg.Model, userCfg.ExtraConfig)
+		svc, err := s.registry.Create("reranker", userCfg.Provider, sc)
+		if err != nil {
+			return nil, err
+		}
+		rerankerSvc, ok := svc.(reranker.RerankerService)
+		if !ok {
+			return nil, fmt.Errorf("reranker provider 返回的类型不正确")
+		}
+		return rerankerSvc, nil
+	}
+
+	// 缓存未命中，查 DB
+	userCfgPtr, err := s.userConfigRepo.FindByUserAndType(userID, "reranker")
+	if err != nil {
+		// Reranker 是可选的，未配置时返回 nil
+		return nil, nil
+	}
+	if userCfgPtr == nil || !userCfgPtr.Enabled {
+		return nil, nil
+	}
+
+	if cacheErr := s.cache.Set(ctx, cacheKey, userCfgPtr, userConfigTTL); cacheErr != nil {
+		logger.Warn("缓存用户配置失败", zap.String("key", cacheKey), zap.Error(cacheErr))
+	}
+
+	apiKey, err := s.decryptAPIKey(userCfgPtr.APIKey)
+	if err != nil {
+		return nil, err
+	}
+	sc := external.NewServiceConfigFromEntity(
+		userCfgPtr.Provider, userCfgPtr.APIURL, apiKey,
+		userCfgPtr.Model, userCfgPtr.ExtraConfig)
+	svc, err := s.registry.Create("reranker", userCfgPtr.Provider, sc)
+	if err != nil {
+		return nil, err
+	}
+	rerankerSvc, ok := svc.(reranker.RerankerService)
+	if !ok {
+		return nil, fmt.Errorf("reranker provider 返回的类型不正确")
+	}
+	return rerankerSvc, nil
 }
 
 // --- 配置管理（写入时失效） ---

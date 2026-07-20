@@ -1,5 +1,6 @@
 import client, { doRefreshToken } from './client';
 import type { ApiResponse } from './auth';
+import type { SearchResultItem } from './search';
 import { getChatErrorMessage } from '../utils/error';
 
 // ============ Request/Response Types ============
@@ -31,9 +32,12 @@ export interface ReferenceData {
 }
 
 export interface StreamEvent {
-  type: 'token' | 'reference' | 'done' | 'error' | 'message' | 'title' | 'tool_call' | 'tool_result';
+  type:
+    | 'token' | 'reference' | 'done' | 'error' | 'message' | 'title' | 'tool_call' | 'tool_result'
+    | 'search_started' | 'search_results' | 'search_busy'
+    | 'generation_started' | 'generation_result';
   content: string;
-  data: ReferenceData[] | number | null;
+  data: ReferenceData[] | number | string | null;
 }
 
 // ============ API Functions ============
@@ -171,8 +175,13 @@ export function parseSSEStream(
     onToken?: (content: string) => void;
     onReference?: (references: ReferenceData[]) => void;
     onTitle?: (title: string) => void;
-    onDone?: (content: string) => void;
+    onDone?: (data?: ReferenceData[] | string) => void;
     onError?: (error: string) => void;
+    onSearchStarted?: () => void;
+    onSearchResults?: (results: SearchResultItem[], summary: string) => void;
+    onSearchBusy?: (message: string) => void;
+    onGenerationStarted?: (type: string) => void;
+    onGenerationResult?: (type: string, content: string) => void;
   },
   abortController?: AbortController
 ): void {
@@ -245,7 +254,8 @@ export function parseSSEStream(
                   callbacks.onTitle?.(data.content);
                   break;
                 case 'done':
-                  callbacks.onDone?.(data.content);
+                  // 后端将引用附加到 done 事件的 data 字段（原子发送，消除竞态）
+                  callbacks.onDone?.(Array.isArray(data.data) ? data.data as ReferenceData[] : data.content);
                   break;
                 case 'error':
                   callbacks.onError?.(data.content);
@@ -255,6 +265,30 @@ export function parseSSEStream(
                   // 工具调用中间事件，不需要展示给用户，静默忽略
                   console.log('Tool event:', eventType, data.content);
                   break;
+                case 'search_started':
+                  callbacks.onSearchStarted?.();
+                  break;
+                case 'search_results': {
+                  const searchData = data.data as { results?: SearchResultItem[]; summary?: string } | null;
+                  if (searchData?.results) {
+                    callbacks.onSearchResults?.(searchData.results, searchData.summary || '');
+                  }
+                  break;
+                }
+                case 'search_busy':
+                  callbacks.onSearchBusy?.(data.content || '请等待当前搜索任务完成');
+                  break;
+                case 'generation_started':
+                  console.log('[Generation] started:', data.data);
+                  callbacks.onGenerationStarted?.((data.data as string) || 'note');
+                  break;
+                case 'generation_result': {
+                  const genData = data.data as { type?: string; content?: string } | null;
+                  if (genData?.content) {
+                    callbacks.onGenerationResult?.(genData.type || 'note', genData.content);
+                  }
+                  break;
+                }
                 default:
                   console.log('Unknown event type:', eventType);
                   // 未知事件类型，不作为 token 显示
