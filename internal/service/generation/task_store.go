@@ -4,8 +4,7 @@
 // 底层使用 pkg/cache 提供的 Redis 客户端，以 JSON 序列化方式存储任务对象。
 // 任务 ID 作为 Redis key，支持 Save/Get/List 操作。
 //
-// 任务状态是前端 WebSocket 订阅和 snapshot 推送的唯一真相源，
-// 即使事件推送链路丢失消息，前端也能通过定期 snapshot 修正状态。
+// 任务状态是前端轮询查询的唯一真相源，前端通过 GET /generations/tasks 获取最新状态。
 package generation
 
 import (
@@ -40,6 +39,11 @@ func (s *generationTaskCacheStore) Get(ctx context.Context, taskID string) (*Gen
 		return nil, err
 	}
 	return &task, nil
+}
+
+// Delete 委托 cache 删除任务数据，幂等。
+func (s *generationTaskCacheStore) Delete(ctx context.Context, taskID string) error {
+	return s.cache.Delete(ctx, taskID)
 }
 
 // List 按过滤条件查询用户任务列表并排序。
@@ -100,6 +104,14 @@ func (s *inMemoryGenerationTaskStore) Get(_ context.Context, taskID string) (*Ge
 	return &cp, nil
 }
 
+// Delete 从内存 map 删除任务，幂等：任务不存在也返回 nil。
+func (s *inMemoryGenerationTaskStore) Delete(_ context.Context, taskID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tasks, taskID)
+	return nil
+}
+
 // List 按过滤条件从内存 map 查询任务列表并排序。
 func (s *inMemoryGenerationTaskStore) List(_ context.Context, filter GenerationTaskListFilter) ([]*GenerationTask, error) {
 	s.mu.Lock()
@@ -136,35 +148,4 @@ func sortGenerationTasks(tasks []*GenerationTask) {
 		}
 		return tasks[i].TaskID < tasks[j].TaskID
 	})
-}
-
-// cloneGenerationTask 深拷贝任务对象及其引用字段。
-func cloneGenerationTask(task *GenerationTask) *GenerationTask {
-	if task == nil {
-		return nil
-	}
-	cp := *task
-	if task.Result != nil {
-		result := *task.Result
-		if task.Result.References != nil {
-			result.References = append([]GenerationReference(nil), task.Result.References...)
-		}
-		if task.Result.SearchResults != nil {
-			result.SearchResults = append([]SearchResult(nil), task.Result.SearchResults...)
-		}
-		if task.Result.Meta != nil {
-			result.Meta = make(map[string]any, len(task.Result.Meta))
-			for key, value := range task.Result.Meta {
-				result.Meta[key] = value
-			}
-		}
-		cp.Result = &result
-	}
-	if task.Meta != nil {
-		cp.Meta = make(map[string]interface{}, len(task.Meta))
-		for key, value := range task.Meta {
-			cp.Meta[key] = value
-		}
-	}
-	return &cp
 }

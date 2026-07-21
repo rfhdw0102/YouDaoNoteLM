@@ -39,7 +39,7 @@ const typeColors: Record<NoteType, string> = {
 };
 
 export default function NotesPanel() {
-  const { currentNotebookId, getCurrentNotebook, deleteNote, renameNote, toggleNoteSource, generateNote, generationTasks, generationError, clearGenerationError, connectGenerationTasks, disconnectGenerationTasks, cancelGenerationTask } = useNotebookStore();
+  const { currentNotebookId, getCurrentNotebook, deleteNote, renameNote, toggleNoteSource, generateNote, generationTasks, generationError, clearGenerationError, connectGenerationTasks, disconnectGenerationTasks, deleteGenerationTask } = useNotebookStore();
   const notebook = getCurrentNotebook();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -383,10 +383,10 @@ export default function NotesPanel() {
                   </span>
                   <button
                     type="button"
-                    onClick={() => void cancelGenerationTask(task.taskId)}
+                    onClick={() => void deleteGenerationTask(task.taskId)}
                     className="flex-shrink-0 rounded p-0.5 text-text-muted transition-colors hover:bg-bg-hover hover:text-red-400 cursor-pointer"
-                    title="停止生成"
-                    aria-label="停止生成"
+                    title="删除任务"
+                    aria-label="删除任务"
                   >
                     <X size={12} />
                   </button>

@@ -88,6 +88,6 @@ func resolvePPTDOMExporterScriptPath() (string, error) {
 	if !ok {
 		return "", bizerrors.New(bizerrors.CodeInternalServiceError, "cannot resolve dom-to-pptx exporter path")
 	}
-	root := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	root := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", "..", "..", ".."))
 	return filepath.Join(root, "ppt_exporter", "export_dom_to_pptx.mjs"), nil
 }

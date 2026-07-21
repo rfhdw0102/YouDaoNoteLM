@@ -7,25 +7,16 @@ import (
 	"YoudaoNoteLm/pkg/logger"
 	"YoudaoNoteLm/pkg/response"
 	"mime"
-	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
 
 type Controller struct {
 	generationService     service.GenerationService
 	generationTaskService service.GenerationTaskService
-}
-
-var generationTaskUpgrader = websocket.Upgrader{
-	CheckOrigin: func(_ *http.Request) bool {
-		return true
-	},
 }
 
 // 创建生成模块控制器。
@@ -85,6 +76,7 @@ func (ctrl *Controller) GetTask(c *gin.Context) {
 }
 
 // 查询当前用户的生成任务列表。
+// 前端通过此接口轮询任务状态，替代原有 WebSocket 实时推送。
 func (ctrl *Controller) ListTasks(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -121,94 +113,8 @@ func (ctrl *Controller) ListTasks(c *gin.Context) {
 	response.Success(c, tasks)
 }
 
-// 通过长连接推送任务快照和状态变更。
-func (ctrl *Controller) WatchTasks(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == 0 {
-		response.Unauthorized(c, "user is not authenticated")
-		return
-	}
-
-	notebookID, ok := parseNotebookIDQuery(c)
-	if !ok {
-		return
-	}
-
-	conn, err := generationTaskUpgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		logger.Warn("upgrade generation task websocket failed", zap.Error(err))
-		return
-	}
-	defer conn.Close()
-
-	events, unsubscribe, err := ctrl.generationTaskService.SubscribeTasks(c.Request.Context(), userID, notebookID)
-	if err != nil {
-		_ = conn.WriteJSON(gin.H{"event": "error", "message": err.Error()})
-		return
-	}
-	defer unsubscribe()
-
-	tasks, err := ctrl.generationTaskService.ListTasks(c.Request.Context(), userID, notebookID, 100)
-	if err != nil {
-		_ = conn.WriteJSON(gin.H{"event": "error", "message": err.Error()})
-		return
-	}
-	if err := conn.WriteJSON(gin.H{"event": "snapshot", "tasks": tasks}); err != nil {
-		return
-	}
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				return
-			}
-		}
-	}()
-
-	ping := time.NewTicker(30 * time.Second)
-	defer ping.Stop()
-	// 定期补发 snapshot：作为事件丢失的兜底。
-	// 即使 eventHub channel 丢弃了事件、或后端重启导致订阅中断重连，
-	// 前端也能在 15 秒内通过 snapshot 修正状态。
-	snapshotTick := time.NewTicker(15 * time.Second)
-	defer snapshotTick.Stop()
-
-	for {
-		select {
-		case event, ok := <-events:
-			if !ok {
-				return
-			}
-			if err := conn.WriteJSON(event); err != nil {
-				return
-			}
-		case <-snapshotTick.C:
-			// 从 store 重新读取任务列表，推送完整 snapshot。
-			// store 是任务状态的唯一真相源，snapshot 能修正任何丢失或错乱的事件。
-			snapshotTasks, err := ctrl.generationTaskService.ListTasks(c.Request.Context(), userID, notebookID, 100)
-			if err != nil {
-				logger.Warn("push periodic generation task snapshot failed",
-					zap.Uint("user_id", userID), zap.Uint("notebook_id", notebookID), zap.Error(err))
-				continue
-			}
-			if err := conn.WriteJSON(gin.H{"event": "snapshot", "tasks": snapshotTasks}); err != nil {
-				return
-			}
-		case <-ping.C:
-			if err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second)); err != nil {
-				return
-			}
-		case <-done:
-			return
-		case <-c.Request.Context().Done():
-			return
-		}
-	}
-}
-
-// 取消等待中或运行中的生成任务。
+// DeleteTask 删除生成任务：pending/running 状态先取消 worker，再删除持久化数据。
+// 已终态任务直接删除。删除幂等：任务不存在视为成功。
 func (ctrl *Controller) DeleteTask(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -217,25 +123,12 @@ func (ctrl *Controller) DeleteTask(c *gin.Context) {
 	}
 
 	taskID := c.Param("taskId")
-	if err := ctrl.generationTaskService.CancelTask(c.Request.Context(), userID, taskID); err != nil {
+	if err := ctrl.generationTaskService.DeleteTask(c.Request.Context(), userID, taskID); err != nil {
 		response.BizError(c, err)
 		return
 	}
 
-	response.SuccessWithMessage(c, "任务已停止", nil)
-}
-
-func parseNotebookIDQuery(c *gin.Context) (uint, bool) {
-	var notebookID uint
-	if raw := strings.TrimSpace(c.Query("notebook_id")); raw != "" {
-		value, err := strconv.ParseUint(raw, 10, 32)
-		if err != nil {
-			response.BadRequest(c, "invalid notebook_id")
-			return 0, false
-		}
-		notebookID = uint(value)
-	}
-	return notebookID, true
+	response.SuccessWithMessage(c, "任务已删除", nil)
 }
 
 // 将生成内容导出为附件。

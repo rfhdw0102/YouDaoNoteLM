@@ -6,11 +6,13 @@
 // 主要类型：
 //   - GenerationType：生成类型（mindmap/ppt/quiz/note）
 //   - GenerationRequest / GenerationResponse：同步生成请求/响应
-//   - GenerationTask / GenerationTaskEvent / GenerationTaskStatus：异步任务相关
+//   - GenerationTask / GenerationTaskStatus：异步任务相关
 //   - GenerationTaskStore / GenerationTaskService / GenerationTaskQueue：任务调度接口
 //   - GenerationService / GenerationModel / GenerationPrompt：生成服务接口
 //   - GenerationMemoryScope / GenerationMemoryEntry / GenerationMemoryStore：会话记忆
 //   - GenerationExportRequest / GenerationExportResult：内容导出
+//
+// 任务状态通过 REST 接口 GET /generations/tasks 查询，不再使用 WebSocket 推送。
 package generation
 
 import "context"
@@ -98,14 +100,6 @@ type GenerationTask struct {
 	Sequence   int64                  `json:"sequence,omitempty"`
 }
 
-const GenerationTaskEventTask = "task"
-
-// 任务状态推送事件。
-type GenerationTaskEvent struct {
-	Event string          `json:"event"`
-	Task  *GenerationTask `json:"task,omitempty"`
-}
-
 type GenerationTaskListFilter struct {
 	UserID     uint
 	NotebookID uint
@@ -117,15 +111,18 @@ type GenerationTaskStore interface {
 	Save(ctx context.Context, task *GenerationTask) error
 	Get(ctx context.Context, taskID string) (*GenerationTask, error)
 	List(ctx context.Context, filter GenerationTaskListFilter) ([]*GenerationTask, error)
+	// Delete 按 taskID 删除任务数据，幂等：任务不存在也返回 nil。
+	Delete(ctx context.Context, taskID string) error
 }
 
-// 管理生成任务提交、查询、取消和订阅。
+// 管理生成任务提交、查询、取消、删除。前端通过 ListTasks/GetTask 轮询任务状态。
 type GenerationTaskService interface {
 	Submit(ctx context.Context, req *GenerationRequest) (*GenerationTask, error)
 	GetTask(ctx context.Context, userID uint, taskID string) (*GenerationTask, error)
 	ListTasks(ctx context.Context, userID, notebookID uint, limit int) ([]*GenerationTask, error)
 	CancelTask(ctx context.Context, userID uint, taskID string) error
-	SubscribeTasks(ctx context.Context, userID, notebookID uint) (<-chan GenerationTaskEvent, func(), error)
+	// DeleteTask 删除任务：pending/running 状态先取消再删除，终态直接删除。
+	DeleteTask(ctx context.Context, userID uint, taskID string) error
 }
 
 // 传给模型的提示词载荷。

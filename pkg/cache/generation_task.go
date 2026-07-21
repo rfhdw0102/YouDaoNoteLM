@@ -13,9 +13,11 @@ const (
 	generationTaskPrefix        = "generation:task:"
 	generationTaskRequestPrefix = "generation:task:request:"
 	generationTaskUserPrefix    = "generation:task:user:"
-	generationTaskQueueKey      = "generation:task:queue"
-	generationTaskDefaultTTL    = 24 * time.Hour
-	generationTaskDefaultSize   = 100
+	// generationTaskQueueKey 队列基于 Redis Set 实现，SADD 入队、SPOP 出队。
+	// Set 天然去重，SPOP 原子弹出；不保证严格 FIFO，但生成任务串行处理，顺序无关紧要。
+	generationTaskQueueKey    = "generation:task:queue"
+	generationTaskDefaultTTL  = 24 * time.Hour
+	generationTaskDefaultSize = 100
 )
 
 type GenerationTaskCache struct {
@@ -59,6 +61,33 @@ func (c *GenerationTaskCache) ListUserTaskIDs(ctx context.Context, userID uint, 
 	return c.cache.client.ZRange(ctx, generationTaskUserKey(userID), 0, int64(limit-1)).Result()
 }
 
+// Delete 按 taskID 删除任务：先读取任务拿到 userID，再用 pipeline 同时删 task 数据和
+// user sorted set 中的 member。任务不存在或已删除均返回 nil（幂等）。
+func (c *GenerationTaskCache) Delete(ctx context.Context, taskID string) error {
+	if taskID == "" {
+		return nil
+	}
+	key := fmt.Sprintf("%s%s", generationTaskPrefix, taskID)
+
+	// 先读取任务以拿到 user_id，便于从 user sorted set 中移除。
+	// 读不到也继续删除 task key 本身，保证幂等。
+	var payload struct {
+		UserID uint `json:"user_id"`
+	}
+	_ = c.cache.Get(ctx, key, &payload)
+
+	pipe := c.cache.client.TxPipeline()
+	pipe.Del(ctx, key)
+	pipe.Del(ctx, fmt.Sprintf("%s%s", generationTaskRequestPrefix, taskID))
+	if payload.UserID != 0 {
+		pipe.ZRem(ctx, generationTaskUserKey(payload.UserID), taskID)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// Enqueue 将任务 ID 投递到 Redis Set 队列，并缓存请求体。
+// 使用 SADD 入队，Set 结构天然去重，重复投递同一 taskID 不会产生重复消费。
 func (c *GenerationTaskCache) Enqueue(ctx context.Context, taskID string, req interface{}) error {
 	reqKey := fmt.Sprintf("%s%s", generationTaskRequestPrefix, taskID)
 	data, err := marshalCacheValue(req)
@@ -67,20 +96,18 @@ func (c *GenerationTaskCache) Enqueue(ctx context.Context, taskID string, req in
 	}
 	pipe := c.cache.client.TxPipeline()
 	pipe.Set(ctx, reqKey, data, generationTaskDefaultTTL)
-	pipe.RPush(ctx, generationTaskQueueKey, taskID)
+	pipe.SAdd(ctx, generationTaskQueueKey, taskID)
 	_, err = pipe.Exec(ctx)
 	return err
 }
 
-func (c *GenerationTaskCache) BlockingDequeue(ctx context.Context, dest interface{}) (string, error) {
-	values, err := c.cache.client.BLPop(ctx, 0, generationTaskQueueKey).Result()
+// Dequeue 从 Redis Set 队列原子弹出一个 taskID 并读取其请求体。
+// 队列为空时返回 redis.Nil 错误，调用方应轮询重试。
+func (c *GenerationTaskCache) Dequeue(ctx context.Context, dest interface{}) (string, error) {
+	taskID, err := c.cache.client.SPop(ctx, generationTaskQueueKey).Result()
 	if err != nil {
 		return "", err
 	}
-	if len(values) < 2 {
-		return "", fmt.Errorf("redis queue returned malformed response")
-	}
-	taskID := values[1]
 	reqKey := fmt.Sprintf("%s%s", generationTaskRequestPrefix, taskID)
 	if err := c.cache.Get(ctx, reqKey, dest); err != nil {
 		return taskID, err

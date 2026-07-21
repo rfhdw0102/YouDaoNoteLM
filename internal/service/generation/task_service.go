@@ -1,16 +1,15 @@
 // task_service.go 实现异步生成任务服务。
 //
 // generationTaskService 负责任务提交、状态流转、worker 循环：
-//   - Submit：创建 pending 任务，入队，推送 pending 事件
+//   - Submit：创建 pending 任务并入队
 //   - worker：单线程串行 dequeue 任务，标记 running，调用 GenerationService.Generate，
-//     根据结果标记 completed/failed/cancelled，推送终态事件
-//   - SubscribeTasks：订阅任务状态变更（供 WebSocket 使用）
+//     根据结果标记 completed/failed/cancelled
 //   - CancelTask：取消正在执行的任务
 //
 // 关键设计：
 //   - worker 单线程串行执行，避免并发请求压垮 LLM 服务
 //   - 每个任务有 generationTaskMaxRunTime 超时（10 分钟），防止 LLM 挂起导致全队阻塞
-//   - Save 失败时仍推送事件，让前端能感知真实状态（避免永久卡 pending）
+//   - 前端通过 GET /generations/tasks 轮询任务状态，不再使用 WebSocket 推送
 package generation
 
 import (
@@ -27,14 +26,13 @@ import (
 
 // generationTaskMaxRunTime 单个生成任务的最大执行时长。
 // 超时后任务会被标记为 failed，避免 LLM 调用挂起导致 worker 永久阻塞、
-// 后续排队任务无法执行。前端通过 WebSocket 事件感知到失败状态。
+// 后续排队任务无法执行。前端通过轮询 ListTasks/GetTask 感知失败状态。
 const generationTaskMaxRunTime = 10 * time.Minute
 
 type generationTaskService struct {
 	base      GenerationService
 	store     GenerationTaskStore
 	queue     GenerationTaskQueue
-	events    *generationTaskEventHub
 	sequence  atomic.Int64
 	cancelers sync.Map
 }
@@ -65,16 +63,15 @@ func NewGenerationTaskServiceWithQueue(base GenerationService, store GenerationT
 		queue = NewInMemoryGenerationTaskQueue(generationTaskQueueSize)
 	}
 	svc := &generationTaskService{
-		base:   base,
-		store:  store,
-		queue:  queue,
-		events: newGenerationTaskEventHub(),
+		base:  base,
+		store: store,
+		queue: queue,
 	}
 	go svc.worker()
 	return svc
 }
 
-// Submit 创建 pending 任务并入队，推送 pending 事件。
+// Submit 创建 pending 任务并入队。
 func (s *generationTaskService) Submit(ctx context.Context, req *GenerationRequest) (*GenerationTask, error) {
 	if s.base == nil {
 		return nil, bizerrors.New(bizerrors.CodeInternalServiceError, "generation service is not configured")
@@ -97,7 +94,6 @@ func (s *generationTaskService) Submit(ctx context.Context, req *GenerationReque
 	if err := s.store.Save(ctx, task); err != nil {
 		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "save generation task failed", err)
 	}
-	s.publishTask(task)
 	logger.Info("generation task submitted",
 		zap.String("task_id", task.TaskID),
 		zap.Uint("user_id", task.UserID),
@@ -121,8 +117,6 @@ func (s *generationTaskService) Submit(ctx context.Context, req *GenerationReque
 		task.UpdatedAt = time.Now().Unix()
 		if saveErr := s.store.Save(ctx, task); saveErr != nil {
 			logger.Warn("mark generation task enqueue failed", zap.String("task_id", task.TaskID), zap.Error(saveErr))
-		} else {
-			s.publishTask(task)
 		}
 		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "generation task enqueue failed", err)
 	}
@@ -146,6 +140,7 @@ func (s *generationTaskService) GetTask(ctx context.Context, userID uint, taskID
 }
 
 // ListTasks 按用户和笔记本查询任务列表。
+// 前端通过此接口轮询任务状态，替代原有 WebSocket 实时推送。
 func (s *generationTaskService) ListTasks(ctx context.Context, userID, notebookID uint, limit int) ([]*GenerationTask, error) {
 	if userID == 0 {
 		return nil, bizerrors.New(bizerrors.CodeUnauthorized, "user is not authenticated")
@@ -184,7 +179,6 @@ func (s *generationTaskService) CancelTask(ctx context.Context, userID uint, tas
 		if err := s.store.Save(ctx, task); err != nil {
 			return bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "cancel generation task failed", err)
 		}
-		s.publishTask(task)
 		if cancel, ok := s.cancelers.Load(taskID); ok {
 			cancel.(context.CancelFunc)()
 		}
@@ -194,6 +188,44 @@ func (s *generationTaskService) CancelTask(ctx context.Context, userID uint, tas
 	default:
 		return bizerrors.New(bizerrors.CodeConflict, "generation task is already finished")
 	}
+}
+
+// DeleteTask 删除任务：pending/running 状态先取消 worker，再删除持久化数据。
+// 已终态任务直接删除。删除幂等：任务不存在视为成功。
+func (s *generationTaskService) DeleteTask(ctx context.Context, userID uint, taskID string) error {
+	if taskID == "" {
+		return bizerrors.New(bizerrors.CodeInvalidParam, "task id cannot be empty")
+	}
+	task, err := s.store.Get(ctx, taskID)
+	if err != nil {
+		// 任务不存在视为已删除，幂等成功；其他错误仍尝试删除以避免残留。
+		var bizErr *bizerrors.BizError
+		if errors.As(err, &bizErr) && bizErr.Code == bizerrors.CodeResourceNotFound {
+			return nil
+		}
+	}
+	if task != nil && task.UserID != userID {
+		return bizerrors.New(bizerrors.CodeForbidden, "generation task does not belong to current user")
+	}
+	// 活跃任务先取消 worker，避免删除后 worker 仍尝试写回结果。
+	if task != nil && (task.Status == GenerationTaskStatusPending || task.Status == GenerationTaskStatusRunning) {
+		if cancel, ok := s.cancelers.Load(taskID); ok {
+			cancel.(context.CancelFunc)()
+		}
+	}
+	if err := s.store.Delete(ctx, taskID); err != nil {
+		return bizerrors.NewWithErr(bizerrors.CodeInternalServiceError, "delete generation task failed", err)
+	}
+	prevStatus := ""
+	if task != nil {
+		prevStatus = string(task.Status)
+	}
+	logger.Info("generation task deleted",
+		zap.String("task_id", taskID),
+		zap.Uint("user_id", userID),
+		zap.String("previous_status", prevStatus),
+	)
+	return nil
 }
 
 // worker 串行消费队列中的任务并执行。
@@ -213,7 +245,7 @@ func (s *generationTaskService) worker() {
 	}
 }
 
-// failDequeuedTask 将出队失败的任务标记为 failed 并推送事件。
+// failDequeuedTask 将出队失败的任务标记为 failed。
 func (s *generationTaskService) failDequeuedTask(taskID string, cause error) {
 	ctx := context.Background()
 	task, err := s.store.Get(ctx, taskID)
@@ -231,7 +263,6 @@ func (s *generationTaskService) failDequeuedTask(taskID string, cause error) {
 		logger.Warn("mark dequeued generation task failed", zap.String("task_id", taskID), zap.Error(err))
 		return
 	}
-	s.publishTask(task)
 }
 
 // run 执行单个任务：标记 running，调用底层生成服务，按结果更新终态。
@@ -248,13 +279,10 @@ func (s *generationTaskService) run(taskID string, req *GenerationRequest) {
 
 	task.Status = GenerationTaskStatusRunning
 	task.UpdatedAt = time.Now().Unix()
-	// Save 失败时仍推送事件：前端能感知到 running 状态，
-	// 避免任务永远停留在 pending（虽然 store 状态可能不一致，但 worker 会继续执行）。
 	if saveErr := s.store.Save(ctx, task); saveErr != nil {
 		logger.Warn("mark generation task running failed, continue anyway",
 			zap.String("task_id", taskID), zap.Error(saveErr))
 	}
-	s.publishTask(task)
 	logger.Info("generation task started",
 		zap.String("task_id", task.TaskID),
 		zap.Uint("user_id", task.UserID),
@@ -307,13 +335,10 @@ func (s *generationTaskService) run(taskID string, req *GenerationRequest) {
 		task.Status = GenerationTaskStatusCompleted
 		task.Result = resp
 	}
-	// Save 失败时仍推送事件：前端能感知到最终状态（completed/failed/cancelled），
-	// 避免任务永远停留在 running。即使 store 状态不一致，前端也有足够信息更新 UI。
 	if saveErr := s.store.Save(ctx, task); saveErr != nil {
-		logger.Warn("save generation task result failed, publish anyway",
+		logger.Warn("save generation task result failed",
 			zap.String("task_id", taskID), zap.Error(saveErr))
 	}
-	s.publishTask(task)
 	logger.Info("generation task finished",
 		zap.String("task_id", task.TaskID),
 		zap.Uint("user_id", task.UserID),
@@ -322,30 +347,4 @@ func (s *generationTaskService) run(taskID string, req *GenerationRequest) {
 		zap.String("status", string(task.Status)),
 		zap.String("error", task.Error),
 	)
-}
-
-// SubscribeTasks 订阅指定用户和笔记本的任务状态变更事件。
-func (s *generationTaskService) SubscribeTasks(ctx context.Context, userID, notebookID uint) (<-chan GenerationTaskEvent, func(), error) {
-	if userID == 0 {
-		return nil, nil, bizerrors.New(bizerrors.CodeUnauthorized, "user is not authenticated")
-	}
-	ch, unsubscribe := s.events.subscribe(userID, notebookID)
-	if ctx != nil {
-		go func() {
-			<-ctx.Done()
-			unsubscribe()
-		}()
-	}
-	return ch, unsubscribe, nil
-}
-
-// publishTask 克隆任务并向事件中心推送任务事件。
-func (s *generationTaskService) publishTask(task *GenerationTask) {
-	if task == nil || s.events == nil {
-		return
-	}
-	s.events.publish(GenerationTaskEvent{
-		Event: GenerationTaskEventTask,
-		Task:  cloneGenerationTask(task),
-	})
 }

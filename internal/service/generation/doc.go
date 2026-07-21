@@ -2,13 +2,13 @@
 //
 // 本包负责将用户输入的 Markdown 源材料转换为四种类型的产出：
 // 笔记（note）、思维导图（mindmap）、PPT 课件、测验题（quiz）。
-// 同时提供异步任务调度能力，支持前端通过 WebSocket 实时感知任务状态。
+// 同时提供异步任务调度能力，前端通过 REST 接口轮询任务状态。
 //
 // # 架构分层
 //
 // 本包文件按职责分为以下几层（同属 package generation，通过文件名前缀分组）：
 //
-//   - 任务调度层（task_*.go）：异步任务队列、状态存储、事件推送
+//   - 任务调度层（task_*.go）：异步任务队列、状态存储
 //   - 生成服务核心（generation_*.go）：对外接口、提示词、查询规划、记忆、导出
 //   - Agent 基础设施（agent_*.go）：生成 Agent 的基类、类型、工厂
 //   - 各类型生成器（{note|mindmap|quiz|ppt}_*.go）：具体类型的规划与渲染逻辑
@@ -21,11 +21,13 @@
 //   - task_service.go：GenerationTaskService 实现，负责任务提交、状态流转、worker 循环
 //   - task_queue.go：任务队列（内存/Redis 两种实现），worker 从中 dequeue 任务执行
 //   - task_store.go：任务持久化（GenerationTaskStore 接口的缓存实现）
-//   - task_event_hub.go：事件订阅中心，WebSocket 通过 SubscribeTasks 订阅任务状态变更
 //
 // 任务状态流转：pending → running → completed/failed/cancelled
 // worker 单线程串行执行，每个任务有 10 分钟超时（generationTaskMaxRunTime），
 // 避免单个 LLM 调用挂起导致后续任务永久阻塞。
+//
+// Redis 队列基于 Set 实现（SADD 入队、SPOP 出队），队列为空时 worker 短暂 sleep 轮询。
+// 前端通过 GET /generations/tasks 轮询任务状态，不再依赖 WebSocket 实时推送。
 //
 // # 生成服务核心
 //
@@ -61,7 +63,7 @@
 //   - 思维导图生成器：mindmap_planner.go + mindmap_agent_steps.go + mindmap/ 子包
 //   - 测验生成器：quiz_planner.go + quiz_agent_steps.go + quiz/ 子包
 //   - PPT 生成器：ppt_plan.go + ppt_outline.go + ppt_enrich.go + ppt_agent_steps.go
-//     + ppt_html_render_*.go + ppt_quality_*.go + ppt_style.go + ppt_text_context.go + ppt/ 子包
+//   - ppt_html_render_*.go + ppt_quality_*.go + ppt_style.go + ppt_text_context.go + ppt/ 子包
 //
 // PPT 生成器最为复杂，涉及大纲规划、内容增强、HTML 渲染、质量校验、样式主题等环节。
 // ppt/ 子包专门负责将生成的 HTML/CSS 转换为 .pptx 文件。

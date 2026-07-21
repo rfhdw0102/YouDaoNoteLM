@@ -8,21 +8,40 @@ const generationTypeLabels: Record<NoteType, string> = {
   note: '笔记',
 };
 
+const generatedTaskNotePrefix = 'note-generation-task-';
+
+export function generatedTaskNoteId(taskId: string): string {
+  return `${generatedTaskNotePrefix}${taskId}`;
+}
+
+export function taskIdFromGeneratedNoteId(noteId: string): string | null {
+  if (!noteId.startsWith(generatedTaskNotePrefix)) return null;
+  const taskId = noteId.slice(generatedTaskNotePrefix.length);
+  return taskId || null;
+}
+
+function timestampToISOString(value?: number): string {
+  if (!value || value < 0) return new Date().toISOString();
+  return new Date(value * 1000).toISOString();
+}
+
 export function createNoteFromGenerationTask(task: GenerationTask): Note | null {
   if (!task.result?.content || !task.notebook_id) return null;
   const type = task.type as NoteType;
   const firstLine = task.result.content.split('\n')[0] || '';
   const autoTitle = firstLine.replace(/^#+\s*/, '').trim() || `新${generationTypeLabels[type]}`;
+  const createdAt = timestampToISOString(task.created_at);
+  const updatedAt = timestampToISOString(task.updated_at || task.created_at);
 
   return {
-    id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: generatedTaskNoteId(task.task_id),
     title: autoTitle.slice(0, 40),
     type,
     content: task.result.content,
     isSource: false,
     notebookId: String(task.notebook_id),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt,
+    updatedAt,
   };
 }
 
@@ -36,4 +55,3 @@ export function materializeCompletedGenerationTask(
   createdTaskIds.add(task.task_id);
   return note;
 }
-

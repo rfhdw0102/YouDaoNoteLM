@@ -13,7 +13,6 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist servic
 	group.Use(middleware.Auth(tokenBlacklist), statusCheck)
 	{
 		group.POST("", ctrl.Generate)
-		group.GET("/ws", ctrl.WatchTasks)
 		group.GET("/tasks", ctrl.ListTasks)
 		group.GET("/tasks/:taskId", ctrl.GetTask)
 		group.DELETE("/tasks/:taskId", ctrl.DeleteTask)

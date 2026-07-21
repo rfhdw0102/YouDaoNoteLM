@@ -33,11 +33,9 @@ const (
 	GenerationTaskStatusCompleted GenerationTaskStatus = gen.GenerationTaskStatusCompleted
 	GenerationTaskStatusFailed    GenerationTaskStatus = gen.GenerationTaskStatusFailed
 	GenerationTaskStatusCancelled GenerationTaskStatus = gen.GenerationTaskStatusCancelled
-	GenerationTaskEventTask                            = gen.GenerationTaskEventTask
 )
 
 type GenerationTask = gen.GenerationTask
-type GenerationTaskEvent = gen.GenerationTaskEvent
 type GenerationTaskListFilter = gen.GenerationTaskListFilter
 type GenerationTaskStore = gen.GenerationTaskStore
 type GenerationTaskService = gen.GenerationTaskService

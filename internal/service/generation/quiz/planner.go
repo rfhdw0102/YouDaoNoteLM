@@ -5,24 +5,27 @@ import (
 	"strings"
 )
 
+const minQuizQuestionCount = 10
+
+func targetQuizQuestionCount(analysis Analysis) int {
+	totalPoints := len(analysis.KeyConcepts) + len(analysis.Processes) + len(analysis.Examples)
+	targetCount := minQuizQuestionCount
+	if totalPoints >= 12 {
+		targetCount = 12
+	}
+	if totalPoints >= 24 {
+		targetCount = 15
+	}
+	return targetCount
+}
+
 // requiredQuizQuestionTypes 根据材料丰富度决定题目类型与数量。
 func requiredQuizQuestionTypes(analysis Analysis) []string {
 	conceptCount := len(analysis.KeyConcepts)
 	processCount := len(analysis.Processes)
-	exampleCount := len(analysis.Examples)
-	totalPoints := conceptCount + processCount + exampleCount
 
 	// 根据材料丰富度决定题目数量
-	targetCount := 5
-	if totalPoints >= 6 {
-		targetCount = 6
-	}
-	if totalPoints >= 10 {
-		targetCount = 7
-	}
-	if totalPoints >= 15 {
-		targetCount = 8
-	}
+	targetCount := targetQuizQuestionCount(analysis)
 
 	types := []string{"single_choice", "true_false"}
 
@@ -155,7 +158,7 @@ func ExpandContent(plan QuestionPlan, analysis Analysis) QuestionPlan {
 			q.Explanation = "该答案来自提供的笔记上下文。"
 		}
 	}
-	for len(expanded.Questions) < 5 {
+	for len(expanded.Questions) < targetQuizQuestionCount(analysis) {
 		topic := analysis.Topic
 		if len(analysis.KeyConcepts) > len(expanded.Questions) {
 			topic = analysis.KeyConcepts[len(expanded.Questions)]
@@ -252,7 +255,7 @@ func AppendPlansToContext(contextValue string, plan, expanded QuestionPlan) stri
 		b.WriteString("- For multi_choice, provide 4-5 options, answer must be all correct option texts joined by semicolons (；).\n")
 		b.WriteString("- For fill_blank, options must be an empty array [], answer must be the key term or phrase to fill in.\n")
 		b.WriteString("- For short_answer, options must be an empty array [], answer must be a reference answer.\n")
-		b.WriteString("- Generate at least 5 questions, covering at least 2 different question types.\n")
+		b.WriteString(fmt.Sprintf("- Generate at least %d questions, covering at least 2 different question types.\n", len(expanded.Questions)))
 		b.WriteString("- Distribute difficulty levels: roughly 40% easy, 40% medium, 20% hard.\n")
 		b.WriteString("- Content must be grounded in Original Markdown, Local References, Web Results, or the user's explicit prompt.\n")
 		b.WriteString("- Return only the JSON object, no markdown fences or extra text.\n")
