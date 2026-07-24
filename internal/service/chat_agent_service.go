@@ -29,6 +29,7 @@ import (
 // chatAgentService Agent 对话服务实现
 type chatAgentService struct {
 	llmConfigRepo    repository.UserLLMConfigRepository
+	userRepo         repository.UserRepository
 	retriever        rag.RAGRetriever
 	conversationRepo repository.ConversationRepository
 	messageRepo      repository.MessageRepository
@@ -42,6 +43,7 @@ type chatAgentService struct {
 // NewChatAgentService 创建 Agent 对话服务
 func NewChatAgentService(
 	llmConfigRepo repository.UserLLMConfigRepository,
+	userRepo repository.UserRepository,
 	retriever rag.RAGRetriever,
 	conversationRepo repository.ConversationRepository,
 	messageRepo repository.MessageRepository,
@@ -52,6 +54,7 @@ func NewChatAgentService(
 ) ChatAgentService {
 	return &chatAgentService{
 		llmConfigRepo:    llmConfigRepo,
+		userRepo:         userRepo,
 		retriever:        retriever,
 		conversationRepo: conversationRepo,
 		messageRepo:      messageRepo,
@@ -249,18 +252,30 @@ func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entit
 	// 获取资料名称映射
 	sourceNames := s.getSourceNames(sourceIDs)
 
+	// 获取用户信息
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		logger.Warn("[Agent] 获取用户信息失败，跳过用户信息注入", zap.Error(err))
+	}
+
 	logger.Debug("[Agent] AI 模型创建成功，开始创建 ChatAgent")
 
 	// 使用 Builder 模式构建 ChatAgent
-	agent, err := chat.NewChatAgentBuilder(ctx).
+	builder := chat.NewChatAgentBuilder(ctx).
 		WithLLM(chatModel).
 		WithUserID(userID).
 		WithSources(sourceIDs, sourceNames).
 		WithRetriever(s.retriever).
 		WithSourceRepo(s.sourceRepo).
 		WithSummaryCache(s.summaryCache).
-		WithContextRepos(s.conversationRepo, s.messageRepo, s.cache).
-		Build()
+		WithContextRepos(s.conversationRepo, s.messageRepo, s.cache)
+
+	// 注入用户信息
+	if user != nil {
+		builder.WithUser(user.Nickname, user.Username)
+	}
+
+	agent, err := builder.Build()
 	if err != nil {
 		logger.Error("[Agent] 创建 ChatAgent 失败", zap.Error(err))
 		return nil, err

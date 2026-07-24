@@ -306,7 +306,7 @@ func (a *App) initDependencies() {
 	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory, a.cfg.Security.EncryptionKey)
 
 	// 创建 ChatAgentService 和 ConversationService
-	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache, sourceRepo, sourceSummaryCache, a.cfg.Security.EncryptionKey)
+	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, userRepo, ragRetriever, conversationRepo, messageRepo, chatCache, sourceRepo, sourceSummaryCache, a.cfg.Security.EncryptionKey)
 	convSvc := service.NewConversationService(conversationRepo, messageRepo, chatCache)
 	logger.Info("ChatAgentService 初始化成功")
 	logger.Info("ConversationService 初始化成功")

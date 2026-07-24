@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
@@ -27,6 +28,10 @@ type ChatAgentBuilder struct {
 	// 资料相关
 	sourceIDs   []uint
 	sourceNames map[uint]string
+
+	// 用户信息
+	userNickname string
+	userUsername string
 
 	// 工具相关（可选，支持自定义扩展）
 	tools []tool.BaseTool
@@ -74,6 +79,13 @@ func (b *ChatAgentBuilder) WithSources(ids []uint, names map[uint]string) *ChatA
 // WithUserID 设置用户 ID
 func (b *ChatAgentBuilder) WithUserID(userID uint) *ChatAgentBuilder {
 	b.userID = userID
+	return b
+}
+
+// WithUser 设置用户信息（昵称、用户名）
+func (b *ChatAgentBuilder) WithUser(nickname, username string) *ChatAgentBuilder {
+	b.userNickname = nickname
+	b.userUsername = username
 	return b
 }
 
@@ -205,20 +217,41 @@ func (b *ChatAgentBuilder) buildDefaultTools() {
 	}
 }
 
-// buildSystemPrompt 构建系统提示词，注入资料列表
+// buildSystemPrompt 构建系统提示词，注入用户信息、系统信息和资料列表
 func (b *ChatAgentBuilder) buildSystemPrompt() string {
-	if len(b.sourceIDs) == 0 {
-		return strings.Replace(prompts.ChatAgentSystemPrompt, "{{.SourceList}}", "（用户未选定特定资料）", 1)
-	}
-
 	var sb strings.Builder
-	for i, id := range b.sourceIDs {
-		name := b.sourceNames[id]
-		if name == "" {
-			name = fmt.Sprintf("资料#%d", id)
+
+	// 系统信息
+	now := time.Now()
+	weekdays := []string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
+	sb.WriteString(fmt.Sprintf("# 系统信息\n当前时间：%s %s\n\n",
+		now.Format("2006-01-02 15:04"), weekdays[now.Weekday()]))
+
+	// 用户信息
+	if b.userNickname != "" || b.userUsername != "" {
+		displayName := b.userNickname
+		if displayName == "" {
+			displayName = b.userUsername
 		}
-		sb.WriteString(fmt.Sprintf("%d. %s (ID: %d)\n", i+1, name, id))
+		sb.WriteString(fmt.Sprintf("# 用户信息\n用户名：%s\n\n", displayName))
 	}
 
-	return strings.Replace(prompts.ChatAgentSystemPrompt, "{{.SourceList}}", sb.String(), 1)
+	// 资料列表
+	sourceList := "（用户未选定特定资料）"
+	if len(b.sourceIDs) > 0 {
+		var listBuilder strings.Builder
+		for i, id := range b.sourceIDs {
+			name := b.sourceNames[id]
+			if name == "" {
+				name = fmt.Sprintf("资料#%d", id)
+			}
+			listBuilder.WriteString(fmt.Sprintf("%d. %s (ID: %d)\n", i+1, name, id))
+		}
+		sourceList = listBuilder.String()
+	}
+
+	prompt := strings.Replace(prompts.ChatAgentSystemPrompt, "{{.SourceList}}", sourceList, 1)
+	sb.WriteString(prompt)
+
+	return sb.String()
 }
