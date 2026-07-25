@@ -19,12 +19,12 @@ type Controller struct {
 	generationTaskService service.GenerationTaskService
 }
 
-// 创建生成模块控制器。
+// NewController 创建生成模块控制器。
 func NewController(generationService service.GenerationService, generationTaskService service.GenerationTaskService) *Controller {
 	return &Controller{generationService: generationService, generationTaskService: generationTaskService}
 }
 
-// 提交内容生成任务。
+// Generate 提交内容生成任务。
 func (ctrl *Controller) Generate(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -57,7 +57,7 @@ func (ctrl *Controller) Generate(c *gin.Context) {
 	response.Success(c, task)
 }
 
-// 查询指定生成任务。
+// GetTask 查询指定生成任务。
 func (ctrl *Controller) GetTask(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -75,8 +75,7 @@ func (ctrl *Controller) GetTask(c *gin.Context) {
 	response.Success(c, task)
 }
 
-// 查询当前用户的生成任务列表。
-// 前端通过此接口轮询任务状态，替代原有 WebSocket 实时推送。
+// ListTasks 查询当前用户的生成任务列表。
 func (ctrl *Controller) ListTasks(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -114,7 +113,6 @@ func (ctrl *Controller) ListTasks(c *gin.Context) {
 }
 
 // DeleteTask 删除生成任务：pending/running 状态先取消 worker，再删除持久化数据。
-// 已终态任务直接删除。删除幂等：任务不存在视为成功。
 func (ctrl *Controller) DeleteTask(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -131,7 +129,7 @@ func (ctrl *Controller) DeleteTask(c *gin.Context) {
 	response.SuccessWithMessage(c, "任务已删除", nil)
 }
 
-// 将生成内容导出为附件。
+// Export 将生成内容导出为附件。
 func (ctrl *Controller) Export(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {

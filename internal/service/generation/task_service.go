@@ -9,7 +9,7 @@
 // 关键设计：
 //   - worker 单线程串行执行，避免并发请求压垮 LLM 服务
 //   - 每个任务有 generationTaskMaxRunTime 超时（10 分钟），防止 LLM 挂起导致全队阻塞
-//   - 前端通过 GET /generations/tasks 轮询任务状态，不再使用 WebSocket 推送
+//   - 前端通过 GET /generations/tasks 轮询任务状态
 package generation
 
 import (
@@ -102,6 +102,7 @@ func (s *generationTaskService) Submit(ctx context.Context, req *GenerationReque
 		zap.Int64("sequence", task.Sequence),
 	)
 
+	//存一份备份 防止数据被污染
 	reqCopy := *req
 	reqCopy.SourceIDs = append([]uint(nil), req.SourceIDs...)
 	if req.Options != nil {
@@ -111,6 +112,7 @@ func (s *generationTaskService) Submit(ctx context.Context, req *GenerationReque
 		}
 	}
 
+	//入redis队列/内存队列
 	if err := s.queue.Enqueue(ctx, queuedGenerationTask{taskID: task.TaskID, req: &reqCopy}); err != nil {
 		task.Status = GenerationTaskStatusFailed
 		task.Error = "generation task enqueue failed"
@@ -140,7 +142,6 @@ func (s *generationTaskService) GetTask(ctx context.Context, userID uint, taskID
 }
 
 // ListTasks 按用户和笔记本查询任务列表。
-// 前端通过此接口轮询任务状态，替代原有 WebSocket 实时推送。
 func (s *generationTaskService) ListTasks(ctx context.Context, userID, notebookID uint, limit int) ([]*GenerationTask, error) {
 	if userID == 0 {
 		return nil, bizerrors.New(bizerrors.CodeUnauthorized, "user is not authenticated")

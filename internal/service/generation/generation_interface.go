@@ -1,8 +1,3 @@
-// generation_interface.go 定义生成模块的对外公共契约。
-//
-// 本文件集中定义所有对外导出的类型和接口，是 generation_compat.go 重新导出的来源。
-// 重构内部实现时需保持此文件的类型/接口签名稳定。
-//
 // 主要类型：
 //   - GenerationType：生成类型（mindmap/ppt/quiz/note）
 //   - GenerationRequest / GenerationResponse：同步生成请求/响应
@@ -11,13 +6,12 @@
 //   - GenerationService / GenerationModel / GenerationPrompt：生成服务接口
 //   - GenerationMemoryScope / GenerationMemoryEntry / GenerationMemoryStore：会话记忆
 //   - GenerationExportRequest / GenerationExportResult：内容导出
-//
-// 任务状态通过 REST 接口 GET /generations/tasks 查询，不再使用 WebSocket 推送。
+
 package generation
 
 import "context"
 
-// 表示内容生成类型。
+// GenerationType 表示内容生成类型。
 type GenerationType string
 
 const (
@@ -27,7 +21,7 @@ const (
 	GenerationTypeNote    GenerationType = "note"
 )
 
-// 生成模块的内部请求。
+// GenerationRequest 生成模块的内部请求。
 type GenerationRequest struct {
 	UserID       uint           `json:"user_id,omitempty"`
 	NotebookID   uint           `json:"notebook_id,omitempty"`
@@ -40,7 +34,7 @@ type GenerationRequest struct {
 	AllowDegrade bool           `json:"allow_degrade,omitempty"`
 }
 
-// 记录生成过程使用的本地引用。
+// GenerationReference 记录生成过程使用的本地引用。
 type GenerationReference struct {
 	SourceID    uint    `json:"source_id"`
 	SourceName  string  `json:"source_name,omitempty"`
@@ -50,7 +44,7 @@ type GenerationReference struct {
 	ChapterPath string  `json:"chapter_path,omitempty"`
 }
 
-// 各类生成器的统一输出。
+// GenerationResponse 各类生成器的统一输出。
 type GenerationResponse struct {
 	Type          GenerationType        `json:"type"`
 	Content       string                `json:"content"`
@@ -59,7 +53,7 @@ type GenerationResponse struct {
 	Meta          map[string]any        `json:"meta,omitempty"`
 }
 
-// 导出生成内容的请求。
+// GenerationExportRequest 导出生成内容的请求。
 type GenerationExportRequest struct {
 	Type     GenerationType `json:"type"`
 	Content  string         `json:"content"`
@@ -67,14 +61,14 @@ type GenerationExportRequest struct {
 	Template string         `json:"template,omitempty"`
 }
 
-// 导出文件的二进制结果。
+// GenerationExportResult 导出文件的二进制结果。
 type GenerationExportResult struct {
 	Filename    string
 	ContentType string
 	Data        []byte
 }
 
-// 表示异步生成任务状态。
+// GenerationTaskStatus 表示异步生成任务状态。
 type GenerationTaskStatus string
 
 const (
@@ -85,7 +79,7 @@ const (
 	GenerationTaskStatusCancelled GenerationTaskStatus = "cancelled"
 )
 
-// 记录异步生成任务的状态和结果。
+// GenerationTask 记录异步生成任务的状态和结果。
 type GenerationTask struct {
 	TaskID     string                 `json:"task_id"`
 	UserID     uint                   `json:"user_id"`
@@ -106,7 +100,7 @@ type GenerationTaskListFilter struct {
 	Limit      int
 }
 
-// 抽象任务持久化能力。
+// GenerationTaskStore 抽象任务持久化能力。
 type GenerationTaskStore interface {
 	Save(ctx context.Context, task *GenerationTask) error
 	Get(ctx context.Context, taskID string) (*GenerationTask, error)
@@ -115,7 +109,7 @@ type GenerationTaskStore interface {
 	Delete(ctx context.Context, taskID string) error
 }
 
-// 管理生成任务提交、查询、取消、删除。前端通过 ListTasks/GetTask 轮询任务状态。
+// GenerationTaskService 管理生成任务提交、查询、取消、删除。前端通过 ListTasks/GetTask 轮询任务状态。
 type GenerationTaskService interface {
 	Submit(ctx context.Context, req *GenerationRequest) (*GenerationTask, error)
 	GetTask(ctx context.Context, userID uint, taskID string) (*GenerationTask, error)
@@ -125,7 +119,7 @@ type GenerationTaskService interface {
 	DeleteTask(ctx context.Context, userID uint, taskID string) error
 }
 
-// 传给模型的提示词载荷。
+// GenerationPrompt 传给模型的提示词载荷。
 type GenerationPrompt struct {
 	AgentName    string
 	System       string
@@ -135,12 +129,12 @@ type GenerationPrompt struct {
 	MaxTokens    int
 }
 
-// 抽象底层模型生成能力。
+// GenerationModel 抽象底层模型生成能力。
 type GenerationModel interface {
 	Generate(ctx context.Context, prompt GenerationPrompt) (string, error)
 }
 
-// 生成模块的统一服务入口。
+// GenerationService 生成模块的统一服务入口。
 type GenerationService interface {
 	Generate(ctx context.Context, req *GenerationRequest) (*GenerationResponse, error)
 	Export(ctx context.Context, req *GenerationExportRequest) (*GenerationExportResult, error)

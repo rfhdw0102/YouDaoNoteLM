@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 注册生成模块路由。
+// RegisterRoutes 注册生成模块路由。
 func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService, statusCheck gin.HandlerFunc) {
 	group := r.Group("/generations")
 	group.Use(middleware.Auth(tokenBlacklist), statusCheck)
