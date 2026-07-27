@@ -94,6 +94,7 @@ jobs:
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: build-and-push
     if: >
       (github.event_name == 'push' && github.ref == 'refs/heads/develop')
