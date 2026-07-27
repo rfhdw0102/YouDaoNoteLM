@@ -94,7 +94,7 @@ jobs:
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     needs: build-and-push
     if: >
       (github.event_name == 'push' && github.ref == 'refs/heads/develop')
@@ -133,6 +133,7 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
+          command_timeout: 45m
           script: |
             DEPLOY_DIR="/home/flandern/youdaonotelm"
 
@@ -215,7 +216,7 @@ jobs:
   deploy-production:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     needs: build-and-push
     if: >
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
@@ -247,6 +248,7 @@ jobs:
           username: ${{ secrets.PRODUCTION_SSH_USERNAME }}
           key: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
           port: 22
+          command_timeout: 45m
           script: |
             DEPLOY_DIR="/home/flandern/youdaonotelm"
 
