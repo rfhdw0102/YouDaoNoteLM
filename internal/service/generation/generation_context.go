@@ -393,10 +393,14 @@ func pruneGenerationSearchResults(results []SearchResult, limit int) []SearchRes
 }
 
 // buildGenerationContext 拼接请求、引用和搜索结果为 Agent 上下文字符串。
-func buildGenerationContext(req *GenerationRequest, refs []GenerationReference, searchSummary string, searchResults []SearchResult) string {
+func buildGenerationContext(req *GenerationRequest, longTermMemory string, refs []GenerationReference, searchSummary string, searchResults []SearchResult) string {
 	var b strings.Builder
 	b.WriteString("User Request:\n")
 	b.WriteString(strings.TrimSpace(req.Prompt))
+	if memoryContext := strings.TrimSpace(longTermMemory); memoryContext != "" {
+		b.WriteString("\n\n")
+		b.WriteString(memoryContext)
+	}
 	b.WriteString("\n\nOriginal Markdown:\n")
 	b.WriteString(strings.TrimSpace(req.Markdown))
 

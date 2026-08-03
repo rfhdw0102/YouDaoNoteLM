@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Settings, Cpu, Search, Mic, Database, Plus, Trash2,
+  Settings, Cpu, Search, Mic, Database, Plus, Trash2, Brain,
   Check, AlertCircle, ArrowLeft, Save, X, BookOpen,
   Loader2, Plug, Filter
 } from 'lucide-react';
@@ -17,8 +17,9 @@ import type { UserConfig, UserLLMConfig, UserConfigRequest } from '../api/userCo
 import type { ProviderInfo } from '../api/providers';
 import type { YoudaoBindStatus } from '../api/youdao';
 import { getErrorMessage } from '../utils/error';
+import LongTermMemorySettings from '../components/settings/LongTermMemorySettings';
 
-type ConfigTab = 'llm' | 'search' | 'asr' | 'embedding' | 'reranker' | 'youdao';
+type ConfigTab = 'llm' | 'search' | 'asr' | 'embedding' | 'reranker' | 'youdao' | 'memory';
 
 // 默认 API 地址映射
 const DEFAULT_API_URLS: Record<string, string> = {
@@ -77,7 +78,7 @@ export default function SettingsPage() {
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<ConfigTab>(() => {
     const tab = searchParams.get('tab');
-    return tab === 'llm' || tab === 'search' || tab === 'asr' || tab === 'embedding' || tab === 'reranker' || tab === 'youdao'
+    return tab === 'llm' || tab === 'search' || tab === 'asr' || tab === 'embedding' || tab === 'reranker' || tab === 'youdao' || tab === 'memory'
       ? (tab as ConfigTab)
       : 'llm';
   });
@@ -239,6 +240,9 @@ export default function SettingsPage() {
     setEditingId(null);
     resetForm();
 
+    if (activeTab === 'memory') {
+      return;
+    }
     if (activeTab === 'youdao') {
       fetchYoudaoBindStatus();
     } else {
@@ -249,7 +253,7 @@ export default function SettingsPage() {
 
   // Fetch providers when active tab changes
   useEffect(() => {
-    if (activeTab !== 'youdao') {
+    if (activeTab !== 'youdao' && activeTab !== 'memory') {
       fetchProviders();
     }
   }, [activeTab]);
@@ -681,6 +685,7 @@ export default function SettingsPage() {
     { key: 'search', label: '搜索引擎', icon: Search },
     { key: 'asr', label: '语音识别', icon: Mic },
     { key: 'reranker', label: '精排模型', icon: Filter },
+    { key: 'memory', label: '长期记忆', icon: Brain },
     { key: 'youdao', label: '有道云笔记', icon: BookOpen },
   ];
 
@@ -731,7 +736,7 @@ export default function SettingsPage() {
         )}
 
         {/* LLM not configured warning */}
-        {activeTab !== 'llm' && !loading && llmConfigs.length === 0 && (
+        {activeTab !== 'llm' && activeTab !== 'memory' && !loading && llmConfigs.length === 0 && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -837,7 +842,9 @@ export default function SettingsPage() {
         )}
 
         {/* Config List */}
-        {activeTab === 'youdao' ? (
+        {activeTab === 'memory' ? (
+          <LongTermMemorySettings />
+        ) : activeTab === 'youdao' ? (
           /* 有道云配置 */
           <div className="space-y-4">
             {youdaoLoading ? (
