@@ -62,6 +62,12 @@ def fetch_webpage(url: str) -> tuple[bytes, str]:
         return b"", f"网络请求失败: {str(e)}"
 
 
+@app.get("/health")
+async def health():
+    """健康检查端点"""
+    return {"status": "ok"}
+
+
 @app.post("/convert")
 async def convert(file: UploadFile = File(...)):
     """文件转 Markdown"""

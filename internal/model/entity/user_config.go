@@ -17,7 +17,7 @@ type UserConfig struct {
 	DailyQuota   *int       `json:"daily_quota"`                                                           // 每日配额(search用)
 	QuotaUsed    int        `gorm:"default:0" json:"quota_used"`                                           // 已使用配额(search用)
 	QuotaResetAt *time.Time `json:"quota_reset_at"`                                                        // 配额重置时间(search用)
-	ExtraConfig  string     `gorm:"type:json" json:"extra_config"`                            // 服务商特有配置(JSON)
+	ExtraConfig  string     `gorm:"type:json" json:"extra_config"`                                         // 服务商特有配置(JSON)
 	Enabled      bool       `gorm:"default:true" json:"enabled"`                                           // 是否启用
 	Source       string     `gorm:"-" json:"source,omitempty"`                                             // 配置来源(user/system)，仅API返回用，不入库
 }

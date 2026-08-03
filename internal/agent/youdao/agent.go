@@ -89,8 +89,17 @@ func (a *YoudaoAgent) createTools() ([]tool.BaseTool, error) {
 	return tools, nil
 }
 
-// createAgent 创建 Eino Agent
-func (a *YoudaoAgent) createAgent(ctx context.Context, userID uint) (*adk.ChatModelAgent, error) {
+// InjectContext 注入子 agent 工具执行所需的 userID context（实现 chat.SubAgentBuilder 接口）。
+// 主 agent 通过 NewAgentTool 调用子 agent 时，context 缺 youdao 包的 userID，
+// 会导致有道工具读不到用户身份。此处补注入。
+func (a *YoudaoAgent) InjectContext(ctx context.Context, userID uint) context.Context {
+	ctx = WithUserID(ctx, userID)            // youdao 包的 context key（有道工具用 GetUserID 读取）
+	ctx = agentTools.WithUserID(ctx, userID) // agent/tools 包的 context key（import_document 工具用）
+	return ctx
+}
+
+// BuildAgent 创建 Eino Agent（导出供主 Agent 通过 adk.NewAgentTool 包装调用）
+func (a *YoudaoAgent) BuildAgent(ctx context.Context, userID uint) (*adk.ChatModelAgent, error) {
 	chatModel, err := a.createChatModel(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -123,7 +132,7 @@ func (a *YoudaoAgent) Execute(ctx context.Context, userID uint, task string) (st
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
-	agent, err := a.createAgent(ctx, userID)
+	agent, err := a.BuildAgent(ctx, userID)
 	if err != nil {
 		return "", err
 	}

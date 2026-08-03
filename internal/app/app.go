@@ -3,17 +3,20 @@ package app
 import (
 	searchAgent "YoudaoNoteLm/internal/agent/search"
 	"YoudaoNoteLm/internal/api"
+	"YoudaoNoteLm/internal/memory"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/repository"
 	"YoudaoNoteLm/internal/service"
 	"YoudaoNoteLm/internal/service/external"
 	externalMarkitdown "YoudaoNoteLm/internal/service/external/markitdown"
+	"YoudaoNoteLm/internal/service/external/reranker"
 	externalStorage "YoudaoNoteLm/internal/service/external/storage"
 	externalYoudao "YoudaoNoteLm/internal/service/external/youdao"
 	"YoudaoNoteLm/pkg/cache"
 	"YoudaoNoteLm/pkg/config"
 	"YoudaoNoteLm/pkg/database"
+	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/logger"
 	"YoudaoNoteLm/pkg/utils"
 	"context"
@@ -28,6 +31,7 @@ import (
 	_ "YoudaoNoteLm/internal/service/external/asr"
 	_ "YoudaoNoteLm/internal/service/external/embedding"
 	_ "YoudaoNoteLm/internal/service/external/llm"
+	_ "YoudaoNoteLm/internal/service/external/reranker"
 	_ "YoudaoNoteLm/internal/service/external/search"
 
 	"github.com/cloudwego/eino/components/embedding"
@@ -126,8 +130,14 @@ func (a *App) initDatabase() error {
 		&entity.UserLLMConfig{},
 		&entity.YoudaoBinding{},
 		&entity.SysConfig{},
+		&memory.UserMemory{},
 	); err != nil {
 		logger.Warn("database migration failed", zap.Error(err))
+	}
+	if !a.mysqlDB.Migrator().HasConstraint(&memory.UserMemory{}, "User") {
+		if err := a.mysqlDB.Migrator().CreateConstraint(&memory.UserMemory{}, "User"); err != nil {
+			logger.Warn("create user memory foreign key failed", zap.Error(err))
+		}
 	}
 
 	// 初始化 Redis（可选）
@@ -187,6 +197,7 @@ func (a *App) initDependencies() {
 	llmConfigRepo := repository.NewUserLLMConfigRepository(a.mysqlDB)
 	conversationRepo := repository.NewConversationRepository(a.mysqlDB)
 	messageRepo := repository.NewMessageRepository(a.mysqlDB)
+	userMemorySvc := memory.NewService(memory.NewMySQLStore(a.mysqlDB))
 	chatCache := cache.NewChatCache(a.redis)
 
 	// 创建外部服务客户端
@@ -251,7 +262,7 @@ func (a *App) initDependencies() {
 			return nil, fmt.Errorf("获取 Embedding 配置失败: %w", err)
 		}
 		if cfg == nil {
-			return nil, fmt.Errorf("请先在设置中配置 Embedding 服务")
+			return nil, bizerrors.ErrEmbeddingNotConfigured
 		}
 		return rag.NewEmbedderFromConfig(ctx, cfg)
 	}
@@ -259,6 +270,12 @@ func (a *App) initDependencies() {
 	// 创建 EinoRetrieverWrapper 用于检索
 	retrieverCtx, retrieverCancel := milvusInitContext()
 	defer retrieverCancel()
+
+	// 创建 RerankerProvider：通过 ConfigService 动态获取用户的 Reranker 配置
+	rerankerProvider := func(ctx context.Context, userID uint) (reranker.RerankerService, error) {
+		return configSvc.GetRerankerService(userID)
+	}
+
 	ragRetriever, err := rag.NewEinoRetrieverWrapper(
 		retrieverCtx,
 		a.cfg.Milvus.GetAddress(),
@@ -266,6 +283,7 @@ func (a *App) initDependencies() {
 		sourceRepo,
 		retrieverEmbedderProvider,
 		5, // defaultTopK
+		rerankerProvider,
 	)
 	if err != nil {
 		logger.Fatal("EinoRetrieverWrapper 初始化失败", zap.Error(err))
@@ -284,8 +302,8 @@ func (a *App) initDependencies() {
 	youdaoBindingRepo := repository.NewYoudaoBindingRepository(a.mysqlDB)
 	youdaoSvc := service.NewYoudaoService(youdaoCLI, youdaoBindingRepo, sourceRepo, ingestionSvc, a.cfg.External.Youdao.CookiesPath, structurer, configSvc, sourceSummaryCache)
 
-	// 创建搜索 Agent（依赖 youdaoSvc、youdaoCLI 和 importerSvc）
-	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc, youdaoSvc, youdaoCLI)
+	// 创建搜索 Agent（import_document 是公共工具，search agent 只用 url 来源，不依赖 youdao）
+	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc)
 	searchAgentSvc := service.NewSearchAgentService(configSvc, importerSvc, searchAgentInst)
 
 	// 创建生成服务（SearchService 暂为 nil，后续可接入）
@@ -293,10 +311,18 @@ func (a *App) initDependencies() {
 	if a.redis != nil {
 		generationMemory = service.NewGenerationMemoryCacheStore(cache.NewGenerationMemoryCache(a.redis))
 	}
-	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory, a.cfg.Security.EncryptionKey)
+	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemories(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory, userMemorySvc, a.cfg.Security.EncryptionKey)
+	var generationTaskStore service.GenerationTaskStore
+	var generationTaskQueue service.GenerationTaskQueue
+	if a.redis != nil {
+		generationTaskCache := cache.NewGenerationTaskCache(redisCache)
+		generationTaskStore = service.NewGenerationTaskCacheStore(generationTaskCache)
+		generationTaskQueue = service.NewGenerationTaskRedisQueue(generationTaskCache)
+	}
+	generationTaskSvc := service.NewGenerationTaskServiceWithQueue(generationSvc, generationTaskStore, generationTaskQueue)
 
 	// 创建 ChatAgentService 和 ConversationService
-	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, ragRetriever, conversationRepo, messageRepo, chatCache, sourceRepo, sourceSummaryCache, a.cfg.Security.EncryptionKey)
+	chatAgentSvc := service.NewChatAgentServiceWithMemory(llmConfigRepo, userRepo, ragRetriever, conversationRepo, messageRepo, chatCache, sourceRepo, sourceSummaryCache, a.cfg.Security.EncryptionKey, userMemorySvc)
 	convSvc := service.NewConversationService(conversationRepo, messageRepo, chatCache)
 	logger.Info("ChatAgentService 初始化成功")
 	logger.Info("ConversationService 初始化成功")
@@ -308,6 +334,7 @@ func (a *App) initDependencies() {
 		sourceSvc,
 		searchSvc,
 		generationSvc,
+		generationTaskSvc,
 		importerSvc,
 		adminSvc,
 		userCfgSvc,
@@ -320,6 +347,8 @@ func (a *App) initDependencies() {
 		youdaoSvc,
 		ingestionSvc,
 		minioStorage,
+		userRepo,
+		userMemorySvc,
 	)
 }
 
@@ -343,7 +372,7 @@ func (a *App) initIngestionService(sourceRepo repository.SourceRepository, confi
 			return nil, 0, fmt.Errorf("获取 Embedding 配置失败: %w", err)
 		}
 		if cfg == nil {
-			return nil, 0, fmt.Errorf("请先在设置中配置 Embedding 服务")
+			return nil, 0, bizerrors.ErrEmbeddingNotConfigured
 		}
 		embedder, err := rag.NewEmbedderFromConfig(ctx, cfg)
 		if err != nil {

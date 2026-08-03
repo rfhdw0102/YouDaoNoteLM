@@ -8,10 +8,10 @@ import (
 )
 
 // RegisterRoutes 注册导入路由
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService) {
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService, statusCheck gin.HandlerFunc) {
 	// 笔记本下的导入操作（需认证）
 	notebooks := r.Group("/notebooks/:nbId/import")
-	notebooks.Use(middleware.Auth(tokenBlacklist))
+	notebooks.Use(middleware.Auth(tokenBlacklist), statusCheck)
 	{
 		notebooks.POST("/file", ctrl.ImportFile)
 		notebooks.POST("/audio/preview", ctrl.PreviewAudio)
@@ -19,7 +19,7 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist servic
 
 	// 全局导入操作（需认证）
 	imp := r.Group("/import")
-	imp.Use(middleware.Auth(tokenBlacklist))
+	imp.Use(middleware.Auth(tokenBlacklist), statusCheck)
 	{
 		imp.POST("/audio/confirm", ctrl.ConfirmAudio)
 		imp.GET("/audio/preview/:previewId", ctrl.GetAudioPreviewStatus) // 查询音频转写状态

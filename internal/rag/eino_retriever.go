@@ -3,10 +3,12 @@ package rag
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/repository"
+	"YoudaoNoteLm/internal/service/external/reranker"
 	"YoudaoNoteLm/pkg/logger"
 
 	milvus2 "github.com/cloudwego/eino-ext/components/retriever/milvus2"
@@ -88,13 +90,17 @@ func (f *einoRetrieverFactory) getRetriever(ctx context.Context, userID uint, em
 	return r, nil
 }
 
+// retrieverRerankerProvider 根据 userID 获取用于检索的 Reranker
+type retrieverRerankerProvider func(ctx context.Context, userID uint) (reranker.RerankerService, error)
+
 // EinoRetrieverWrapper 封装 eino Retriever，适配现有的 RAGRetriever 接口
 type EinoRetrieverWrapper struct {
 	factory          *einoRetrieverFactory
 	parentBlockRepo  repository.ParentBlockRepository
 	sourceRepo       repository.SourceRepository
 	embedderProvider retrieverEmbedderProvider
-	reranker         *einoReranker
+	rerankerProvider retrieverRerankerProvider // 动态获取 Reranker 配置
+	fallbackReranker *einoReranker             // Score Reranker 作为保底
 	topK             int
 }
 
@@ -106,14 +112,16 @@ func NewEinoRetrieverWrapper(
 	sourceRepo repository.SourceRepository,
 	embedderProvider retrieverEmbedderProvider,
 	topK int,
+	rerankerProvider retrieverRerankerProvider,
 ) (*EinoRetrieverWrapper, error) {
 	if topK <= 0 {
 		topK = defaultTopK
 	}
 
-	reranker, err := newEinoReranker(ctx, nil)
+	// Score Reranker 作为保底策略
+	fallbackReranker, err := newEinoReranker(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("创建 reranker 失败: %w", err)
+		return nil, fmt.Errorf("创建 fallback reranker 失败: %w", err)
 	}
 
 	return &EinoRetrieverWrapper{
@@ -121,12 +129,13 @@ func NewEinoRetrieverWrapper(
 		parentBlockRepo:  parentBlockRepo,
 		sourceRepo:       sourceRepo,
 		embedderProvider: embedderProvider,
-		reranker:         reranker,
+		rerankerProvider: rerankerProvider,
+		fallbackReranker: fallbackReranker,
 		topK:             topK,
 	}, nil
 }
 
-// Retrieve 执行 RAG 检索：Hybrid 搜索 -> Score Rerank -> Parent Recovery
+// Retrieve 执行 RAG 检索
 func (r *EinoRetrieverWrapper) Retrieve(ctx context.Context, req *RetrieveRequest) ([]*RetrieveResult, error) {
 	topK := r.topK
 	if req.TopK > 0 {
@@ -200,20 +209,51 @@ func (r *EinoRetrieverWrapper) Retrieve(ctx context.Context, req *RetrieveReques
 		candidates = append(candidates, result)
 	}
 
-	// 6. Score Rerank（利用 LLM 首因效应和近因效应）
-	if r.reranker != nil {
-		candidates, err = r.reranker.rerankWithScore(ctx, candidates)
+	// 6. 动态获取用户的 Reranker 配置
+	var modelReranker reranker.RerankerService
+	if r.rerankerProvider != nil {
+		modelReranker, err = r.rerankerProvider(ctx, req.UserID)
 		if err != nil {
-			logger.Warn("[EinoRetriever] Rerank 失败，降级使用原始结果", zap.Error(err))
+			logger.Warn("[EinoRetriever] 获取 Reranker 配置失败，将使用 Score Reranker 保底", zap.Error(err))
 		}
 	}
 
-	// 7. TopK 截断
+	// 7. Rerank 策略：
+	//    - 配置了 Reranker 模型：直接用 RRF + Reranker 模型精排（跳过 Score Reranker）
+	//    - 未配置 Reranker 模型：使用 Score Reranker 作为保底
+	if modelReranker != nil {
+		// 使用 Reranker 模型精排
+		reranked, rerankErr := r.modelRerankerRerank(ctx, req.Query, candidates, modelReranker)
+		if rerankErr != nil {
+			logger.Warn("[EinoRetriever] Reranker 模型精排失败，降级使用 Score Reranker", zap.Error(rerankErr))
+			// 降级到 Score Reranker
+			if r.fallbackReranker != nil {
+				candidates, _ = r.fallbackReranker.rerankWithScore(ctx, candidates)
+			}
+		} else {
+			candidates = reranked
+			logger.Info("[EinoRetriever] Reranker 模型精排完成",
+				zap.String("query", req.Query),
+				zap.String("reranker", modelReranker.Name()),
+				zap.Int("candidateCount", len(candidates)),
+			)
+		}
+	} else {
+		// 未配置 Reranker 模型，使用 Score Reranker 保底
+		if r.fallbackReranker != nil {
+			candidates, err = r.fallbackReranker.rerankWithScore(ctx, candidates)
+			if err != nil {
+				logger.Warn("[EinoRetriever] Score Rerank 失败，降级使用原始结果", zap.Error(err))
+			}
+		}
+	}
+
+	// 8. TopK 截断
 	if len(candidates) > topK {
 		candidates = candidates[:topK]
 	}
 
-	// 8. Parent Recovery：填充父块完整内容和来源名称
+	// 9. Parent Recovery：填充父块完整内容和来源名称
 	results, err := r.parentRecovery(ctx, candidates)
 	if err != nil {
 		logger.Warn("[EinoRetriever] Parent Recovery 失败，降级返回原始结果", zap.Error(err))
@@ -221,6 +261,41 @@ func (r *EinoRetrieverWrapper) Retrieve(ctx context.Context, req *RetrieveReques
 	}
 
 	return results, nil
+}
+
+// modelRerankerRerank 使用 Reranker 模型进行精排
+func (r *EinoRetrieverWrapper) modelRerankerRerank(ctx context.Context, query string, candidates []*RetrieveResult, modelReranker reranker.RerankerService) ([]*RetrieveResult, error) {
+	if len(candidates) == 0 {
+		return candidates, nil
+	}
+
+	// 构建文档列表
+	docs := make([]string, len(candidates))
+	for i, c := range candidates {
+		docs[i] = c.Content
+	}
+
+	// 调用 Reranker 模型
+	results, err := modelReranker.Rerank(query, docs, 0) // 0 表示返回全部
+	if err != nil {
+		return nil, fmt.Errorf("Reranker 模型调用失败: %w", err)
+	}
+
+	// 按新分数排序
+	reranked := make([]*RetrieveResult, len(results))
+	for i, result := range results {
+		if result.Index >= 0 && result.Index < len(candidates) {
+			reranked[i] = candidates[result.Index]
+			reranked[i].Score = float32(result.Score)
+		}
+	}
+
+	// 按分数降序排序
+	sort.Slice(reranked, func(i, j int) bool {
+		return reranked[i].Score > reranked[j].Score
+	})
+
+	return reranked, nil
 }
 
 // parentRecovery 为候选结果填充 ParentBlock 的完整内容、标题、章节路径以及资料来源名称

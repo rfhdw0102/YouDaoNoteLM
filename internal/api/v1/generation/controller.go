@@ -7,23 +7,24 @@ import (
 	"YoudaoNoteLm/pkg/logger"
 	"YoudaoNoteLm/pkg/response"
 	"mime"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
-// Controller handles generation HTTP requests.
 type Controller struct {
-	generationService service.GenerationService
+	generationService     service.GenerationService
+	generationTaskService service.GenerationTaskService
 }
 
-// NewController creates a generation controller.
-func NewController(generationService service.GenerationService) *Controller {
-	return &Controller{generationService: generationService}
+// NewController 创建生成模块控制器。
+func NewController(generationService service.GenerationService, generationTaskService service.GenerationTaskService) *Controller {
+	return &Controller{generationService: generationService, generationTaskService: generationTaskService}
 }
 
-// Generate runs the supervisor generation service.
+// Generate 提交内容生成任务。
 func (ctrl *Controller) Generate(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -37,7 +38,7 @@ func (ctrl *Controller) Generate(c *gin.Context) {
 		return
 	}
 
-	resp, err := ctrl.generationService.Generate(c.Request.Context(), &service.GenerationRequest{
+	task, err := ctrl.generationTaskService.Submit(c.Request.Context(), &service.GenerationRequest{
 		UserID:       userID,
 		NotebookID:   req.NotebookID,
 		Markdown:     req.Markdown,
@@ -53,10 +54,82 @@ func (ctrl *Controller) Generate(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, resp)
+	response.Success(c, task)
 }
 
-// Export converts generated content into a downloadable attachment.
+// GetTask 查询指定生成任务。
+func (ctrl *Controller) GetTask(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "user is not authenticated")
+		return
+	}
+
+	taskID := c.Param("taskId")
+	task, err := ctrl.generationTaskService.GetTask(c.Request.Context(), userID, taskID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, task)
+}
+
+// ListTasks 查询当前用户的生成任务列表。
+func (ctrl *Controller) ListTasks(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "user is not authenticated")
+		return
+	}
+
+	var notebookID uint
+	if raw := strings.TrimSpace(c.Query("notebook_id")); raw != "" {
+		value, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil {
+			response.BadRequest(c, "invalid notebook_id")
+			return
+		}
+		notebookID = uint(value)
+	}
+
+	limit := 100
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			response.BadRequest(c, "invalid limit")
+			return
+		}
+		limit = value
+	}
+
+	tasks, err := ctrl.generationTaskService.ListTasks(c.Request.Context(), userID, notebookID, limit)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, tasks)
+}
+
+// DeleteTask 删除生成任务：pending/running 状态先取消 worker，再删除持久化数据。
+func (ctrl *Controller) DeleteTask(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "user is not authenticated")
+		return
+	}
+
+	taskID := c.Param("taskId")
+	if err := ctrl.generationTaskService.DeleteTask(c.Request.Context(), userID, taskID); err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.SuccessWithMessage(c, "任务已删除", nil)
+}
+
+// Export 将生成内容导出为附件。
 func (ctrl *Controller) Export(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {

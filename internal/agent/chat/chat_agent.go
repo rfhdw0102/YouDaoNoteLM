@@ -2,20 +2,12 @@ package chat
 
 import (
 	"context"
-	"fmt"
-	"strings"
+	"sync"
 
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/components/tool"
-	"github.com/cloudwego/eino/compose"
 
-	"YoudaoNoteLm/internal/agent/chat/prompts"
 	chatTools "YoudaoNoteLm/internal/agent/chat/tools"
 	"YoudaoNoteLm/internal/model/dto/response"
-	"YoudaoNoteLm/internal/rag"
-	"YoudaoNoteLm/internal/repository"
-	"YoudaoNoteLm/pkg/cache"
 	"YoudaoNoteLm/pkg/logger"
 
 	"go.uber.org/zap"
@@ -33,11 +25,60 @@ const (
 	EventToken      = "token"       // LLM 生成的 token
 	EventToolCall   = "tool_call"   // 工具调用开始
 	EventToolResult = "tool_result" // 工具调用结果
-	EventReference  = "reference"   // 检索引用
+	EventReference  = "reference"   // 检索引用（兼容旧版，新流程用 EventDone.Data）
 	EventTitle      = "title"       // 对话标题更新
-	EventDone       = "done"        // 生成完成
+	EventDone       = "done"        // 生成完成（Data=references）
 	EventError      = "error"       // 错误
+	// 主从协同：子 agent 事件（EmitInternalEvents 转发）
+	EventSubAgentStart      = "sub_agent_start"       // 子 agent 开始（Data=agentName）
+	EventSubAgentEnd        = "sub_agent_end"         // 子 agent 结束（Data=agentName）
+	EventSubAgentToken      = "sub_agent_token"       // 子 agent 的 token
+	EventSubAgentToolCall   = "sub_agent_tool_call"   // 子 agent 的工具调用
+	EventSubAgentToolResult = "sub_agent_tool_result" // 子 agent 的工具结果
+	// 主从协同：搜索子 agent 专用事件
+	EventSearchStarted = "search_started" // 搜索开始
+	EventSearchResults = "search_results" // 搜索结果（Data={results, summary}）
+	// 主从协同：生成触发事件
+	EventGenerationStarted = "generation_started" // 生成开始（Data=type）
+	EventGenerationResult  = "generation_result"  // 生成结果（Data={type, content}）
 )
+
+// SearchAgentExecutor 搜索 Agent 流式执行接口。
+type SearchAgentExecutor interface {
+	ExecuteStream(ctx context.Context, userID, notebookID uint, task string) <-chan *SearchEvent
+}
+
+// SearchEvent 搜索 Agent 流式事件
+type SearchEvent struct {
+	Type         string `json:"type"`
+	Content      string `json:"content,omitempty"`
+	SearchRounds int    `json:"search_rounds,omitempty"`
+	Error        string `json:"error,omitempty"`
+	ErrorCode    int    `json:"error_code,omitempty"`
+}
+
+// SearchAgentResultItem 搜索子 agent 返回的搜索结果项
+type SearchAgentResultItem struct {
+	Title   string  `json:"title"`
+	URL     string  `json:"url"`
+	Snippet string  `json:"snippet"`
+	Score   float64 `json:"score"`
+	Reason  string  `json:"reason,omitempty"`
+}
+
+// SearchRefCallback 搜索结果转引用的回调函数类型。
+type SearchRefCallback func(results []SearchAgentResultItem)
+
+type ctxKeySearchRefCallback struct{}
+
+func withSearchRefCallback(ctx context.Context, cb SearchRefCallback) context.Context {
+	return context.WithValue(ctx, ctxKeySearchRefCallback{}, cb)
+}
+
+func getSearchRefCallback(ctx context.Context) SearchRefCallback {
+	cb, _ := ctx.Value(ctxKeySearchRefCallback{}).(SearchRefCallback)
+	return cb
+}
 
 // ChatAgent 自包含的对话 Agent
 type ChatAgent struct {
@@ -46,88 +87,34 @@ type ChatAgent struct {
 	contextBuilder  *ContextBuilder
 	streamProcessor *StreamProcessor
 
-	// 运行时状态
 	fullContent string
 	references  []response.Reference
 }
 
-// NewChatAgent 创建 Agent 实例
-// 内部自动构建工具集，外部只需传入 retriever、sourceIDs 和 sourceNames
-func NewChatAgent(
-	ctx context.Context,
-	llmModel model.ToolCallingChatModel,
-	conversationRepo repository.ConversationRepository,
-	messageRepo repository.MessageRepository,
-	chatCache *cache.ChatCache,
-	retriever rag.RAGRetriever,
-	sourceRepo repository.SourceRepository,
-	summaryCache *cache.SourceSummaryCache,
-	userID uint,
-	sourceIDs []uint,
-	sourceNames map[uint]string,
-) (*ChatAgent, error) {
-	if llmModel == nil {
-		return nil, fmt.Errorf("ChatModel 不能为空")
-	}
-
-	// 创建引用收集器和工具
-	collector := chatTools.NewReferenceCollector()
-	ragTool := chatTools.NewRAGRetrieverTool(retriever, userID, sourceIDs, collector)
-	summaryTool := chatTools.NewGetSourcesSummaryTool(sourceRepo, summaryCache, sourceIDs, sourceNames)
-
-	// 构建系统提示词（注入资料列表）
-	systemPrompt := buildSystemPrompt(sourceIDs, sourceNames)
-
-	// 创建 ChatModelAgent（ReAct 循环）
-	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-		Model:       llmModel,
-		Instruction: systemPrompt,
-		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: []tool.BaseTool{ragTool, summaryTool},
-			},
-		},
-		MaxIterations: 10,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("创建 ChatModelAgent 失败: %w", err)
-	}
-
-	return &ChatAgent{
-		agent:           agent,
-		refCollector:    collector,
-		contextBuilder:  NewContextBuilder(conversationRepo, messageRepo, chatCache),
-		streamProcessor: NewStreamProcessor(),
-	}, nil
-}
-
-// buildSystemPrompt 构建系统提示词，注入资料列表
-func buildSystemPrompt(sourceIDs []uint, sourceNames map[uint]string) string {
-	if len(sourceIDs) == 0 {
-		return strings.Replace(prompts.ChatAgentSystemPrompt, "{{.SourceList}}", "（用户未选定特定资料）", 1)
-	}
-
-	var sb strings.Builder
-	for i, id := range sourceIDs {
-		name := sourceNames[id]
-		if name == "" {
-			name = fmt.Sprintf("资料#%d", id)
-		}
-		sb.WriteString(fmt.Sprintf("%d. %s (ID: %d)\n", i+1, name, id))
-	}
-
-	return strings.Replace(prompts.ChatAgentSystemPrompt, "{{.SourceList}}", sb.String(), 1)
-}
-
 // Process 处理消息，返回事件通道
-// 内部自动完成：构建消息、执行 Agent、处理流式事件、发送引用和完成事件
 func (a *ChatAgent) Process(ctx context.Context, conversationID uint, content string) <-chan StreamEvent {
 	eventCh := make(chan StreamEvent, 64)
+
+	// 搜索子 agent 结果 → 引用的回调（sync.Once 防止重复收集）
+	var searchOnce sync.Once
+	searchRefCallback := func(results []SearchAgentResultItem) {
+		searchOnce.Do(func() {
+			refs := make([]response.Reference, 0, len(results))
+			for _, r := range results {
+				refs = append(refs, response.Reference{
+					SourceName:    r.URL,
+					ChunkContent: r.Snippet,
+					Score:        float32(r.Score),
+				})
+			}
+			a.refCollector.Add(refs)
+		})
+	}
+	ctx = withSearchRefCallback(ctx, searchRefCallback)
 
 	go func() {
 		defer close(eventCh)
 
-		// 1. 构建消息（包含历史和摘要）
 		messages, err := a.contextBuilder.BuildMessages(ctx, conversationID, content)
 		if err != nil {
 			logger.Error("[ChatAgent] 构建消息失败", zap.Error(err))
@@ -135,27 +122,16 @@ func (a *ChatAgent) Process(ctx context.Context, conversationID uint, content st
 			return
 		}
 
-		// 2. 执行 Agent
 		iter := a.agent.Run(ctx, &adk.AgentInput{
 			Messages:        messages,
 			EnableStreaming: true,
 		})
 
-		// 3. 处理流式事件
 		a.fullContent = a.streamProcessor.ProcessEvents(ctx, eventCh, iter)
 
-		// 4. 收集引用
+		// 引用附加到 EventDone，原子发送，消除竞态
 		a.references = a.refCollector.All()
-		if len(a.references) > 0 {
-			eventCh <- StreamEvent{
-				Type:    EventReference,
-				Content: "",
-				Data:    a.references,
-			}
-		}
-
-		// 5. 发送完成事件
-		eventCh <- StreamEvent{Type: EventDone}
+		eventCh <- StreamEvent{Type: EventDone, Data: a.references}
 		logger.Info("[ChatAgent] 处理完成", zap.Int("contentLen", len(a.fullContent)))
 	}()
 

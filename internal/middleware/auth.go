@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"YoudaoNoteLm/internal/repository"
 	"YoudaoNoteLm/internal/service"
 	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/jwt"
@@ -19,6 +20,8 @@ const (
 	ContextUserID = "user_id"
 	// ContextUsername 用户名 上下文键
 	ContextUsername = "username"
+	// ContextRole 用户角色上下文键
+	ContextRole = "role"
 )
 
 // Auth JWT 认证中间件（仅接受 Access Token，检查黑名单）
@@ -97,6 +100,61 @@ func GetUsername(c *gin.Context) string {
 	return ""
 }
 
+// GetUserRole 从上下文获取用户角色
+func GetUserRole(c *gin.Context) string {
+	if role, exists := c.Get(ContextRole); exists {
+		if r, ok := role.(string); ok {
+			return r
+		}
+	}
+	return ""
+}
+
+// StatusCheck 用户状态检查中间件：在 Auth 之后执行，根据 userID 查库校验用户状态。
+// 被禁用用户（Status != 1）立即拦截，返回 1004，使前端强制退出。
+func StatusCheck(userRepo repository.UserRepository) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := GetUserID(c)
+		if userID == 0 {
+			// 未设置 userID（公开接口或 OptionalAuth 未识别身份），跳过
+			c.Next()
+			return
+		}
+
+		user, err := userRepo.FindByID(userID)
+		if err != nil {
+			response.InternalError(c, "验证用户状态失败")
+			c.Abort()
+			return
+		}
+		if user == nil {
+			response.Error(c, bizerrors.CodeInvalidToken, "用户不存在")
+			c.Abort()
+			return
+		}
+		if user.Status != 1 {
+			response.Error(c, bizerrors.CodeUserDisabled, "用户已被禁用")
+			c.Abort()
+			return
+		}
+
+		c.Set(ContextRole, user.Role)
+		c.Next()
+	}
+}
+
+// RequireAdmin 管理员角色校验中间件：必须在 Auth + StatusCheck 之后使用。
+func RequireAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if GetUserRole(c) != "admin" {
+			response.Forbidden(c, "无权限访问")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 // contextKey 上下文键类型
 type contextKey string
 
@@ -118,8 +176,8 @@ func GetUserIDFromCtx(ctx context.Context) uint {
 	return 0
 }
 
-// OptionalAuth 可选的 JWT 认证中间件（仅接受 Access Token，检查黑名单）
-func OptionalAuth(blacklist service.TokenBlacklistService) gin.HandlerFunc {
+// OptionalAuth 可选的 JWT 认证中间件（仅接受 Access Token，检查黑名单与用户状态）
+func OptionalAuth(blacklist service.TokenBlacklistService, userRepo repository.UserRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -143,8 +201,15 @@ func OptionalAuth(blacklist service.TokenBlacklistService) gin.HandlerFunc {
 				revoked = true
 			}
 			if !revoked {
-				c.Set(ContextUserID, claims.GetUserID())
-				c.Set(ContextUsername, claims.GetUsername())
+				// 查库校验用户状态：被禁用或不存在则不设置上下文（视为未登录）
+				user, err := userRepo.FindByID(claims.GetUserID())
+				if err == nil && user != nil && user.Status == 1 {
+					c.Set(ContextUserID, claims.GetUserID())
+					c.Set(ContextUsername, claims.GetUsername())
+					c.Set(ContextRole, user.Role)
+				} else if err != nil {
+					logger.Error("OptionalAuth 查询用户失败", zap.Error(err))
+				}
 			}
 		}
 

@@ -55,6 +55,21 @@ func NewMinIOStorage(endpoint, accessKey, secretKey, bucket, publicEndpoint stri
 		}
 	}
 
+	// 初始化时确保 bucket 存在，不存在则自动创建
+	ctx := context.Background()
+	exists, err := client.BucketExists(ctx, bucket)
+	if err != nil {
+		return nil, fmt.Errorf("检查 MinIO bucket 失败: %w", err)
+	}
+	if !exists {
+		if err := client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
+			return nil, fmt.Errorf("创建 MinIO bucket %q 失败: %w", bucket, err)
+		}
+		logger.Info("MinIO bucket 已自动创建", zap.String("bucket", bucket))
+	} else {
+		logger.Info("MinIO bucket 已存在", zap.String("bucket", bucket))
+	}
+
 	return &MinioStorage{client: client, presignClient: presignClient, bucket: bucket, publicEndpoint: publicEndpoint, accessKey: accessKey, secretKey: secretKey}, nil
 }
 

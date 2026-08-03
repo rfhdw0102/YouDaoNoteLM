@@ -33,9 +33,8 @@ func NewSearchAgentService(
 }
 
 // Search 智能搜索
-func (s *searchAgentService) Search(userID, notebookID uint, query string) (*response.SearchResponse, error) {
+func (s *searchAgentService) Search(ctx context.Context, userID, notebookID uint, query string) (*response.SearchResponse, error) {
 	// 执行 Agent
-	ctx := context.Background()
 	result, err := s.searchAgent.Execute(ctx, userID, notebookID, query)
 	if err != nil {
 		return nil, err
@@ -46,8 +45,7 @@ func (s *searchAgentService) Search(userID, notebookID uint, query string) (*res
 }
 
 // SearchStream 智能搜索（流式）：返回事件 channel，用于 SSE 推送
-func (s *searchAgentService) SearchStream(userID, notebookID uint, query string) <-chan *SearchAgentEvent {
-	ctx := context.Background()
+func (s *searchAgentService) SearchStream(ctx context.Context, userID, notebookID uint, query string) <-chan *SearchAgentEvent {
 	return s.searchAgent.ExecuteStream(ctx, userID, notebookID, query)
 }
 
@@ -76,19 +74,6 @@ func (s *searchAgentService) ImportFromURL(userID, notebookID uint, url string) 
 // ImportSearchResults 批量导入
 func (s *searchAgentService) ImportSearchResults(userID, notebookID uint, items []SearchResultItem) (string, []uint, error) {
 	return s.importer.ImportSearchResults(userID, notebookID, items)
-}
-
-// SearchAndImport 搜索并自动导入（主Agent调用模式）
-func (s *searchAgentService) SearchAndImport(userID, notebookID uint, query string) (*response.SearchResponse, error) {
-	// 执行 Agent（自动导入模式）
-	ctx := context.Background()
-	result, err := s.searchAgent.ExecuteWithImport(ctx, userID, notebookID, query)
-	if err != nil {
-		return nil, err
-	}
-
-	// 解析 Agent 结果为 SearchResponse
-	return parseAgentResult(result.Content, result.SearchRounds)
 }
 
 // parseAgentResult 解析 Agent 返回的内容为 SearchResponse

@@ -191,6 +191,39 @@ export async function deleteEmbeddingAndCollection(
   return res.data;
 }
 
+// ===== Reranker Config =====
+
+export async function listRerankerConfigs(): Promise<{
+  code: number;
+  data: UserConfig[];
+  message?: string;
+}> {
+  const res = await client.get('/user/config/reranker');
+  return res.data;
+}
+
+export async function createRerankerConfig(
+  data: UserConfigRequest
+): Promise<{ code: number; data: UserConfig; message?: string }> {
+  const res = await client.post('/user/config/reranker', data);
+  return res.data;
+}
+
+export async function updateRerankerConfig(
+  id: number,
+  data: UserConfigRequest
+): Promise<{ code: number; data: UserConfig; message?: string }> {
+  const res = await client.put(`/user/config/reranker/${id}`, data);
+  return res.data;
+}
+
+export async function deleteRerankerConfig(
+  id: number
+): Promise<{ code: number; message?: string }> {
+  const res = await client.delete(`/user/config/reranker/${id}`);
+  return res.data;
+}
+
 // ===== Health Check =====
 
 export async function testConfig(

@@ -33,10 +33,3 @@ type Reference struct {
 	ChunkContent  string  `json:"chunk_content"`
 	Score         float32 `json:"score"`
 }
-
-// StreamEvent 流式事件
-type StreamEvent struct {
-	Type    string      `json:"type"`    // token, reference, done, error
-	Content string      `json:"content"` // 事件内容
-	Data    interface{} `json:"data"`    // 附加数据
-}

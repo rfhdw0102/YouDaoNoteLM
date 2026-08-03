@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Settings, Cpu, Search, Mic, Database, Plus, Trash2,
+  Settings, Cpu, Search, Mic, Database, Plus, Trash2, Brain,
   Check, AlertCircle, ArrowLeft, Save, X, BookOpen,
-  Loader2, Plug
+  Loader2, Plug, Filter
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { cn } from '../utils/cn';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -17,8 +17,9 @@ import type { UserConfig, UserLLMConfig, UserConfigRequest } from '../api/userCo
 import type { ProviderInfo } from '../api/providers';
 import type { YoudaoBindStatus } from '../api/youdao';
 import { getErrorMessage } from '../utils/error';
+import LongTermMemorySettings from '../components/settings/LongTermMemorySettings';
 
-type ConfigTab = 'llm' | 'search' | 'asr' | 'embedding' | 'youdao';
+type ConfigTab = 'llm' | 'search' | 'asr' | 'embedding' | 'reranker' | 'youdao' | 'memory';
 
 // 默认 API 地址映射
 const DEFAULT_API_URLS: Record<string, string> = {
@@ -32,6 +33,10 @@ const DEFAULT_API_URLS: Record<string, string> = {
   baichuan: 'https://api.baichuan-ai.com/v1',
   moonshot: 'https://api.moonshot.cn/v1',
   minimax: 'https://api.minimax.chat/v1',
+  // Reranker providers
+  cohere: 'https://api.cohere.com',
+  jina: 'https://api.jina.ai',
+  siliconflow: 'https://api.siliconflow.cn',
 };
 
 // Provider 文档链接映射（用户配置时引导其获取对应密钥/参数）
@@ -51,11 +56,32 @@ const PROVIDER_DOCS: Record<string, { label: string; url: string; description: s
     url: 'https://bocha-ai.feishu.cn/wiki/HmtOw1z6vik14Fkdu5uc9VaInBb',
     description: '如何获取博查搜索 API Key',
   },
+  cohere: {
+    label: 'Cohere Rerank 文档',
+    url: 'https://docs.cohere.com/docs/reranking',
+    description: '如何获取 Cohere API Key',
+  },
+  jina: {
+    label: 'Jina Reranker 文档',
+    url: 'https://jina.ai/reranker/',
+    description: '如何获取 Jina API Key',
+  },
+  siliconflow: {
+    label: 'SiliconFlow 文档',
+    url: 'https://docs.siliconflow.cn/',
+    description: '如何获取 SiliconFlow API Key',
+  },
 };
 
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<ConfigTab>('llm');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<ConfigTab>(() => {
+    const tab = searchParams.get('tab');
+    return tab === 'llm' || tab === 'search' || tab === 'asr' || tab === 'embedding' || tab === 'reranker' || tab === 'youdao' || tab === 'memory'
+      ? (tab as ConfigTab)
+      : 'llm';
+  });
   const [configs, setConfigs] = useState<UserConfig[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -92,6 +118,54 @@ export default function SettingsPage() {
     dimensions: 2048,
   });
 
+  // 格式化测试结果消息，对用户不友好的后端错误进行转换
+  const formatTestResultMessage = (result: { healthy: boolean; message: string; detail?: string }): { message: string; showDetail: boolean } => {
+    if (result.healthy) {
+      return { message: result.message, showDetail: false };
+    }
+
+    // 向量维度不匹配
+    if (result.message.includes('向量维度不匹配')) {
+      const match = result.detail?.match(/请将向量维度修改为 (\d+)/);
+      if (match) {
+        return { message: `向量维度错误，该向量模型支持 ${match[1]} 维度，请更改后重试`, showDetail: false };
+      }
+    }
+
+    // 向量维度配置错误（API 返回的维度不支持）
+    if (result.message.includes('向量维度错误')) {
+      return { message: result.message, showDetail: false };
+    }
+
+    // API Key 相关错误
+    if (result.message.includes('API Key') || result.detail?.includes('401') || result.detail?.includes('403')) {
+      return { message: 'API Key 无效或无权限，请检查后重试', showDetail: false };
+    }
+
+    // 模型不存在
+    if (result.message.includes('模型') && result.message.includes('不存在')) {
+      return { message: result.message, showDetail: false };
+    }
+
+    // 连接超时
+    if (result.message.includes('超时') || result.detail?.includes('timeout')) {
+      return { message: '连接超时，请检查 API 地址是否正确', showDetail: false };
+    }
+
+    // 连接失败
+    if (result.message.includes('连接失败') || result.detail?.includes('connection')) {
+      return { message: '连接失败，请检查 API 地址是否正确', showDetail: false };
+    }
+
+    // 限流
+    if (result.message.includes('限流') || result.detail?.includes('429')) {
+      return { message: '当前请求被限流，请稍后重试', showDetail: false };
+    }
+
+    // 其他错误，返回通用提示
+    return { message: '连接测试失败，请检查配置是否正确', showDetail: false };
+  };
+
   // 获取当前选中 provider 的配置要求
   const getSelectedProviderInfo = (): ProviderInfo | undefined => {
     return providers.find(p => p.provider === formData.provider);
@@ -100,6 +174,11 @@ export default function SettingsPage() {
   // 获取当前选中 provider 的文档链接
   const getProviderDoc = (): { label: string; url: string; description: string } | undefined => {
     return PROVIDER_DOCS[formData.provider];
+  };
+
+  // 判断当前 provider 是否为 ARK 类型（火山引擎/豆包）
+  const isARKProvider = (): boolean => {
+    return formData.provider === 'volcengine' || formData.provider === 'doubao';
   };
 
   // 获取字段的中文标签
@@ -161,6 +240,9 @@ export default function SettingsPage() {
     setEditingId(null);
     resetForm();
 
+    if (activeTab === 'memory') {
+      return;
+    }
     if (activeTab === 'youdao') {
       fetchYoudaoBindStatus();
     } else {
@@ -171,7 +253,7 @@ export default function SettingsPage() {
 
   // Fetch providers when active tab changes
   useEffect(() => {
-    if (activeTab !== 'youdao') {
+    if (activeTab !== 'youdao' && activeTab !== 'memory') {
       fetchProviders();
     }
   }, [activeTab]);
@@ -289,6 +371,9 @@ export default function SettingsPage() {
         case 'embedding':
           res = await userConfigApi.listEmbeddingConfigs();
           break;
+        case 'reranker':
+          res = await userConfigApi.listRerankerConfigs();
+          break;
       }
       if (res && res.code === 0) {
         if (activeTab === 'llm') {
@@ -359,6 +444,9 @@ export default function SettingsPage() {
           break;
         case 'embedding':
           res = await userConfigApi.createEmbeddingConfig(formData);
+          break;
+        case 'reranker':
+          res = await userConfigApi.createRerankerConfig(formData);
           break;
       }
       if (res && res.code === 0) {
@@ -437,6 +525,9 @@ export default function SettingsPage() {
         case 'embedding':
           res = await userConfigApi.updateEmbeddingConfig(id, formData);
           break;
+        case 'reranker':
+          res = await userConfigApi.updateRerankerConfig(id, formData);
+          break;
       }
       if (res && res.code === 0) {
         setEditingId(null);
@@ -481,6 +572,9 @@ export default function SettingsPage() {
           break;
         case 'asr':
           res = await userConfigApi.deleteASRConfig(id);
+          break;
+        case 'reranker':
+          res = await userConfigApi.deleteRerankerConfig(id);
           break;
       }
       if (res && res.code === 0) {
@@ -590,18 +684,18 @@ export default function SettingsPage() {
   const tabs = [
     { key: 'search', label: '搜索引擎', icon: Search },
     { key: 'asr', label: '语音识别', icon: Mic },
+    { key: 'reranker', label: '精排模型', icon: Filter },
+    { key: 'memory', label: '长期记忆', icon: Brain },
     { key: 'youdao', label: '有道云笔记', icon: BookOpen },
   ];
 
   // 从 API 获取的动态 provider 列表（只返回已实现的）
+  // 前端限定只展示博查搜索
   const getProviderOptions = (): { value: string; label: string }[] => {
-    if (providers.length > 0) {
-      return providers.map(p => ({
-        value: p.provider,
-        label: p.display_name,
-      }));
-    }
-    return [];
+    return providers.map(p => ({
+      value: p.provider,
+      label: p.display_name,
+    }));
   };
 
   const providerOptions = getProviderOptions() ?? [];
@@ -642,7 +736,7 @@ export default function SettingsPage() {
         )}
 
         {/* LLM not configured warning */}
-        {activeTab !== 'llm' && !loading && llmConfigs.length === 0 && (
+        {activeTab !== 'llm' && activeTab !== 'memory' && !loading && llmConfigs.length === 0 && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -715,7 +809,7 @@ export default function SettingsPage() {
         </div>
 
         {/* 当前生效的服务 - 仅搜索和语音识别有系统默认配置 */}
-        {activeProvider && (activeTab === 'search' || activeTab === 'asr') && (
+        {activeProvider && (activeTab === 'search' || activeTab === 'asr' || activeTab === 'reranker') && (
           <div className="mb-4 p-4 rounded-xl bg-accent/5 border border-accent/20">
             <div className="flex items-center gap-2">
               <span className="text-xs text-text-muted">当前使用:</span>
@@ -738,8 +832,19 @@ export default function SettingsPage() {
           </div>
         )}
 
+        {/* Reranker 配置提示 */}
+        {activeTab === 'reranker' && (
+          <div className="mb-4 p-3 rounded-xl bg-accent/5 border border-accent/20">
+            <p className="text-xs text-text-secondary">
+              💡 精排模型（Reranker）是可选组件，用于对检索结果进行二次精排，提高相关性。配置后将在知识库问答时自动启用。
+            </p>
+          </div>
+        )}
+
         {/* Config List */}
-        {activeTab === 'youdao' ? (
+        {activeTab === 'memory' ? (
+          <LongTermMemorySettings />
+        ) : activeTab === 'youdao' ? (
           /* 有道云配置 */
           <div className="space-y-4">
             {youdaoLoading ? (
@@ -946,6 +1051,29 @@ export default function SettingsPage() {
                             }
                           };
 
+                          // ARK 类型服务商的向量维度使用下拉选择
+                          if (field === 'dimensions' && activeTab === 'embedding' && isARKProvider()) {
+                            return (
+                              <div key={field}>
+                                <label className="block text-sm font-medium text-text-primary mb-1.5">
+                                  {required ? `${label} *` : `${label} (可选)`}
+                                </label>
+                                <select
+                                  value={getValue() || 2048}
+                                  disabled={activeTab === 'embedding'}
+                                  onChange={(e) => setValue(e.target.value)}
+                                  className={cn(
+                                    "w-full h-10 px-3 rounded-lg bg-bg-tertiary border border-border-light text-sm focus:outline-none focus:border-accent",
+                                    activeTab === 'embedding' && "opacity-60 cursor-not-allowed"
+                                  )}
+                                >
+                                  <option value={2048}>2048</option>
+                                  <option value={1024}>1024</option>
+                                </select>
+                              </div>
+                            );
+                          }
+
                           return (
                             <Input
                               key={field}
@@ -967,25 +1095,22 @@ export default function SettingsPage() {
                     )}
 
                     {/* 测试结果展示 - 编辑模式 */}
-                    {testResult && (
-                      <div className={cn(
-                        'p-3 rounded-lg flex items-start gap-2 text-sm',
-                        testResult.healthy
-                          ? 'bg-success/5 border border-success/20 text-success'
-                          : 'bg-error/5 border border-error/20 text-error'
-                      )}>
-                        {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
-                        <div>
-                          <p className="font-medium">{testResult.message}</p>
-                          {testResult.latency_ms > 0 && (
-                            <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
-                          )}
-                          {testResult.detail && (
-                            <p className="text-xs opacity-70 mt-0.5 break-all">{testResult.detail}</p>
-                          )}
+                    {testResult && (() => {
+                      const formatted = formatTestResultMessage(testResult);
+                      return (
+                        <div className={cn(
+                          'p-3 rounded-lg flex items-start gap-2 text-sm',
+                          testResult.healthy
+                            ? 'bg-success/5 border border-success/20 text-success'
+                            : 'bg-error/5 border border-error/20 text-error'
+                        )}>
+                          {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
+                          <div>
+                            <p className="font-medium">{formatted.message}</p>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     <div className="flex justify-end gap-2">
                       <Button
@@ -1159,6 +1284,25 @@ export default function SettingsPage() {
                         }
                       };
 
+                      // ARK 类型服务商的向量维度使用下拉选择
+                      if (field === 'dimensions' && activeTab === 'embedding' && isARKProvider()) {
+                        return (
+                          <div key={field}>
+                            <label className="block text-sm font-medium text-text-primary mb-1.5">
+                              {required ? `${label} *` : `${label} (可选)`}
+                            </label>
+                            <select
+                              value={getValue() || 2048}
+                              onChange={(e) => setValue(e.target.value)}
+                              className="w-full h-10 px-3 rounded-lg bg-bg-tertiary border border-border-light text-sm focus:outline-none focus:border-accent"
+                            >
+                              <option value={2048}>2048</option>
+                              <option value={1024}>1024</option>
+                            </select>
+                          </div>
+                        );
+                      }
+
                       return (
                         <Input
                           key={field}
@@ -1180,25 +1324,22 @@ export default function SettingsPage() {
                 ) : null}
               </div>
               {/* 测试结果展示 */}
-              {testResult && (
-                <div className={cn(
-                  'p-3 rounded-lg flex items-start gap-2 text-sm',
-                  testResult.healthy
-                    ? 'bg-success/5 border border-success/20 text-success'
-                    : 'bg-error/5 border border-error/20 text-error'
-                )}>
-                  {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
-                  <div>
-                    <p className="font-medium">{testResult.message}</p>
-                    {testResult.latency_ms > 0 && (
-                      <p className="text-xs opacity-70 mt-0.5">耗时 {testResult.latency_ms}ms</p>
-                    )}
-                    {testResult.detail && (
-                      <p className="text-xs opacity-70 mt-0.5 break-all">{testResult.detail}</p>
-                    )}
+              {testResult && (() => {
+                const formatted = formatTestResultMessage(testResult);
+                return (
+                  <div className={cn(
+                    'p-3 rounded-lg flex items-start gap-2 text-sm',
+                    testResult.healthy
+                      ? 'bg-success/5 border border-success/20 text-success'
+                      : 'bg-error/5 border border-error/20 text-error'
+                  )}>
+                    {testResult.healthy ? <Check size={16} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />}
+                    <div>
+                      <p className="font-medium">{formatted.message}</p>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               <div className="flex justify-end gap-2 mt-4">
                 <Button variant="ghost" size="sm" onClick={() => { setShowAddForm(false); resetForm(); }}>

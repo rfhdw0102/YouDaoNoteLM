@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { useAuthStore } from '../stores/useAuthStore';
@@ -11,11 +11,13 @@ import SliderCaptcha from '../components/ui/SliderCaptcha';
 export default function LoginPage() {
   const navigate = useNavigate();
   const { login } = useAuthStore();
+  const [searchParams] = useSearchParams();
+  const disabled = searchParams.get('reason') === 'disabled';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(disabled ? '您的账号已被禁用，如有疑问请联系管理员' : '');
   const [showCaptcha, setShowCaptcha] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {

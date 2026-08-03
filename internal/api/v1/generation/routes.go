@@ -7,12 +7,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterRoutes registers generation routes.
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService) {
+// RegisterRoutes 注册生成模块路由。
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService, statusCheck gin.HandlerFunc) {
 	group := r.Group("/generations")
-	group.Use(middleware.Auth(tokenBlacklist))
+	group.Use(middleware.Auth(tokenBlacklist), statusCheck)
 	{
 		group.POST("", ctrl.Generate)
+		group.GET("/tasks", ctrl.ListTasks)
+		group.GET("/tasks/:taskId", ctrl.GetTask)
+		group.DELETE("/tasks/:taskId", ctrl.DeleteTask)
 		group.POST("/export", ctrl.Export)
 	}
 }

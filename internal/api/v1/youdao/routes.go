@@ -8,9 +8,9 @@ import (
 )
 
 // RegisterRoutes 注册有道云笔记路由
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService) {
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, tokenBlacklist service.TokenBlacklistService, statusCheck gin.HandlerFunc) {
 	youdao := r.Group("/youdao")
-	youdao.Use(middleware.Auth(tokenBlacklist))
+	youdao.Use(middleware.Auth(tokenBlacklist), statusCheck)
 	{
 		// 绑定管理
 		youdao.POST("/bind", ctrl.Bind)

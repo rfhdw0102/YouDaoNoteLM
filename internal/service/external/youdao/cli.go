@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +16,19 @@ import (
 
 	"go.uber.org/zap"
 )
+
+// ErrAuthFailed 表示 youdaonote CLI 返回了认证失败（如 HTTP 401 / API Key 无效）。
+// 调用方可用 errors.Is(err, ErrAuthFailed) 识别并向上返回用户友好提示，
+// 而不是把原始 CLI 输出（如 "SSE error: Non-200 status code (401)"）直接暴露给用户。
+var ErrAuthFailed = errors.New("youdao authentication failed")
+
+// isAuthFailureOutput 判断 CLI combined output 是否表示认证失败。
+func isAuthFailureOutput(output string) bool {
+	return strings.Contains(output, "status code (401)") ||
+		strings.Contains(output, "401 Unauthorized") ||
+		strings.Contains(output, "Unauthorized") ||
+		strings.Contains(output, "认证失败")
+}
 
 // NoteItem 有道云笔记列表项
 type NoteItem struct {
@@ -135,14 +149,28 @@ func (c *youdaoCLI) runWithKey(apiKey string, args []string) ([]byte, error) {
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("CLI 调用超时（60s）")
 		}
-		// 输出中包含错误信息，一起返回
 		outputStr := string(output)
+		// 认证失败（401/无效 Key）单独识别，便于上层返回用户友好提示
+		if isAuthFailureOutput(outputStr) {
+			logger.Warn("youdaonote CLI 认证失败",
+				zap.String("output_head", truncateCLIOutput(outputStr, 200)),
+			)
+			return nil, fmt.Errorf("%w: %s", ErrAuthFailed, strings.TrimSpace(outputStr))
+		}
 		if outputStr != "" {
 			return nil, fmt.Errorf("CLI 执行失败: %s", strings.TrimSpace(outputStr))
 		}
 		return nil, fmt.Errorf("CLI 调用失败: %w", err)
 	}
 	return output, nil
+}
+
+// truncateCLIOutput 截断 CLI 输出用于日志，避免过长。
+func truncateCLIOutput(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // CheckAvailable 检查 CLI 是否可用

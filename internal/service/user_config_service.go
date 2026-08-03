@@ -422,6 +422,110 @@ func (s *userConfigService) DeleteEmbeddingConfig(id uint) error {
 	return nil
 }
 
+// ===== Reranker Config =====
+
+func (s *userConfigService) ListRerankerConfigs(userID uint) ([]*entity.UserConfig, error) {
+	config, err := s.configRepo.FindByUserAndType(userID, "reranker")
+	if err != nil {
+		return nil, err
+	}
+	if config == nil {
+		return []*entity.UserConfig{}, nil
+	}
+	// 解密 API Key
+	if config.APIKey != "" {
+		decrypted, err := utils.Decrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Debug("解密 Reranker API Key 失败（可能未加密）", zap.Uint("config_id", config.ID), zap.Error(err))
+		} else {
+			config.APIKey = decrypted
+		}
+	}
+	return []*entity.UserConfig{config}, nil
+}
+
+func (s *userConfigService) CreateRerankerConfig(userID uint, config *entity.UserConfig) error {
+	config.UserID = userID
+	config.ConfigType = "reranker"
+	if config.ExtraConfig == "" {
+		config.ExtraConfig = "{}"
+	}
+
+	// 加密 API Key
+	if config.APIKey != "" {
+		encrypted, err := utils.Encrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("加密 Reranker API Key 失败", zap.Error(err))
+			return err
+		}
+		config.APIKey = encrypted
+	}
+
+	// 检查是否已经存在相同类型的配置（包括已删除的记录）
+	existing, err := s.configRepo.FindByUserAndTypeIncludingDeleted(userID, "reranker")
+	if err != nil {
+		return err
+	}
+
+	if existing != nil {
+		// 如果存在已删除的记录，则更新它并恢复为未删除状态
+		config.ID = existing.ID
+		config.CreatedAt = existing.CreatedAt
+		config.UpdatedAt = existing.UpdatedAt
+		config.DeletedAt = gorm.DeletedAt{} // 恢复为未删除状态
+		return s.configRepo.Update(config)
+	}
+
+	return s.configRepo.Create(config)
+}
+
+func (s *userConfigService) UpdateRerankerConfig(id uint, config *entity.UserConfig) error {
+	existing, err := s.configRepo.FindByID(id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return bizerrors.ErrNotFound
+	}
+	config.ID = id
+	config.UserID = existing.UserID
+	config.ConfigType = "reranker"
+	config.CreatedAt = existing.CreatedAt
+	config.UpdatedAt = existing.UpdatedAt
+	if config.ExtraConfig == "" {
+		config.ExtraConfig = "{}"
+	}
+	// 加密 API Key
+	if config.APIKey != "" {
+		encrypted, err := utils.Encrypt(config.APIKey, s.encryptionKey)
+		if err != nil {
+			logger.Error("加密 Reranker API Key 失败", zap.Error(err))
+			return err
+		}
+		config.APIKey = encrypted
+	}
+	if err := s.configRepo.Update(config); err != nil {
+		return err
+	}
+	s.configSvc.ClearUserConfigCache(existing.UserID, "reranker")
+	return nil
+}
+
+func (s *userConfigService) DeleteRerankerConfig(id uint) error {
+	existing, err := s.configRepo.FindByID(id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return bizerrors.ErrNotFound
+	}
+	if err := s.configRepo.Delete(id); err != nil {
+		return err
+	}
+	s.configSvc.ClearUserConfigCache(existing.UserID, "reranker")
+	return nil
+}
+
 // GetActiveConfig 获取当前生效的配置（用户配置 > 系统配置）
 func (s *userConfigService) GetActiveConfig(userID uint, configType string) (*entity.UserConfig, error) {
 	// LLM 配置存储在独立的 user_llm_config 表，需要特殊处理

@@ -1,24 +1,133 @@
 import { create } from 'zustand';
+import { isAxiosError } from 'axios';
 import type { Notebook, Source, Conversation, Note, NoteType, ChatMessage, Reference } from '../types';
 import * as notebookApi from '../api/notebook';
 import * as sourceApi from '../api/source';
 import * as importApi from '../api/import';
 import * as searchApi from '../api/search';
+import type { SearchResultItem } from '../api/search';
 import * as chatApi from '../api/chat';
 import * as generationApi from '../api/generation';
 import { getErrorMessage, getChatErrorMessage } from '../utils/error';
+import { materializeCompletedGenerationTask, taskIdFromGeneratedNoteId } from './generationTaskHelpers';
 
 // Store the abort controller for the current streaming request
 let currentStreamAbortController: AbortController | null = null;
+// 生成任务轮询：后端已移除 WebSocket 推送，改用 REST 轮询 GET /generations/tasks。
+// 仅在存在 pending/running 任务时持续轮询；任务全部终态后自动停止，避免空闲请求。
+let generationTaskPollNotebookId: string | null = null;
+let generationTaskPollTimer: ReturnType<typeof setTimeout> | null = null;
+const pendingGeneratedTaskIds = new Set<string>();
+const createdGeneratedNoteTaskIds = new Set<string>();
+const pendingTaskNotebookMap = new Map<string, string>();
+
+// generationTaskPollInterval 生成任务轮询间隔。
+// 后端 worker 串行执行，任务时状态变化频率较低，2 秒轮询在实时性与请求量之间取折中。
+const generationTaskPollInterval = 2000;
+
+interface GenerationTaskItem {
+  taskId: string;
+  notebookId: string;
+  type: NoteType;
+  status: generationApi.GenerationTaskStatus;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+  sequence?: number;
+}
+
+const isGenerationTaskActive = (status: generationApi.GenerationTaskStatus) =>
+  status === 'pending' || status === 'running';
+
+const getGenerationSummary = (tasks: GenerationTaskItem[]) => {
+  const activeTask = tasks.find((task) => isGenerationTaskActive(task.status)) ?? null;
+  return {
+    generatingType: activeTask?.type ?? null,
+    generationTaskId: activeTask?.taskId ?? null,
+    generationTaskStatus: activeTask?.status ?? null,
+  };
+};
+
+const toGenerationTaskItem = (task: generationApi.GenerationTask): GenerationTaskItem => ({
+  taskId: task.task_id,
+  notebookId: String(task.notebook_id || ''),
+  type: task.type as NoteType,
+  status: task.status,
+  error: task.error,
+  createdAt: task.created_at,
+  updatedAt: task.updated_at,
+  sequence: task.sequence,
+});
+
+const sortGenerationTasks = (tasks: GenerationTaskItem[]) =>
+  [...tasks].sort((a, b) => {
+    if ((a.sequence ?? 0) !== (b.sequence ?? 0)) return (a.sequence ?? 0) - (b.sequence ?? 0);
+    if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+    return a.taskId.localeCompare(b.taskId);
+  });
+
+const generationTaskStatusRank: Record<generationApi.GenerationTaskStatus, number> = {
+  pending: 1,
+  running: 2,
+  completed: 3,
+  failed: 3,
+  cancelled: 3,
+};
+
+const mergeGenerationTaskItem = (existing: GenerationTaskItem | undefined, incoming: GenerationTaskItem) => {
+  if (!existing) return incoming;
+  if (incoming.updatedAt < existing.updatedAt) return existing;
+  if (
+    incoming.updatedAt === existing.updatedAt &&
+    generationTaskStatusRank[incoming.status] < generationTaskStatusRank[existing.status]
+  ) {
+    return existing;
+  }
+  return incoming;
+};
+
+const mergeGenerationTaskSnapshot = (currentTasks: GenerationTaskItem[], snapshotTasks: generationApi.GenerationTask[]) => {
+  const currentByID = new Map(currentTasks.map((task) => [task.taskId, task]));
+  return sortGenerationTasks(snapshotTasks.map((task) => {
+    const incoming = toGenerationTaskItem(task);
+    return mergeGenerationTaskItem(currentByID.get(incoming.taskId), incoming);
+  })).slice(0, 100);
+};
+
+function stopGenerationTaskPolling() {
+  if (generationTaskPollTimer) {
+    clearTimeout(generationTaskPollTimer);
+    generationTaskPollTimer = null;
+  }
+}
+
+function clearPendingTasksForOtherNotebooks(currentNotebookId: string) {
+  for (const [taskId, notebookId] of pendingTaskNotebookMap.entries()) {
+    if (notebookId !== currentNotebookId) {
+      pendingGeneratedTaskIds.delete(taskId);
+      createdGeneratedNoteTaskIds.delete(taskId);
+      pendingTaskNotebookMap.delete(taskId);
+    }
+  }
+}
 
 interface NotebookState {
   notebooks: Notebook[];
   currentNotebookId: string | null;
   currentConversationId: string | null;
+  streamingConversationId: string | null;  // 当前正在流式生成的会话 ID
   loading: boolean;
   streamingContent: string;  // For real-time display
+  // 主从协同：主 agent 触发的搜索（null/false 表示无搜索，SourcesPanel 监听打开搜索面板）
+  mainAgentSearchActive: boolean;
+  mainAgentSearchResults: SearchResultItem[];
+  mainAgentSearchSummary: string;
+  clearMainAgentSearch: () => void;
   // Generation state
   generatingType: NoteType | null;
+  generationTaskId: string | null;
+  generationTaskStatus: generationApi.GenerationTaskStatus | null;
+  generationTasks: GenerationTaskItem[];
   generationError: string | null;
   // sourceID → taskID 映射，用于取消正在运行的导入任务
   taskIdBySourceId: Record<string, string>;
@@ -93,6 +202,10 @@ interface NotebookState {
   toggleNoteSource: (notebookId: string, noteId: string) => Promise<void>;
 
   // Generation actions
+  connectGenerationTasks: (notebookId: string) => void;
+  disconnectGenerationTasks: () => void;
+  refreshGenerationTasks: (notebookId?: string) => Promise<void>;
+  deleteGenerationTask: (taskId: string) => Promise<void>;
   generateNote: (notebookId: string, type: NoteType, opts?: { prompt?: string; useWeb?: boolean; allowDegrade?: boolean; pptStyle?: string }) => Promise<void>;
   clearGenerationError: () => void;
 
@@ -132,10 +245,18 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   notebooks: [],
   currentNotebookId: null,
   currentConversationId: null,
+  streamingConversationId: null,
   taskIdBySourceId: {},
   loading: false,
   streamingContent: '',
+  mainAgentSearchActive: false,
+  mainAgentSearchResults: [],
+  mainAgentSearchSummary: '',
+  clearMainAgentSearch: () => set({ mainAgentSearchActive: false, mainAgentSearchResults: [], mainAgentSearchSummary: '' }),
   generatingType: null,
+  generationTaskId: null,
+  generationTaskStatus: null,
+  generationTasks: [],
   generationError: null,
 
   fetchNotebooks: async () => {
@@ -180,6 +301,14 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   setCurrentNotebook: async (id) => {
+    // 如果有正在流式生成的会话，先中断它
+    const { streamingConversationId, currentNotebookId: oldNotebookId } = get();
+    if (streamingConversationId && oldNotebookId) {
+      console.log('[Switch] 切换笔记本，中断旧会话流:', streamingConversationId);
+      // 同步中断，不阻塞后续流程
+      get().stopGeneration(oldNotebookId, streamingConversationId).catch(() => {});
+    }
+
     set({ currentNotebookId: id, currentConversationId: null });
 
     // Fetch sources and conversations
@@ -234,9 +363,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       } else {
         throw new Error(res.message);
       }
-    } catch (err: any) {
-      if (err?.response?.status === 409) {
-        throw new Error(err.response.data?.message || '已存在同名笔记本');
+    } catch (err: unknown) {
+      if (isAxiosError(err) && err.response?.status === 409) {
+        throw new Error(err.response.data?.message || '已存在同名笔记本', { cause: err });
       }
       throw err;
     }
@@ -273,9 +402,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       } else {
         throw new Error(res.message);
       }
-    } catch (err: any) {
-      if (err?.response?.status === 409) {
-        throw new Error(err.response.data?.message || '已存在同名笔记本');
+    } catch (err: unknown) {
+      if (isAxiosError(err) && err.response?.status === 409) {
+        throw new Error(err.response.data?.message || '已存在同名笔记本', { cause: err });
       }
       throw err;
     }
@@ -618,7 +747,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         errorMessage: res.message || '导入失败',
       });
       throw new Error(res.message);
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Mark placeholder as error (only if not already marked)
       const currentNotebook = get().notebooks.find(n => n.id === notebookId);
       const placeholderSource = currentNotebook?.sources.find(s => s.id === tempId);
@@ -661,7 +790,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
             content: preview.transcribed_text,
             previewId: preview.preview_id,
           });
-        }).catch((err: any) => {
+        }).catch((err: unknown) => {
           get().updateSource(notebookId, tempId, {
             status: 'error',
             errorMessage: getErrorMessage(err, '音频转写失败'),
@@ -675,7 +804,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         errorMessage: res.message || '音频转写失败',
       });
       throw new Error(res.message);
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Mark placeholder as error (only if not already marked)
       const currentNotebook = get().notebooks.find(n => n.id === notebookId);
       const placeholderSource = currentNotebook?.sources.find(s => s.id === tempId);
@@ -715,30 +844,52 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   confirmAudio: async (previewId, notebookId, content) => {
-    const res = await importApi.confirmAudio({
-      preview_id: previewId,
-      content: content || undefined,
-      notebook_id: Number(notebookId),
-    });
-    if (res.code === 0) {
-      const source = toSource(res.data);
-      // Remove the pending placeholder (has previewId) and add the confirmed source
-      set((state) => ({
-        notebooks: state.notebooks.map((n) =>
-          n.id === notebookId
-            ? {
+    try {
+      const res = await importApi.confirmAudio({
+        preview_id: previewId,
+        content: content || undefined,
+        notebook_id: Number(notebookId),
+      });
+      if (res.code === 0) {
+        const source = toSource(res.data);
+        // Remove the pending placeholder (has previewId) and add the confirmed source
+        set((state) => ({
+          notebooks: state.notebooks.map((n) =>
+            n.id === notebookId
+              ? {
               ...n,
               sources: [
                 ...n.sources.filter((s) => s.previewId !== previewId),
                 source
               ]
             }
-            : n
-        ),
-      }));
-      return source;
+              : n
+          ),
+        }));
+        return source;
+      }
+      // API returned error code — mark placeholder as error so UI updates immediately
+      const nb = get().notebooks.find(n => n.id === notebookId);
+      const placeholder = nb?.sources.find(s => s.previewId === previewId);
+      if (placeholder && placeholder.status !== 'error') {
+        get().updateSource(notebookId, placeholder.id, {
+          status: 'error',
+          errorMessage: res.message || '导入失败',
+        });
+      }
+      throw new Error(res.message);
+    } catch (err: unknown) {
+      // Network or other error — mark placeholder as error if not already marked
+      const nb = get().notebooks.find(n => n.id === notebookId);
+      const placeholder = nb?.sources.find(s => s.previewId === previewId);
+      if (placeholder && placeholder.status !== 'error') {
+        get().updateSource(notebookId, placeholder.id, {
+          status: 'error',
+          errorMessage: getErrorMessage(err, '导入失败'),
+        });
+      }
+      throw err;
     }
-    throw new Error(res.message);
   },
 
   getImportTask: async (taskId) => {
@@ -910,11 +1061,15 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   setCurrentConversation: (id) => {
-    const notebookId = get().currentNotebookId;
-    if (notebookId) {
-      localStorage.setItem(`lastConversation_${notebookId}`, id);
+    const { currentNotebookId } = get();
+
+    // 先立即更新 UI 状态
+    if (currentNotebookId) {
+      localStorage.setItem(`lastConversation_${currentNotebookId}`, id);
     }
     set({ currentConversationId: id });
+
+    // 注意：流式生成的停止由 ChatPanel 的 useEffect 处理（会 await 确保完成后再拉取消息）
   },
 
   deleteConversation: async (notebookId, conversationId) => {
@@ -1015,6 +1170,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   },
 
   sendMessage: async (notebookId, conversationId, content, sourceIds, llmConfigId) => {
+    // 标记当前正在流式生成的会话
+    set({ streamingConversationId: conversationId });
+
     // Add user message immediately
     const userMessageId = `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const userMessage: ChatMessage = {
@@ -1040,12 +1198,15 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
     try {
       console.log('Sending message to conversation:', conversationId);
-      const response = await chatApi.sendMessage(
+      const { response, abortController } = await chatApi.sendMessage(
         Number(conversationId),
         content,
         sourceIds,
         llmConfigId
       );
+
+      // Save abort controller for stopGeneration to use
+      currentStreamAbortController = abortController;
 
       console.log('Response status:', response.status, response.ok);
       console.log('Response headers:', Object.fromEntries(response.headers.entries()));
@@ -1069,6 +1230,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           // Update the assistant message with the response
           const assistantContent = jsonData.data.content || jsonData.data.message || '';
           set((state) => ({
+            streamingConversationId: null,
             notebooks: state.notebooks.map((n) =>
               n.id === notebookId
                 ? {
@@ -1097,7 +1259,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
       // SSE response - parse the stream
       let accumulatedContent = '';
-      const abortController = chatApi.parseSSEStream(response, {
+      chatApi.parseSSEStream(response, {
         onToken: (token) => {
           console.log('Token received:', token);
           accumulatedContent += token;
@@ -1171,9 +1333,20 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
             ),
           }));
         },
-        onDone: () => {
-          console.log('Stream completed');
+        onDone: (data) => {
+          console.log('Stream completed, data:', data);
+          // 后端将引用附加到 EventDone 的 data 字段（原子发送，消除竞态）
+          const doneReferences = Array.isArray(data)
+            ? (data as chatApi.ReferenceData[]).map((ref) => ({
+                sourceId: String(ref.source_id),
+                sourceName: ref.source_name,
+                parentBlockId: ref.parent_block_id,
+                chunkContent: ref.chunk_content,
+                score: ref.score,
+              }))
+            : undefined;
           set((state) => ({
+            streamingConversationId: null,
             notebooks: state.notebooks.map((n) =>
               n.id === notebookId
                 ? {
@@ -1182,11 +1355,15 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
                       c.id === conversationId
                         ? {
                             ...c,
-                            messages: c.messages.map((m) =>
-                              m.id === assistantMessageId
-                                ? { ...m, isStreaming: false }
-                                : m
-                            ),
+                            messages: c.messages.map((m) => {
+                              if (m.id !== assistantMessageId) return m;
+                              const updates: Partial<ChatMessage> = { isStreaming: false };
+                              // 仅当消息尚无引用时才设置（onReference 可能已先到达）
+                              if (doneReferences && doneReferences.length > 0 && !m.references) {
+                                updates.references = doneReferences;
+                              }
+                              return { ...m, ...updates };
+                            }),
                             updatedAt: new Date().toISOString(),
                           }
                         : c
@@ -1200,6 +1377,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           console.error('Stream error:', error);
           const friendlyMessage = getChatErrorMessage(error);
           set((state) => ({
+            streamingConversationId: null,
+            mainAgentSearchActive: false,
+            generatingType: null,
             notebooks: state.notebooks.map((n) =>
               n.id === notebookId
                 ? {
@@ -1221,12 +1401,76 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
             ),
           }));
         },
-      });
-      // Save abort controller for stopGeneration to use
-      currentStreamAbortController = abortController;
+        onSearchStarted: () => {
+          console.log('[MainAgent] search started');
+          set({
+            mainAgentSearchActive: true,
+            mainAgentSearchResults: [],
+            mainAgentSearchSummary: '',
+          });
+        },
+        onSearchResults: (results, summary) => {
+          console.log('[MainAgent] search results:', results.length);
+          set({
+            mainAgentSearchResults: results,
+            mainAgentSearchSummary: summary || '搜索完成',
+          });
+        },
+        onSearchBusy: (message) => {
+          console.log('[MainAgent] search busy:', message);
+          const busyMessage = message || '请等待当前搜索任务完成';
+          accumulatedContent = busyMessage;
+          set((state) => ({
+            streamingConversationId: null,
+            notebooks: state.notebooks.map((n) =>
+              n.id === notebookId
+                ? {
+                    ...n,
+                    conversations: n.conversations.map((c) =>
+                      c.id === conversationId
+                        ? {
+                            ...c,
+                            messages: c.messages.map((m) =>
+                              m.id === assistantMessageId
+                                ? { ...m, content: busyMessage, isStreaming: false }
+                                : m
+                            ),
+                          }
+                        : c
+                    ),
+                  }
+                : n
+            ),
+          }));
+        },
+        onGenerationStarted: (type) => {
+          console.log('[MainAgent] generation started:', type);
+          set({ generatingType: type as NoteType, generationError: null });
+        },
+        onGenerationResult: (type, content) => {
+          console.log('[MainAgent] generation result:', type);
+          // 生成结果作为 Note 添加到 NotesPanel（和前端 generateNote 行为一致）
+          const typeLabel: Record<string, string> = { mindmap: '思维导图', ppt: '演示文稿', quiz: '测验', note: '笔记' };
+          const firstLine = content?.split('\n')[0] || '';
+          const autoTitle = firstLine.replace(/^#+\s*/, '').trim() || `新${typeLabel[type] || type}`;
+          const note: Note = {
+            id: `note-gen-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            title: autoTitle.slice(0, 40),
+            type: type as NoteType,
+            content,
+            isSource: false,
+            notebookId,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          get().addNote(notebookId, note);
+          set({ generatingType: null });
+        },
+      }, abortController);
     } catch (err) {
       console.error('Failed to send message:', err);
       set((state) => ({
+        streamingConversationId: null,
         notebooks: state.notebooks.map((n) =>
           n.id === notebookId
             ? {
@@ -1252,14 +1496,21 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
   stopGeneration: async (notebookId, conversationId) => {
     try {
+      console.log('[stopGeneration] 开始停止生成, conversationId:', conversationId);
       // Abort the frontend SSE stream first
       if (currentStreamAbortController) {
+        console.log('[stopGeneration] 调用 abort() 中断 SSE 连接');
         currentStreamAbortController.abort();
         currentStreamAbortController = null;
+      } else {
+        console.log('[stopGeneration] 没有活跃的 AbortController');
       }
+      console.log('[stopGeneration] 调用后端 /stop API');
       await chatApi.stopGeneration(Number(conversationId));
+      console.log('[stopGeneration] 后端 /stop API 调用成功');
       // Mark any streaming messages as done
       set((state) => ({
+        streamingConversationId: null,
         notebooks: state.notebooks.map((n) =>
           n.id === notebookId
             ? {
@@ -1279,7 +1530,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      console.error('Failed to stop generation:', err);
+      console.error('[stopGeneration] 停止生成失败:', err);
     }
   },
 
@@ -1330,13 +1581,18 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
     set((state) => ({
       notebooks: state.notebooks.map((n) =>
         n.id === notebookId
-          ? { ...n, notes: [note, ...n.notes], updatedAt: new Date().toISOString() }
+          ? {
+              ...n,
+              notes: [note, ...n.notes.filter((existing) => existing.id !== note.id)],
+              updatedAt: new Date().toISOString(),
+            }
           : n
       ),
     }));
   },
 
   deleteNote: (notebookId, noteId) => {
+    const generationTaskId = taskIdFromGeneratedNoteId(noteId);
     set((state) => ({
       notebooks: state.notebooks.map((n) =>
         n.id === notebookId
@@ -1344,6 +1600,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           : n
       ),
     }));
+    if (generationTaskId) {
+      void get().deleteGenerationTask(generationTaskId);
+    }
   },
 
   renameNote: (notebookId, noteId, title) => {
@@ -1456,9 +1715,145 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
   clearGenerationError: () => set({ generationError: null }),
 
+  connectGenerationTasks: (notebookId) => {
+    if (!notebookId) return;
+    if (generationTaskPollNotebookId === notebookId && generationTaskPollTimer) {
+      return;
+    }
+
+    stopGenerationTaskPolling();
+    generationTaskPollNotebookId = notebookId;
+    clearPendingTasksForOtherNotebooks(notebookId);
+
+    // 轮询处理：每次拉取笔记本下的任务列表，按 updatedAt 合并到 store，
+    // 终态任务触发笔记落地/错误提示/取消清理。
+    const handleTerminalTask = (task: generationApi.GenerationTask) => {
+      if (task.status === 'completed') {
+        const note = materializeCompletedGenerationTask(task, createdGeneratedNoteTaskIds);
+        pendingGeneratedTaskIds.delete(task.task_id);
+        pendingTaskNotebookMap.delete(task.task_id);
+        if (note) {
+          get().addNote(note.notebookId, note);
+        }
+        return;
+      }
+      if (!pendingGeneratedTaskIds.has(task.task_id)) return;
+      if (task.status === 'failed') {
+        pendingGeneratedTaskIds.delete(task.task_id);
+        pendingTaskNotebookMap.delete(task.task_id);
+        set({ generationError: task.error || '生成失败，请重试' });
+        return;
+      }
+      if (task.status === 'cancelled') {
+        pendingGeneratedTaskIds.delete(task.task_id);
+        pendingTaskNotebookMap.delete(task.task_id);
+      }
+    };
+
+    const tick = async () => {
+      if (generationTaskPollNotebookId !== notebookId) return;
+      let hasActiveTask = false;
+      try {
+        const tasks = await generationApi.listGenerationTasks({
+          notebook_id: Number(notebookId),
+          limit: 100,
+        });
+        if (generationTaskPollNotebookId !== notebookId) return;
+        set((state) => {
+          const generationTasks = mergeGenerationTaskSnapshot(state.generationTasks, tasks);
+          return {
+            generationTasks,
+            ...getGenerationSummary(generationTasks),
+          };
+        });
+        for (const task of tasks) {
+          // 只要存在 pending/running 任务就继续轮询。
+          if (
+            task.status === 'pending' ||
+            task.status === 'running'
+          ) {
+            hasActiveTask = true;
+          }
+          handleTerminalTask(task);
+        }
+        // pendingGeneratedTaskIds 仍本地登记未终态的任务，作为活跃态的补充判定。
+        if (pendingGeneratedTaskIds.size > 0) {
+          hasActiveTask = true;
+        }
+      } catch (err) {
+        console.error('Failed to poll generation tasks:', err);
+        // 网络错误时不立即放弃，保持轮询以恢复。
+        if (pendingGeneratedTaskIds.size > 0) {
+          hasActiveTask = true;
+        }
+      }
+      if (generationTaskPollNotebookId !== notebookId) return;
+      // 无活跃任务则停止轮询，等下次提交任务或手动 refresh 时再启动。
+      if (!hasActiveTask) {
+        generationTaskPollTimer = null;
+        return;
+      }
+      generationTaskPollTimer = setTimeout(tick, generationTaskPollInterval);
+    };
+
+    void tick();
+  },
+
+  disconnectGenerationTasks: () => {
+    generationTaskPollNotebookId = null;
+    stopGenerationTaskPolling();
+  },
+
+  refreshGenerationTasks: async (notebookId) => {
+    const targetNotebookId = notebookId ?? get().currentNotebookId;
+    if (!targetNotebookId) return;
+    try {
+      const tasks = await generationApi.listGenerationTasks({
+        notebook_id: Number(targetNotebookId),
+        limit: 100,
+      });
+      const generationTasks = sortGenerationTasks(tasks.map(toGenerationTaskItem));
+      set({
+        generationTasks,
+        ...getGenerationSummary(generationTasks),
+      });
+    } catch (err) {
+      console.error('Failed to refresh generation tasks:', err);
+    }
+  },
+
+  deleteGenerationTask: async (taskId) => {
+    const task = get().generationTasks.find((item) => item.taskId === taskId);
+    // 乐观更新：先从列表移除任务，让 UI 立即响应。
+    set((state) => {
+      const generationTasks = state.generationTasks.filter((item) => item.taskId !== taskId);
+      return {
+        generationTasks,
+        ...getGenerationSummary(generationTasks),
+      };
+    });
+    pendingGeneratedTaskIds.delete(taskId);
+    pendingTaskNotebookMap.delete(taskId);
+    try {
+      await generationApi.deleteGenerationTask(taskId);
+    } catch (err) {
+      const msg = (err instanceof Error && err.message) ? err.message : '删除生成任务失败';
+      set({ generationError: msg });
+      // 删除失败时回滚：把任务放回列表。
+      if (task) {
+        set((state) => {
+          const generationTasks = sortGenerationTasks([task, ...state.generationTasks.filter((item) => item.taskId !== taskId)]).slice(0, 100);
+          return {
+            generationTasks,
+            ...getGenerationSummary(generationTasks),
+          };
+        });
+      }
+    }
+  },
+
   generateNote: async (notebookId, type, opts) => {
     const state = get();
-    if (state.generatingType) return; // 防止重复生成
 
     const notebook = state.notebooks.find((n) => n.id === notebookId);
     if (!notebook) return;
@@ -1471,7 +1866,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
     }
 
     // 并发获取所有 source 的 markdown 内容
-    set({ generatingType: type, generationError: null });
+    set({ generationError: null });
     try {
       const sourceResults = await Promise.all(
         selectedSources.map(async (s) => {
@@ -1500,7 +1895,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
       const sourceIds = selectedSources.map((s) => Number(s.id));
 
-      const resp = await generationApi.generateFromMarkdown({
+      const submittedTask = await generationApi.generateFromMarkdown({
         notebook_id: Number(notebookId),
         markdown,
         type,
@@ -1510,35 +1905,33 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
         allow_degrade: opts?.allowDegrade ?? true,
         options: opts?.pptStyle ? { ppt_style: opts.pptStyle } : undefined,
       });
+      pendingGeneratedTaskIds.add(submittedTask.task_id);
+      pendingTaskNotebookMap.set(submittedTask.task_id, notebookId);
 
-      const typeLabel: Record<NoteType, string> = {
-        mindmap: '思维导图',
-        ppt: '演示文稿',
-        quiz: '测验',
-        note: '笔记',
-      };
-
-      // 从 markdown 第一行提取标题
-      const firstLine = resp.content?.split('\n')[0] || '';
-      const autoTitle = firstLine.replace(/^#+\s*/, '').trim() || `新${typeLabel[type]}`;
-
-      const note: Note = {
-        id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        title: autoTitle.slice(0, 40),
-        type,
-        content: resp.content,
-        isSource: false,
+      const taskItem: GenerationTaskItem = {
+        ...toGenerationTaskItem(submittedTask),
         notebookId,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
       };
 
-      get().addNote(notebookId, note);
+      set((state) => {
+        const generationTasks = sortGenerationTasks([
+          mergeGenerationTaskItem(
+            state.generationTasks.find((item) => item.taskId === taskItem.taskId),
+            taskItem
+          ),
+          ...state.generationTasks.filter((item) => item.taskId !== taskItem.taskId),
+        ]).slice(0, 100);
+        return {
+          generationTasks,
+          generationError: null,
+          ...getGenerationSummary(generationTasks),
+        };
+      });
+      get().connectGenerationTasks(notebookId);
+      return;
     } catch (err) {
       const msg = (err instanceof Error && err.message) ? err.message : '生成失败，请重试';
       set({ generationError: msg });
-    } finally {
-      set({ generatingType: null });
     }
   },
 

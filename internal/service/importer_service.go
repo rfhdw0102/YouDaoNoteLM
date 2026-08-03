@@ -832,7 +832,7 @@ func (s *importerService) processSingleSource(taskCtx context.Context, sourceID 
 				zap.Duration("elapsed", time.Since(stepStart)),
 				zap.Error(err),
 			)
-			userMsg = "网页内容获取失败，请稍后重试"
+			userMsg = "无法获取该网页内容"
 		}
 
 		if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", userMsg); updateErr != nil {
