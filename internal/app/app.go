@@ -3,6 +3,7 @@ package app
 import (
 	searchAgent "YoudaoNoteLm/internal/agent/search"
 	"YoudaoNoteLm/internal/api"
+	"YoudaoNoteLm/internal/memory"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/repository"
@@ -129,8 +130,14 @@ func (a *App) initDatabase() error {
 		&entity.UserLLMConfig{},
 		&entity.YoudaoBinding{},
 		&entity.SysConfig{},
+		&memory.UserMemory{},
 	); err != nil {
 		logger.Warn("database migration failed", zap.Error(err))
+	}
+	if !a.mysqlDB.Migrator().HasConstraint(&memory.UserMemory{}, "User") {
+		if err := a.mysqlDB.Migrator().CreateConstraint(&memory.UserMemory{}, "User"); err != nil {
+			logger.Warn("create user memory foreign key failed", zap.Error(err))
+		}
 	}
 
 	// 初始化 Redis（可选）
@@ -190,6 +197,7 @@ func (a *App) initDependencies() {
 	llmConfigRepo := repository.NewUserLLMConfigRepository(a.mysqlDB)
 	conversationRepo := repository.NewConversationRepository(a.mysqlDB)
 	messageRepo := repository.NewMessageRepository(a.mysqlDB)
+	userMemorySvc := memory.NewService(memory.NewMySQLStore(a.mysqlDB))
 	chatCache := cache.NewChatCache(a.redis)
 
 	// 创建外部服务客户端
@@ -303,7 +311,7 @@ func (a *App) initDependencies() {
 	if a.redis != nil {
 		generationMemory = service.NewGenerationMemoryCacheStore(cache.NewGenerationMemoryCache(a.redis))
 	}
-	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemory(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory, a.cfg.Security.EncryptionKey)
+	generationSvc := service.NewGenerationServiceWithUserLLMConfigAndMemories(a.ragRetriever, searchSvc, llmConfigRepo, generationMemory, userMemorySvc, a.cfg.Security.EncryptionKey)
 	var generationTaskStore service.GenerationTaskStore
 	var generationTaskQueue service.GenerationTaskQueue
 	if a.redis != nil {
@@ -314,7 +322,7 @@ func (a *App) initDependencies() {
 	generationTaskSvc := service.NewGenerationTaskServiceWithQueue(generationSvc, generationTaskStore, generationTaskQueue)
 
 	// 创建 ChatAgentService 和 ConversationService
-	chatAgentSvc := service.NewChatAgentService(llmConfigRepo, userRepo, ragRetriever, conversationRepo, messageRepo, chatCache, sourceRepo, sourceSummaryCache, a.cfg.Security.EncryptionKey)
+	chatAgentSvc := service.NewChatAgentServiceWithMemory(llmConfigRepo, userRepo, ragRetriever, conversationRepo, messageRepo, chatCache, sourceRepo, sourceSummaryCache, a.cfg.Security.EncryptionKey, userMemorySvc)
 	convSvc := service.NewConversationService(conversationRepo, messageRepo, chatCache)
 	logger.Info("ChatAgentService 初始化成功")
 	logger.Info("ConversationService 初始化成功")
@@ -340,6 +348,7 @@ func (a *App) initDependencies() {
 		ingestionSvc,
 		minioStorage,
 		userRepo,
+		userMemorySvc,
 	)
 }
 

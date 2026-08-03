@@ -13,6 +13,7 @@ import (
 	"context"
 	"strings"
 
+	"YoudaoNoteLm/internal/memory"
 	"YoudaoNoteLm/internal/rag"
 	bizerrors "YoudaoNoteLm/pkg/errors"
 	"YoudaoNoteLm/pkg/logger"
@@ -21,11 +22,12 @@ import (
 )
 
 type generationService struct {
-	retriever rag.RAGRetriever
-	search    SearchService
-	model     GenerationModel
-	memory    GenerationMemoryStore
-	agents    map[GenerationType]generationAgent
+	retriever      rag.RAGRetriever
+	search         SearchService
+	model          GenerationModel
+	memory         GenerationMemoryStore
+	longTermMemory memory.Reader
+	agents         map[GenerationType]generationAgent
 }
 
 type generationAgent interface {
@@ -52,11 +54,18 @@ func NewGenerationService(retriever rag.RAGRetriever, search SearchService, mode
 
 // NewGenerationServiceWithMemory 创建带会话记忆的 GenerationService 实例。
 func NewGenerationServiceWithMemory(retriever rag.RAGRetriever, search SearchService, model GenerationModel, memory GenerationMemoryStore) GenerationService {
+	return NewGenerationServiceWithMemories(retriever, search, model, memory, nil)
+}
+
+// NewGenerationServiceWithMemories creates a generator with independent short
+// generation history and long-term user preference readers.
+func NewGenerationServiceWithMemories(retriever rag.RAGRetriever, search SearchService, model GenerationModel, memoryStore GenerationMemoryStore, longTermMemory memory.Reader) GenerationService {
 	return &generationService{
-		retriever: retriever,
-		search:    search,
-		model:     model,
-		memory:    memory,
+		retriever:      retriever,
+		search:         search,
+		model:          model,
+		memory:         memoryStore,
+		longTermMemory: longTermMemory,
 		agents: map[GenerationType]generationAgent{
 			GenerationTypeMindmap: newMindmapAgent(model),
 			GenerationTypePPT:     newPPTAgent(model),
@@ -112,7 +121,9 @@ func (s *generationService) Generate(ctx context.Context, req *GenerationRequest
 		}
 	}
 
-	contextValue := buildGenerationContext(req, refs, searchSummary, searchResults)
+	longTermMemoryContext := loadLongTermMemoryContext(ctx, s.longTermMemory, req.UserID)
+
+	contextValue := buildGenerationContext(req, longTermMemoryContext, refs, searchSummary, searchResults)
 	contextValue = appendGenerationMemoryContext(contextValue, memoryEntries)
 
 	agent := s.agents[req.Type]
@@ -160,6 +171,21 @@ func (s *generationService) Generate(ctx context.Context, req *GenerationRequest
 			"orchestration_steps":      generationOrchestrationSteps(),
 		},
 	}, nil
+}
+
+func loadLongTermMemoryContext(ctx context.Context, reader memory.Reader, userID uint) string {
+	if reader == nil {
+		return ""
+	}
+	snapshot, err := reader.LoadSnapshot(ctx, userID)
+	if err != nil {
+		logger.Warn("read long-term memory failed, skip personalization",
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+		)
+		return ""
+	}
+	return snapshot.RenderPrompt()
 }
 
 // validateGenerationRequest 校验生成请求的合法性。

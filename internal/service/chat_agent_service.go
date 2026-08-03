@@ -13,6 +13,7 @@ import (
 
 	"YoudaoNoteLm/internal/agent/chat"
 	"YoudaoNoteLm/internal/llm"
+	"YoudaoNoteLm/internal/memory"
 	"YoudaoNoteLm/internal/model/dto/request"
 	"YoudaoNoteLm/internal/model/dto/response"
 	"YoudaoNoteLm/internal/model/entity"
@@ -38,6 +39,7 @@ type chatAgentService struct {
 	summaryCache     *cache.SourceSummaryCache
 	cancelFuncs      sync.Map
 	encryptionKey    []byte
+	longTermMemory   memory.Reader
 }
 
 // NewChatAgentService 创建 Agent 对话服务
@@ -52,6 +54,27 @@ func NewChatAgentService(
 	summaryCache *cache.SourceSummaryCache,
 	encryptionKey string,
 ) ChatAgentService {
+	return NewChatAgentServiceWithMemory(
+		llmConfigRepo, userRepo, retriever, conversationRepo, messageRepo,
+		chatCache, sourceRepo, summaryCache, encryptionKey, nil,
+	)
+}
+
+// NewChatAgentServiceWithMemory creates the chat service with an optional
+// long-term memory reader. The old constructor remains valid for callers that
+// do not need the enhancement.
+func NewChatAgentServiceWithMemory(
+	llmConfigRepo repository.UserLLMConfigRepository,
+	userRepo repository.UserRepository,
+	retriever rag.RAGRetriever,
+	conversationRepo repository.ConversationRepository,
+	messageRepo repository.MessageRepository,
+	chatCache *cache.ChatCache,
+	sourceRepo repository.SourceRepository,
+	summaryCache *cache.SourceSummaryCache,
+	encryptionKey string,
+	longTermMemory memory.Reader,
+) ChatAgentService {
 	return &chatAgentService{
 		llmConfigRepo:    llmConfigRepo,
 		userRepo:         userRepo,
@@ -62,6 +85,7 @@ func NewChatAgentService(
 		sourceRepo:       sourceRepo,
 		summaryCache:     summaryCache,
 		encryptionKey:    []byte(encryptionKey),
+		longTermMemory:   longTermMemory,
 	}
 }
 
@@ -270,6 +294,10 @@ func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entit
 		WithSummaryCache(s.summaryCache).
 		WithContextRepos(s.conversationRepo, s.messageRepo, s.cache)
 
+	if memoryPrompt := s.longTermMemoryPrompt(ctx, userID); memoryPrompt != "" {
+		builder.WithLongTermMemory(memoryPrompt)
+	}
+
 	// 注入用户信息
 	if user != nil {
 		builder.WithUser(user.Nickname, user.Username)
@@ -283,6 +311,21 @@ func (s *chatAgentService) createChatAgent(ctx context.Context, llmConfig *entit
 
 	logger.Info("[Agent] ChatAgent 创建成功")
 	return agent, nil
+}
+
+func (s *chatAgentService) longTermMemoryPrompt(ctx context.Context, userID uint) string {
+	if s.longTermMemory == nil {
+		return ""
+	}
+	snapshot, err := s.longTermMemory.LoadSnapshot(ctx, userID)
+	if err != nil {
+		logger.Warn("[Agent] 读取长期记忆失败，跳过个性化上下文",
+			zap.Uint("userID", userID),
+			zap.Error(err),
+		)
+		return ""
+	}
+	return snapshot.RenderPrompt()
 }
 
 // getSourceNames 获取资料 ID 到名称的映射
