@@ -1,11 +1,10 @@
 # CD（持续部署）工作流配置
 # 作用：构建 Docker 镜像 → 推送到 Docker Hub → 服务器拉取并部署
-# 触发条件：push/合并到 develop 或 main 分支时触发，或手动触发
+# 触发条件：push/合并到 develop 或 main 分支时触发，或手动触发；均部署到 staging
 #
 # 分支与环境映射（GitFlow）：
-#   - push 到 develop → 部署到 staging
-#   - push 到 main    → 部署到 production
-#   - 手动触发        → 按输入的 environment 部署
+#   - push 到 develop 或 main → 部署到 staging
+#   - 手动触发        → 部署到 staging
 #
 # 注意：不再使用 workflow_run（它只读取默认分支 main 上的 workflow 文件，
 #       当 cd.yml 仅存在于 develop 时触发器不会被注册）。
@@ -26,7 +25,6 @@ on:
         type: choice
         options:
           - staging
-          - production
 
 permissions:
   contents: read
@@ -97,7 +95,7 @@ jobs:
     timeout-minutes: 60
     needs: build-and-push
     if: >
-      (github.event_name == 'push' && github.ref == 'refs/heads/develop')
+      (github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'))
       || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
 
     environment:
@@ -206,120 +204,6 @@ jobs:
 
           # MarkItDown 健康检查
           md_response=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.SSH_HOST }}:${MARKITDOWN_PORT:-8085}/health" || echo "000")
-          if [ "$md_response" = "200" ]; then
-            echo "✅ MarkItDown 健康检查通过"
-          else
-            echo "⚠️ MarkItDown 健康检查失败，状态码: $md_response (非阻断)"
-          fi
-
-  # ========== 部署到 Production（main 分支推送触发） ==========
-  deploy-production:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    needs: build-and-push
-    if: >
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
-
-    environment:
-      name: production
-      url: ${{ vars.PRODUCTION_URL }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Copy docker-compose.yml to server
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.PRODUCTION_SSH_HOST }}
-          username: ${{ secrets.PRODUCTION_SSH_USERNAME }}
-          key: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
-          port: 22
-          source: "docker-compose.yml"
-          target: "/home/flandern/youdaonotelm"
-          overwrite: true
-
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.PRODUCTION_SSH_HOST }}
-          username: ${{ secrets.PRODUCTION_SSH_USERNAME }}
-          key: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
-          port: 22
-          command_timeout: 45m
-          script: |
-            DEPLOY_DIR="/home/flandern/youdaonotelm"
-
-            # 创建目录（如果不存在）
-            mkdir -p "$DEPLOY_DIR/configs"
-
-            # docker-compose.yml 已由 scp-action 推送，无需从 GitHub 下载
-            echo "✅ docker-compose.yml in place"
-
-            cd "$DEPLOY_DIR"
-
-            # 镜像为公开且服务器已配阿里云加速器，无需 docker login
-            # （docker login 直连 registry-1.docker.io 会超时）
-
-            # 保存当前镜像版本（用于回滚）
-            OLD_APP_IMAGE=$(docker inspect --format='{{.Config.Image}}' youdaonotelm-app 2>/dev/null || echo "")
-            OLD_MD_IMAGE=$(docker inspect --format='{{.Config.Image}}' youdaonotelm-markitdown 2>/dev/null || echo "")
-            echo "📌 当前版本: app=$OLD_APP_IMAGE, markitdown=$OLD_MD_IMAGE"
-
-            # 拉取最新镜像
-            docker compose pull
-            echo "✅ Images pulled"
-
-            # 重启所有服务
-            docker compose up -d
-            echo "✅ Services restarted"
-
-            # 等待启动
-            sleep 15
-
-            # 健康检查：app + markitdown
-            APP_OK=$(docker compose ps app | grep -c "Up" || true)
-            MD_OK=$(docker compose ps markitdown | grep -c "Up" || true)
-
-            if [ "$APP_OK" -gt 0 ] && [ "$MD_OK" -gt 0 ]; then
-              echo "✅ 所有服务运行正常"
-            else
-              echo "❌ 服务启动失败，正在回滚..."
-              echo "  app: $APP_OK, markitdown: $MD_OK"
-
-              # 回滚：恢复到之前的镜像版本
-              if [ -n "$OLD_APP_IMAGE" ]; then
-                docker pull "$OLD_APP_IMAGE" 2>/dev/null || true
-              fi
-              if [ -n "$OLD_MD_IMAGE" ]; then
-                docker pull "$OLD_MD_IMAGE" 2>/dev/null || true
-              fi
-
-              docker compose down
-              docker compose up -d
-              sleep 10
-
-              echo "⚠️ 已回滚到上一版本"
-              docker compose logs --tail=50 app
-              exit 1
-            fi
-
-      - name: Production health check
-        run: |
-          sleep 10
-          # App 健康检查
-          response=$(curl -s -o /dev/null -w "%{http_code}" "${{ vars.PRODUCTION_URL }}/api/v1/health" || echo "000")
-          if [ "$response" = "200" ]; then
-            echo "✅ App 健康检查通过"
-          else
-            echo "❌ App 健康检查失败，状态码: $response"
-            exit 1
-          fi
-
-          # MarkItDown 健康检查
-          md_response=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.PRODUCTION_SSH_HOST }}:${MARKITDOWN_PORT:-8085}/health" || echo "000")
           if [ "$md_response" = "200" ]; then
             echo "✅ MarkItDown 健康检查通过"
           else
