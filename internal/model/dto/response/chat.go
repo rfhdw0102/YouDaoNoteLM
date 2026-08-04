@@ -17,7 +17,15 @@ type MessageResponse struct {
 	Role      string           `json:"role"`
 	Content   string           `json:"content"`
 	Metadata  *MessageMetadata `json:"metadata,omitempty"`
+	Feedback  *MessageFeedback `json:"feedback,omitempty"` // 仅助手消息、当前用户有反馈时返回
 	CreatedAt time.Time        `json:"created_at"`
+}
+
+// MessageFeedback 消息反馈（仅包含安全字段，不暴露 user/message ID）
+type MessageFeedback struct {
+	Rating    string    `json:"rating"`
+	Reason    string    `json:"reason"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // MessageMetadata 消息元数据

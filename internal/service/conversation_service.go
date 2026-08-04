@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"YoudaoNoteLm/internal/feedback"
 	"YoudaoNoteLm/internal/model/dto/response"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/repository"
@@ -22,21 +23,34 @@ type conversationService struct {
 	conversationRepo repository.ConversationRepository
 	messageRepo      repository.MessageRepository
 	cache            *cache.ChatCache
+	feedbackReader   feedback.Reader // 可选，为 nil 时省略反馈字段
 }
 
 // 确保实现了接口
 var _ ConversationService = (*conversationService)(nil)
 
-// NewConversationService 创建对话管理服务
+// NewConversationService 创建对话管理服务（无反馈注入）
 func NewConversationService(
 	conversationRepo repository.ConversationRepository,
 	messageRepo repository.MessageRepository,
 	chatCache *cache.ChatCache,
 ) ConversationService {
+	return NewConversationServiceWithFeedback(conversationRepo, messageRepo, chatCache, nil)
+}
+
+// NewConversationServiceWithFeedback 创建带可选反馈 Reader 的对话管理服务。
+// 当 feedbackReader 为 nil 时，消息历史仍正常返回，只是不包含反馈字段。
+func NewConversationServiceWithFeedback(
+	conversationRepo repository.ConversationRepository,
+	messageRepo repository.MessageRepository,
+	chatCache *cache.ChatCache,
+	feedbackReader feedback.Reader,
+) ConversationService {
 	return &conversationService{
 		conversationRepo: conversationRepo,
 		messageRepo:      messageRepo,
 		cache:            chatCache,
+		feedbackReader:   feedbackReader,
 	}
 }
 
@@ -151,6 +165,36 @@ func (s *conversationService) GetMessages(ctx context.Context, userID, conversat
 		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "查询消息失败", err)
 	}
 
+	// 收集助手消息 ID，批量查询反馈（Reader 可用时）
+	var feedbackMap map[uint]response.MessageFeedback
+	if s.feedbackReader != nil {
+		assistantIDs := make([]uint, 0, len(msgs))
+		for _, msg := range msgs {
+			if msg.Role == "assistant" {
+				assistantIDs = append(assistantIDs, msg.ID)
+			}
+		}
+		if len(assistantIDs) > 0 {
+			fbMap, fbErr := s.feedbackReader.ListByMessageIDs(ctx, userID, assistantIDs)
+			if fbErr != nil {
+				// 读取失败不阻断消息历史，记录告警并省略反馈字段
+				logger.Warn("[Conversation] 读取消息反馈失败，省略反馈字段",
+					zap.Error(fbErr),
+					zap.Uint("conversationID", conversationID),
+				)
+			} else {
+				feedbackMap = make(map[uint]response.MessageFeedback, len(fbMap))
+				for msgID, fb := range fbMap {
+					feedbackMap[msgID] = response.MessageFeedback{
+						Rating:    string(fb.Rating),
+						Reason:    string(fb.Reason),
+						UpdatedAt: fb.UpdatedAt,
+					}
+				}
+			}
+		}
+	}
+
 	result := make([]*response.MessageResponse, 0, len(msgs))
 	for _, msg := range msgs {
 		resp := &response.MessageResponse{
@@ -164,6 +208,13 @@ func (s *conversationService) GetMessages(ctx context.Context, userID, conversat
 			var metadata response.MessageMetadata
 			if err := json.Unmarshal([]byte(msg.Metadata), &metadata); err == nil {
 				resp.Metadata = &metadata
+			}
+		}
+
+		// 仅助手消息附带当前用户的反馈状态
+		if feedbackMap != nil && msg.Role == "assistant" {
+			if fb, ok := feedbackMap[msg.ID]; ok {
+				resp.Feedback = &fb
 			}
 		}
 

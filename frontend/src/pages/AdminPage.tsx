@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Users, Settings, Shield, Search, Plus, ToggleLeft, ToggleRight,
-  Check, ArrowLeft, Edit2, Save, X, Trash2, AlertCircle
+  Check, ArrowLeft, Edit2, Save, X, Trash2, AlertCircle, MessageSquare
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../utils/cn';
@@ -13,12 +13,13 @@ import AvatarImg from '../components/ui/AvatarImg';
 import { useAuthStore } from '../stores/useAuthStore';
 import * as adminApi from '../api/admin';
 import * as providersApi from '../api/providers';
+import AdminFeedbackWorkspace from '../components/admin/AdminFeedbackWorkspace';
 import type { AdminUser, SysConfig, ConfigStatus } from '../api/admin';
 import type { ProviderInfo } from '../api/providers';
 
 export default function AdminPage() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'users' | 'configs'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'configs' | 'feedback'>('users');
 
   return (
     <div className="h-full overflow-y-auto bg-bg-primary">
@@ -55,11 +56,21 @@ export default function AdminPage() {
           >
             <Settings size={14} /> 系统配置
           </button>
+          <button
+            onClick={() => setActiveTab('feedback')}
+            className={cn(
+              'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all cursor-pointer',
+              activeTab === 'feedback' ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'
+            )}
+          >
+            <MessageSquare size={14} /> 回答反馈
+          </button>
         </div>
 
         {/* Content */}
         {activeTab === 'users' && <UserManagement />}
         {activeTab === 'configs' && <ConfigManagement />}
+        {activeTab === 'feedback' && <AdminFeedbackWorkspace />}
       </div>
     </div>
   );

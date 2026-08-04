@@ -28,3 +28,9 @@ type ProcessMessageRequest struct {
 	NotebookID     uint   `json:"notebook_id"`     // 笔记本 ID（新建对话时需要）
 	LLMConfigID    uint   `json:"llm_config_id"`   // 指定使用的 LLM 配置 ID，0 表示使用默认
 }
+
+// UpsertFeedbackRequest 创建/更新反馈请求
+type UpsertFeedbackRequest struct {
+	Rating string `json:"rating" binding:"required"`
+	Reason string `json:"reason" binding:"required"`
+}

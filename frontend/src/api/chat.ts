@@ -13,6 +13,12 @@ export interface ConversationData {
   updated_at: string;
 }
 
+export interface MessageFeedbackData {
+  rating: string;
+  reason: string;
+  updated_at: string;
+}
+
 export interface MessageData {
   id: number;
   role: 'user' | 'assistant' | 'system';
@@ -20,6 +26,7 @@ export interface MessageData {
   metadata: {
     references?: ReferenceData[];
   } | null;
+  feedback?: MessageFeedbackData | null;
   created_at: string;
 }
 
@@ -35,9 +42,10 @@ export interface StreamEvent {
   type:
     | 'token' | 'reference' | 'done' | 'error' | 'message' | 'title' | 'tool_call' | 'tool_result'
     | 'search_started' | 'search_results' | 'search_busy'
-    | 'generation_started' | 'generation_result';
+    | 'generation_started' | 'generation_result'
+    | 'answer_persisted';
   content: string;
-  data: ReferenceData[] | number | string | null;
+  data: ReferenceData[] | number | string | { message_id?: number } | null;
 }
 
 // ============ API Functions ============
@@ -182,6 +190,7 @@ export function parseSSEStream(
     onSearchBusy?: (message: string) => void;
     onGenerationStarted?: (type: string) => void;
     onGenerationResult?: (type: string, content: string) => void;
+    onAnswerPersisted?: (messageId: number) => void;
   },
   abortController?: AbortController
 ): void {
@@ -286,6 +295,13 @@ export function parseSSEStream(
                   const genData = data.data as { type?: string; content?: string } | null;
                   if (genData?.content) {
                     callbacks.onGenerationResult?.(genData.type || 'note', genData.content);
+                  }
+                  break;
+                }
+                case 'answer_persisted': {
+                  const persistedData = data.data as { message_id?: number } | null;
+                  if (persistedData?.message_id) {
+                    callbacks.onAnswerPersisted?.(persistedData.message_id);
                   }
                   break;
                 }
