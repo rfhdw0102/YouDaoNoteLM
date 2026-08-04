@@ -8,7 +8,7 @@
 ![Milvus](https://img.shields.io/badge/Milvus-向量数据库-00A6FB?logo=milvus&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-YouDaoNoteLM 是一个 NotebookLM 风格的全栈知识问答应用：将你的有道云笔记（或本地文件、网页、音频）导入为知识源，通过向量检索 + 大模型生成（RAG）实现精准问答、内容生成（思维导图 / PPT / 测验 / 笔记）和流式对话。前端 React + Vite，后端 Go + Gin，向量库 Milvus，对象存储 MinIO，全部通过 Docker Compose 一键拉起。
+YouDaoNoteLM 是一个 NotebookLM 风格的全栈知识问答应用：将你的有道云笔记（或本地文件、网页、音频）导入为知识源，通过向量检索 + 大模型生成（RAG）实现精准问答、异步内容生成（思维导图 / PPT / 测验 / 笔记）和流式对话。用户可维护跨会话输出偏好，并对已保存回答提交分类点赞/点踩反馈；前端 React + Vite，后端 Go + Gin，向量库 Milvus，对象存储 MinIO，全部通过 Docker Compose 一键拉起。
 
 ---
 
@@ -19,11 +19,19 @@ YouDaoNoteLM 是一个 NotebookLM 风格的全栈知识问答应用：将你的�
 | 能力 | 说明 |
 |------|------|
 | 📥 **多源知识导入** | 有道云笔记批量同步、本地文件（PDF / Word / PPT / TXT，经 MarkItDown 转 Markdown）、网页 URL、音频（阿里云 ASR 转写） |
-| 🔍 **RAG 检索问答** | 基于 Milvus 向量库 + Eino 编排，支持父子分块、语义分块、重排序，SSE 流式输出 |
-| 🎨 **内容生成与导出** | 思维导图、PPT（支持导出 HTML / docx）、测验、AI 笔记 |
+| 🔍 **RAG 检索与协同对话** | 基于 Milvus 向量库 + Eino 编排，支持父子分块、语义分块、重排序、SSE 流式输出，以及主 Agent 协调搜索与生成子 Agent |
+| 🎨 **异步内容生成与导出** | 思维导图、PPT（支持导出 HTML / docx）、测验、AI 笔记；生成任务支持排队、进度状态、取消、历史查看与结果回填 |
+| 🧠 **跨会话输出偏好** | 用户可在设置中维护默认语言、回答篇幅、回答方式、输出格式、生成风格和通用偏好；当前请求始终优先于已保存偏好 |
+| 👍 **回答质量反馈** | 对已保存的 Chat 助手回答点赞/点踩并选择固定原因；可修改或撤回，刷新会话后保留当前状态 |
 | 🧩 **多模型即插即用** | LLM / Embedding / ASR / 搜索四类服务均采用可插拔 Provider 注册表，用户级配置、API Key 加密存储 |
 | 🔐 **账号体系** | 邮箱注册 + 验证码、双 Token（Access / Refresh）+ Redis 黑名单、滑动验证码、登录失败锁定、bcrypt 密码哈希 |
-| ⚙️ **管理后台** | 用户管理、系统级配置（搜索 / ASR / Embedding）动态管理 |
+| ⚙️ **管理后台** | 用户管理、系统级配置（搜索 / ASR / Embedding）动态管理，以及脱敏反馈报表、筛选明细和 CSV 导出 |
+
+### 🧠 偏好与反馈闭环
+
+- **长期记忆**：只保存用户明确维护的输出偏好，不保存用户事实、完整对话或资料内容。偏好会用于后续 Chat 和内容生成，用户可随时编辑或删除。
+- **回答反馈**：反馈绑定一条已持久化的 Chat 助手消息，采用固定原因分类；每位用户对同一回答只保留一份当前评价，可改选或撤回。
+- **隐私边界**：反馈记录、管理员列表和 CSV 不复制用户问题、回答正文、引用或会话标题。管理员仅可查看提交时间、评价和原因的脱敏明细与聚合数据。
 
 ### 🛠️ 技术栈
 
@@ -259,6 +267,7 @@ UPDATE users SET role = 'admin' WHERE email = 'your_email@example.com';
 
 - **用户管理**：查看用户列表、启用 / 禁用用户（`PUT /admin/users/:id/status`）
 - **系统配置**：动态管理 `search` / `asr` / `embedding` 三类系统级配置（`/admin/config/*`）
+- **反馈工作台**：按最多 31 天的时间窗口和固定枚举筛选，查看反馈总量、点赞/点踩数量、正向占比、原因分布与脱敏分页明细；可导出最多 10,000 行的 CSV
 
 > 注意：LLM 配置为用户级，每个用户独立配置自己的 LLM Provider 和 API Key；系统级配置（搜索 / ASR / Embedding）由管理员统一管理。
 
@@ -333,7 +342,6 @@ docker compose logs --tail=50 mysql   # 查看数据库是否就绪
 <details>
 <summary><b>点击展开 / 收起后续计划</b></summary>
 
-- **多 Agent 协作**：支持在对话中调用多个 Agent 协同完成任务（规划 / 检索 / 生成 / 校验分工）。
 - **HTTPS 与域名**：集成 HTTPS 证书与自定义域名访问，提升生产环境安全性。
 - **Provider 注册引导**：对四类可配置服务（LLM / Embedding / ASR / 搜索）补充常见提供商的注册申请指引，降低新用户配置门槛。
 - **多笔记平台接入**：不限于有道云笔记，计划接入印象笔记、Notion、飞书文档、语雀等主流笔记 / 文档端，实现统一的知识库管理。
