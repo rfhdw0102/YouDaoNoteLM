@@ -220,7 +220,15 @@ func (s *chatAgentService) processWithAgentAsync(ctx context.Context, conversati
 	)
 
 	//  保存结果（即使 ctx 已取消也要保存，使用 Background ctx）
-	s.saveResults(ctx, conversationID, req.UserID, req.Content, fullContent, chatAgent.GetReferences())
+	savedMessageID := s.saveResults(ctx, conversationID, req.UserID, req.Content, fullContent, chatAgent.GetReferences())
+
+	//  助手消息持久化成功后，发送 answer_persisted 事件
+	if savedMessageID > 0 {
+		eventCh <- chat.StreamEvent{
+			Type: chat.EventAnswerPersisted,
+			Data: chat.AnswerPersistedData{MessageID: savedMessageID},
+		}
+	}
 
 	//  生成标题并发送给前端
 	if title := s.maybeGenerateTitle(ctx, conversationID, req.UserID, req.Content, fullContent); title != "" {
@@ -376,15 +384,15 @@ func (s *chatAgentService) processAndForward(ctx context.Context, chatAgent *cha
 	}
 }
 
-// saveResults 保存结果
-func (s *chatAgentService) saveResults(ctx context.Context, conversationID, userID uint, userContent, fullContent string, references []response.Reference) {
+// saveResults 保存结果，返回已保存的助手消息 ID（0 表示未保存）
+func (s *chatAgentService) saveResults(ctx context.Context, conversationID, userID uint, userContent, fullContent string, references []response.Reference) uint {
 	saveCtx := context.Background()
 
 	// 保存消息
-	evictedPair, err := s.saveMessages(saveCtx, conversationID, userContent, fullContent, references)
+	savedMessageID, evictedPair, err := s.saveMessages(saveCtx, conversationID, userContent, fullContent, references)
 	if err != nil {
 		logger.Error("[Agent] 保存消息失败", zap.Error(err))
-		return
+		return 0
 	}
 
 	// 异步更新摘要
@@ -395,12 +403,14 @@ func (s *chatAgentService) saveResults(ctx context.Context, conversationID, user
 			}
 		}()
 	}
+
+	return savedMessageID
 }
 
-// saveMessages 保存助手消息
-func (s *chatAgentService) saveMessages(ctx context.Context, conversationID uint, userContent, assistantContent string, references []response.Reference) (*cache.MessagePair, error) {
+// saveMessages 保存助手消息，返回已保存的助手消息 ID 和缓存淘汰对
+func (s *chatAgentService) saveMessages(ctx context.Context, conversationID uint, userContent, assistantContent string, references []response.Reference) (uint, *cache.MessagePair, error) {
 	if len(assistantContent) == 0 {
-		return nil, nil
+		return 0, nil, nil
 	}
 
 	assistantMetadata := "{}"
@@ -411,13 +421,14 @@ func (s *chatAgentService) saveMessages(ctx context.Context, conversationID uint
 		}
 	}
 
-	if err := s.messageRepo.Create(&entity.Message{
+	msg := &entity.Message{
 		ConversationID: conversationID,
 		Role:           "assistant",
 		Content:        assistantContent,
 		Metadata:       assistantMetadata,
-	}); err != nil {
-		return nil, fmt.Errorf("保存助手消息失败: %w", err)
+	}
+	if err := s.messageRepo.Create(msg); err != nil {
+		return 0, nil, fmt.Errorf("保存助手消息失败: %w", err)
 	}
 
 	var evictedPair *cache.MessagePair
@@ -431,7 +442,7 @@ func (s *chatAgentService) saveMessages(ctx context.Context, conversationID uint
 		logger.Warn("[Agent] 更新消息缓存失败", zap.Error(err))
 	}
 
-	return evictedPair, nil
+	return msg.ID, evictedPair, nil
 }
 
 // updateSummary 更新对话摘要

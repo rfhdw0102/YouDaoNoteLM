@@ -3,6 +3,7 @@ package app
 import (
 	searchAgent "YoudaoNoteLm/internal/agent/search"
 	"YoudaoNoteLm/internal/api"
+	"YoudaoNoteLm/internal/feedback"
 	"YoudaoNoteLm/internal/memory"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/rag"
@@ -131,6 +132,7 @@ func (a *App) initDatabase() error {
 		&entity.YoudaoBinding{},
 		&entity.SysConfig{},
 		&memory.UserMemory{},
+		&feedback.AnswerFeedback{},
 	); err != nil {
 		logger.Warn("database migration failed", zap.Error(err))
 	}
@@ -323,9 +325,16 @@ func (a *App) initDependencies() {
 
 	// 创建 ChatAgentService 和 ConversationService
 	chatAgentSvc := service.NewChatAgentServiceWithMemory(llmConfigRepo, userRepo, ragRetriever, conversationRepo, messageRepo, chatCache, sourceRepo, sourceSummaryCache, a.cfg.Security.EncryptionKey, userMemorySvc)
-	convSvc := service.NewConversationService(conversationRepo, messageRepo, chatCache)
+
+	// 创建反馈服务（同时暴露 AdminReader 给管理端）
+	feedbackStore, feedbackAdminReader := feedback.NewMySQLAdminStore(a.mysqlDB)
+	feedbackSvc := feedback.NewService(feedbackStore)
+
+	// ConversationService 注入可选 feedback.Reader
+	convSvc := service.NewConversationServiceWithFeedback(conversationRepo, messageRepo, chatCache, feedbackSvc)
 	logger.Info("ChatAgentService 初始化成功")
 	logger.Info("ConversationService 初始化成功")
+	logger.Info("FeedbackService 初始化成功")
 
 	a.router = api.NewRouter(
 		userSvc,
@@ -349,6 +358,8 @@ func (a *App) initDependencies() {
 		minioStorage,
 		userRepo,
 		userMemorySvc,
+		feedbackSvc,
+		feedbackAdminReader,
 	)
 }
 

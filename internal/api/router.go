@@ -4,6 +4,7 @@ import (
 	"YoudaoNoteLm/internal/api/v1/admin"
 	"YoudaoNoteLm/internal/api/v1/auth"
 	"YoudaoNoteLm/internal/api/v1/chat"
+	feedbackCtrl "YoudaoNoteLm/internal/api/v1/feedback"
 	"YoudaoNoteLm/internal/api/v1/file"
 	"YoudaoNoteLm/internal/api/v1/generation"
 	"YoudaoNoteLm/internal/api/v1/importn"
@@ -15,6 +16,7 @@ import (
 	"YoudaoNoteLm/internal/api/v1/user"
 	userconfig "YoudaoNoteLm/internal/api/v1/user_config"
 	youdao "YoudaoNoteLm/internal/api/v1/youdao"
+	"YoudaoNoteLm/internal/feedback"
 	"YoudaoNoteLm/internal/memory"
 	"YoudaoNoteLm/internal/middleware"
 	"YoudaoNoteLm/internal/rag"
@@ -33,6 +35,7 @@ type Router struct {
 	sourceCtrl     *source.Controller
 	generationCtrl *generation.Controller
 	chatCtrl       *chat.Controller
+	feedbackCtrl   *feedbackCtrl.Controller
 	tokenBlacklist service.TokenBlacklistService
 	userRepo       repository.UserRepository
 	importCtrl     *importn.Controller
@@ -68,6 +71,8 @@ func NewRouter(
 	storage externalStorage.FileStorage,
 	userRepo repository.UserRepository,
 	memoryService memory.Service,
+	feedbackSvc feedback.Service,
+	feedbackAdminReader feedback.AdminReader,
 ) *Router {
 	return &Router{
 		userCtrl:       user.NewController(userService, tokenBlacklist),
@@ -76,11 +81,12 @@ func NewRouter(
 		sourceCtrl:     source.NewController(sourceService, tokenBlacklist),
 		generationCtrl: generation.NewController(generationService, generationTaskService),
 		chatCtrl:       chat.NewController(chatAgentService, convService),
+		feedbackCtrl:   feedbackCtrl.NewController(feedbackSvc),
 		tokenBlacklist: tokenBlacklist,
 		userRepo:       userRepo,
 		importCtrl:     importn.NewController(importerService),
 		searchCtrl:     search.NewController(searchAgentService, tokenBlacklist),
-		adminCtrl:      admin.NewController(adminService),
+		adminCtrl:      admin.NewControllerWithFeedback(adminService, admin.NewFeedbackController(feedbackAdminReader)),
 		providerCtrl:   providers.NewController(configService),
 		youdaoCtrl:     youdao.NewController(youdaoService),
 		userConfigCtrl: userconfig.NewController(userConfigService, tokenBlacklist, ingestionService),
@@ -122,6 +128,9 @@ func (r *Router) Setup(engine *gin.Engine) {
 		// 导入路由（需认证）
 		r.importCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
 		r.chatCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
+
+		// 反馈路由（需认证）
+		r.feedbackCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
 
 		// 用户配置路由（需认证）
 		r.userConfigCtrl.RegisterRoutes(v1, statusCheck)

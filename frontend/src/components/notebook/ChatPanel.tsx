@@ -12,8 +12,9 @@ import { useNotebookStore } from '../../stores/useNotebookStore';
 import { cn } from '../../utils/cn';
 import { listLLMConfigs } from '../../api/userConfig';
 import type { UserLLMConfig } from '../../api/userConfig';
-import type { Reference } from '../../types';
+import type { Reference, ChatMessageFeedback } from '../../types';
 import type { Root, Text } from 'mdast';
+import AnswerFeedbackControls from './AnswerFeedbackControls';
 
 // Reference popover component
 function ReferencePopover({ references, startIndex = 1 }: { references: Reference[]; startIndex?: number }) {
@@ -321,7 +322,7 @@ export default function ChatPanel() {
   const {
     currentNotebookId, currentConversationId,
     notebooks, streamingContent, createConversation, setCurrentConversation, deleteConversation,
-    renameConversation, sendMessage, stopGeneration, fetchMessages
+    renameConversation, sendMessage, stopGeneration, fetchMessages, updateMessage
   } = useNotebookStore();
 
   const notebook = notebooks.find((n) => n.id === currentNotebookId);
@@ -666,6 +667,16 @@ export default function ChatPanel() {
                 {!msg.isStreaming && (
                   <div className="flex items-center gap-2 mt-2 pt-2 border-t border-border">
                     <CopyButton content={msg.content} onCopy={handleCopy} variant="dark" />
+                    {/* Feedback controls: only for persisted assistant messages with numeric ID */}
+                    {msg.role === 'assistant' && /^\d+$/.test(msg.id) && currentNotebookId && currentConversationId && (
+                      <AnswerFeedbackControls
+                        messageId={Number(msg.id)}
+                        feedback={msg.feedback}
+                        onFeedbackChange={(fb: ChatMessageFeedback | null) => {
+                          updateMessage(currentNotebookId, currentConversationId, msg.id, { feedback: fb });
+                        }}
+                      />
+                    )}
                   </div>
                 )}
               </div>

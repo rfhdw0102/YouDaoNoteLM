@@ -32,6 +32,12 @@ export interface Reference {
   score: number;
 }
 
+export interface ChatMessageFeedback {
+  rating: string;
+  reason: string;
+  updatedAt: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -40,6 +46,7 @@ export interface ChatMessage {
   isStreaming?: boolean;
   references?: Reference[];
   citations?: string[];   // source IDs referenced (deprecated, use references)
+  feedback?: ChatMessageFeedback | null;
 }
 
 export interface Conversation {

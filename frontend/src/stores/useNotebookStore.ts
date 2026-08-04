@@ -1150,6 +1150,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
             chunkContent: ref.chunk_content,
             score: ref.score,
           })),
+          feedback: msg.feedback
+            ? { rating: msg.feedback.rating, reason: msg.feedback.reason, updatedAt: msg.feedback.updated_at }
+            : null,
         }));
         set((state) => ({
           notebooks: state.notebooks.map((n) =>
@@ -1433,6 +1436,31 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
                             messages: c.messages.map((m) =>
                               m.id === assistantMessageId
                                 ? { ...m, content: busyMessage, isStreaming: false }
+                                : m
+                            ),
+                          }
+                        : c
+                    ),
+                  }
+                : n
+            ),
+          }));
+        },
+        onAnswerPersisted: (messageId) => {
+          console.log('[AnswerPersisted] message_id:', messageId);
+          // Replace the temporary streaming message ID with the real server message ID
+          set((state) => ({
+            notebooks: state.notebooks.map((n) =>
+              n.id === notebookId
+                ? {
+                    ...n,
+                    conversations: n.conversations.map((c) =>
+                      c.id === conversationId
+                        ? {
+                            ...c,
+                            messages: c.messages.map((m) =>
+                              m.id === assistantMessageId
+                                ? { ...m, id: String(messageId) }
                                 : m
                             ),
                           }

@@ -41,7 +41,14 @@ const (
 	// 主从协同：生成触发事件
 	EventGenerationStarted = "generation_started" // 生成开始（Data=type）
 	EventGenerationResult  = "generation_result"  // 生成结果（Data={type, content}）
+	// 反馈：助手消息持久化后通知前端
+	EventAnswerPersisted = "answer_persisted" // 助手消息已持久化（Data={message_id}）
 )
+
+// AnswerPersistedData is the payload for the answer_persisted event.
+type AnswerPersistedData struct {
+	MessageID uint `json:"message_id"`
+}
 
 // SearchAgentExecutor 搜索 Agent 流式执行接口。
 type SearchAgentExecutor interface {
@@ -102,7 +109,7 @@ func (a *ChatAgent) Process(ctx context.Context, conversationID uint, content st
 			refs := make([]response.Reference, 0, len(results))
 			for _, r := range results {
 				refs = append(refs, response.Reference{
-					SourceName:    r.URL,
+					SourceName:   r.URL,
 					ChunkContent: r.Snippet,
 					Score:        float32(r.Score),
 				})

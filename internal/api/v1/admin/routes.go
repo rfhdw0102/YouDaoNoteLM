@@ -17,5 +17,12 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup, blacklist service.Tok
 		admin.POST("/config/:group", ctrl.AddConfig)
 		admin.PUT("/config/:group/:key", ctrl.UpdateConfig)
 		admin.DELETE("/config/:group/:key", ctrl.DeleteConfig)
+
+		// Feedback admin routes
+		if ctrl.feedbackCtrl != nil {
+			admin.GET("/feedback/overview", ctrl.feedbackCtrl.Overview)
+			admin.GET("/feedback", ctrl.feedbackCtrl.List)
+			admin.GET("/feedback/export.csv", ctrl.feedbackCtrl.ExportCSV)
+		}
 	}
 }

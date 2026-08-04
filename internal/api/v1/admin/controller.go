@@ -13,10 +13,16 @@ import (
 
 type Controller struct {
 	adminService service.AdminService
+	feedbackCtrl *FeedbackController
 }
 
 func NewController(adminService service.AdminService) *Controller {
 	return &Controller{adminService: adminService}
+}
+
+// NewControllerWithFeedback creates an admin controller with feedback support.
+func NewControllerWithFeedback(adminService service.AdminService, feedbackCtrl *FeedbackController) *Controller {
+	return &Controller{adminService: adminService, feedbackCtrl: feedbackCtrl}
 }
 
 func (ctrl *Controller) ListUsers(c *gin.Context) {
