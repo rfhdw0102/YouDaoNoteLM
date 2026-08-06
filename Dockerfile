@@ -57,11 +57,6 @@ COPY --from=backend-builder /app/server /app/server
 # 复制配置文件目录
 COPY configs/ /app/configs/
 
-# 复制有道转换脚本
-COPY scripts/ /app/scripts/
-RUN pip3 install --no-cache-dir -r /app/scripts/youdao/requirements.txt 2>/dev/null || \
-    pip3 install --break-system-packages --no-cache-dir -r /app/scripts/youdao/requirements.txt
-
 # 创建必要目录
 RUN mkdir -p /app/logs
 

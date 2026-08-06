@@ -29,7 +29,6 @@ type youdaoService struct {
 	configSvc    ConfigService      // 用于获取用户 LLM 配置（摘要生成）
 	summaryCache *cache.SourceSummaryCache
 	cancelFuncs  sync.Map // taskID -> context.CancelFunc
-	cookiesPath  string   // youdaonote cookies 文件路径（用于 .note 格式转换）
 }
 
 // NewYoudaoService 创建有道云笔记服务
@@ -38,7 +37,6 @@ func NewYoudaoService(
 	bindingRepo repository.YoudaoBindingRepository,
 	sourceRepo repository.SourceRepository,
 	ingestionSvc rag.IngestionService,
-	cookiesPath string,
 	structurer MarkdownStructurer,
 	configSvc ConfigService,
 	summaryCache *cache.SourceSummaryCache,
@@ -48,7 +46,6 @@ func NewYoudaoService(
 		bindingRepo:  bindingRepo,
 		sourceRepo:   sourceRepo,
 		ingestionSvc: ingestionSvc,
-		cookiesPath:  cookiesPath,
 		structurer:   structurer,
 		configSvc:    configSvc,
 		summaryCache: summaryCache,
@@ -174,47 +171,12 @@ func (s *youdaoService) ImportNote(userID uint, notebookID uint, fileID string) 
 
 	content := strings.TrimSpace(readResult.Content)
 
-	// .note 格式必须转换为 Markdown（向量化要求 Markdown 格式）
-	if readResult.RawFormat == "note" {
-		// 空笔记无需转换，直接返回空内容，由调用方处理
-		if content == "" && s.cookiesPath == "" {
-			return nil, fmt.Errorf("笔记内容为空")
-		}
-		if s.cookiesPath == "" {
-			return nil, fmt.Errorf("笔记为 .note 格式，但未配置 cookies 文件路径，无法转换")
-		}
-		logger.Info("笔记为 .note 格式，开始转换为 Markdown", zap.String("file_id", fileID))
-		convertStart := time.Now()
-		convertedContent, convertErr := s.cli.ConvertNote(fileID, s.cookiesPath)
-		if convertErr != nil {
-			logger.Error(".note 格式转换失败",
-				zap.String("file_id", fileID),
-				zap.Duration("elapsed", time.Since(convertStart)),
-				zap.Error(convertErr),
-			)
-			return nil, fmt.Errorf(".note 格式转换失败: %w", convertErr)
-		}
-		if strings.TrimSpace(convertedContent) == "" {
-			return nil, fmt.Errorf(".note 格式转换后内容为空")
-		}
-		content = convertedContent
-		logger.Info(".note 格式转换成功",
-			zap.String("file_id", fileID),
-			zap.Int("content_len", len(content)),
-			zap.Duration("elapsed", time.Since(convertStart)),
-		)
-	} else if content == "" && s.cookiesPath != "" {
-		// 非 .note 格式但内容为空，尝试转换（可能是格式识别错误）
-		logger.Info("内容为空，尝试使用 youdaonote-pull 转换", zap.String("file_id", fileID))
-		convertStart := time.Now()
-		convertedContent, convertErr := s.cli.ConvertNote(fileID, s.cookiesPath)
-		if convertErr != nil {
-			logger.Warn("youdaonote-pull 转换失败", zap.String("file_id", fileID), zap.Duration("elapsed", time.Since(convertStart)), zap.Error(convertErr))
-		} else if strings.TrimSpace(convertedContent) != "" {
-			content = convertedContent
-			logger.Info("youdaonote-pull 转换成功", zap.String("file_id", fileID), zap.Duration("elapsed", time.Since(convertStart)))
-		}
-	}
+	// CLI 返回的内容直接进入导入流程；不再执行额外的 .note/Cookie 转换。
+	logger.Info("有道笔记原始内容已接收",
+		zap.String("file_id", fileID),
+		zap.String("raw_format", readResult.RawFormat),
+		zap.Int("content_len", len(content)),
+	)
 
 	// 检查内容是否为空
 	if content == "" {
@@ -512,71 +474,13 @@ func (s *youdaoService) processSingleNote(taskCtx context.Context, apiKey string
 
 	content := strings.TrimSpace(readResult.Content)
 
-	// .note 格式必须转换为 Markdown（向量化要求 Markdown 格式）
-	if readResult.RawFormat == "note" {
-		// 空笔记无需转换，跳过入库
-		if content == "" && s.cookiesPath == "" {
-			logger.Info("笔记内容为空，跳过入库", zap.String("file_id", fileID))
-			if updateErr := s.sourceRepo.UpdateStatus(sourceID, "ready", ""); updateErr != nil {
-				logger.Warn("更新Source状态失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
-			}
-			return
-		}
-		if s.cookiesPath == "" {
-			logger.Error("笔记为 .note 格式，但未配置 cookies 文件路径",
-				zap.Uint("source_id", sourceID),
-				zap.String("file_id", fileID),
-			)
-			if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", "笔记为 .note 格式，但未配置 cookies 文件路径"); updateErr != nil {
-				logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
-			}
-			return
-		}
-		logger.Info("笔记为 .note 格式，开始转换为 Markdown", zap.String("file_id", fileID))
-		convertStart := time.Now()
-		convertedContent, convertErr := s.cli.ConvertNote(fileID, s.cookiesPath)
-		if convertErr != nil {
-			logger.Error(".note 格式转换失败",
-				zap.Uint("source_id", sourceID),
-				zap.String("file_id", fileID),
-				zap.Duration("elapsed", time.Since(convertStart)),
-				zap.Error(convertErr),
-			)
-			if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", fmt.Sprintf(".note 格式转换失败: %v", convertErr)); updateErr != nil {
-				logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
-			}
-			return
-		}
-		if strings.TrimSpace(convertedContent) == "" {
-			logger.Error(".note 格式转换后内容为空",
-				zap.Uint("source_id", sourceID),
-				zap.String("file_id", fileID),
-				zap.Duration("elapsed", time.Since(convertStart)),
-			)
-			if updateErr := s.sourceRepo.UpdateStatus(sourceID, "failed", ".note 格式转换后内容为空"); updateErr != nil {
-				logger.Warn("更新Source状态为failed失败", zap.Uint("source_id", sourceID), zap.Error(updateErr))
-			}
-			return
-		}
-		content = convertedContent
-		logger.Info(".note 格式转换成功",
-			zap.Uint("source_id", sourceID),
-			zap.String("file_id", fileID),
-			zap.Int("content_len", len(content)),
-			zap.Duration("elapsed", time.Since(convertStart)),
-		)
-	} else if content == "" && s.cookiesPath != "" {
-		// 非 .note 格式但内容为空，尝试转换（可能是格式识别错误）
-		logger.Info("内容为空，尝试使用 youdaonote-pull 转换", zap.String("file_id", fileID))
-		convertStart := time.Now()
-		convertedContent, convertErr := s.cli.ConvertNote(fileID, s.cookiesPath)
-		if convertErr != nil {
-			logger.Warn("youdaonote-pull 转换失败", zap.String("file_id", fileID), zap.Duration("elapsed", time.Since(convertStart)), zap.Error(convertErr))
-		} else if strings.TrimSpace(convertedContent) != "" {
-			content = convertedContent
-			logger.Info("youdaonote-pull 转换成功", zap.String("file_id", fileID), zap.Duration("elapsed", time.Since(convertStart)))
-		}
-	}
+	// CLI 返回的内容直接进入导入流程；不再执行额外的 .note/Cookie 转换。
+	logger.Info("有道笔记原始内容已接收",
+		zap.Uint("source_id", sourceID),
+		zap.String("file_id", fileID),
+		zap.String("raw_format", readResult.RawFormat),
+		zap.Int("content_len", len(content)),
+	)
 
 	// 检查内容是否为空
 	if content == "" {

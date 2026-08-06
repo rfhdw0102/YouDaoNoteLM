@@ -297,12 +297,12 @@ func (a *App) initDependencies() {
 	userCfgSvc := service.NewUserConfigService(userConfigRepo, llmConfigRepo, configSvc, a.cfg.Security.EncryptionKey)
 
 	// 创建有道云笔记服务（CLI 不可用时仅打 warning，不影响启动）
-	youdaoCLI := externalYoudao.NewCLI(a.cfg.External.Youdao.CLIPath, a.cfg.External.Youdao.ConverterScriptPath)
+	youdaoCLI := externalYoudao.NewCLI(a.cfg.External.Youdao.CLIPath)
 	if err := youdaoCLI.CheckAvailable(); err != nil {
 		logger.Warn("youdaonote CLI 不可用，有道云笔记导入功能将无法使用", zap.Error(err))
 	}
 	youdaoBindingRepo := repository.NewYoudaoBindingRepository(a.mysqlDB)
-	youdaoSvc := service.NewYoudaoService(youdaoCLI, youdaoBindingRepo, sourceRepo, ingestionSvc, a.cfg.External.Youdao.CookiesPath, structurer, configSvc, sourceSummaryCache)
+	youdaoSvc := service.NewYoudaoService(youdaoCLI, youdaoBindingRepo, sourceRepo, ingestionSvc, structurer, configSvc, sourceSummaryCache)
 
 	// 创建搜索 Agent（import_document 是公共工具，search agent 只用 url 来源，不依赖 youdao）
 	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc)
