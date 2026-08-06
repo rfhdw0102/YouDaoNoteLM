@@ -11,7 +11,6 @@
 YouDaoNoteLM 是一个 NotebookLM 风格的全栈知识问答应用：将你的有道云笔记（或本地文件、网页、音频）导入为知识源，通过向量检索 + 大模型生成（RAG）实现精准问答、异步内容生成（思维导图 / PPT / 测验 / 笔记）和流式对话。用户可维护跨会话输出偏好，并对已保存回答提交分类点赞/点踩反馈；前端 React + Vite，后端 Go + Gin，向量库 Milvus，对象存储 MinIO，全部通过 Docker Compose 一键拉起。
 
 ---
-
 ## 📋 一、项目总体介绍
 
 ### ✨ 核心能力
@@ -123,7 +122,6 @@ youdaonotelm/                     # 部署根目录
 ├── .env                          # 环境变量配置（密码、端口等，需自行创建）
 └── configs/
     ├── docker_config.yaml        # 应用配置（从 docker_config.yaml.example 复制后修改）
-    └── youdao_cookies.json       # 有道云笔记 Cookie（可选，需自行创建）
 ```
 
 ### 💻 方式二：源码本地部署（开发）
@@ -136,7 +134,21 @@ youdaonotelm/                     # 部署根目录
 - **Node.js** ≥ 20（用于构建前端）
 - **Python** ≥ 3.11（MarkItDown 服务，可选）
 - **Docker** + docker compose v2（运行依赖服务：MySQL / Redis / MinIO / Milvus）
-- 系统需安装 `ffmpeg`（音频处理）、`glibc`（有道云笔记 CLI 依赖，故镜像基础为 `nginx:bookworm`）
+- 系统需安装 `ffmpeg`（音频处理）
+- 本地直接运行 Go 后端还需安装 `youdaonote` CLI；Docker 镜像会在构建时自动安装
+
+#### 有道云笔记 CLI
+
+有道云笔记的目录浏览、搜索、读取、创建和更新操作通过 `youdaonote` CLI 完成。Docker 构建会自动安装 CLI；本地直接运行 `go run ./cmd/server` 时，需要先自行安装并确保它在 `PATH` 中：
+
+```bash
+curl -fsSL https://artifact.lx.netease.com/download/youdaonote-cli/install.sh \
+  | bash -s -- -f -b "$HOME/.local/bin"
+
+youdaonote --source ydn check --json
+```
+
+如果 CLI 不在 `PATH` 中，请在 `configs/config.yaml` 的 `external.youdao.cli_path` 中填写绝对路径。默认值 `youdaonote` 表示从 `PATH` 查找。CLI 不可用时应用仍可启动，但有道云笔记相关功能无法使用。
 
 #### 部署步骤
 
@@ -331,12 +343,17 @@ docker compose logs --tail=50 mysql   # 查看数据库是否就绪
 <details>
 <summary><b>📒 有道云笔记导入失败</b></summary>
 
-`configs/youdao_cookies.json` 中的 Cookie 已过期。重新登录有道云笔记网页版，抓取 Cookie 替换该文件后 `docker compose restart app`。
+先确认 `youdaonote` CLI 已安装且可执行：
+
+```bash
+youdaonote --source ydn check --json
+```
+
+绑定和同步使用用户 API Key；CLI 返回的内容直接进入后续导入流程。
 
 </details>
 
 ---
-
 ## 🗺️ 七、后续计划
 
 <details>
@@ -350,18 +367,3 @@ docker compose logs --tail=50 mysql   # 查看数据库是否就绪
 
 ---
 
-## 📎 附录 A：youdao_cookies.json 说明
-
-用于有道云笔记 CLI 登录，格式如下（值需从浏览器登录有道云笔记后抓取 Cookie 填入）：
-
-```json
-{
-    "cookies": [
-        ["YNOTE_CSTK", "你的YNOTE_CSTK值", ".note.youdao.com", "/"],
-        ["YNOTE_LOGIN", "你的YNOTE_LOGIN值", ".note.youdao.com", "/"],
-        ["YNOTE_SESS", "你的YNOTE_SESS值", ".note.youdao.com", "/"]
-    ]
-}
-```
-
-> Cookie 会过期，过期后导入笔记会失败，需重新抓取并替换该文件，然后 `docker compose restart app`。
