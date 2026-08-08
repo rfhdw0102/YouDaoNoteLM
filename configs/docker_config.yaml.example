@@ -80,8 +80,6 @@ external:
     max_count: 10
   youdao:
     cli_path: "youdaonote"
-    converter_script_path: "/app/scripts/youdao/convert_to_markdown.py"
-    cookies_path: ""
 
 # CORS 配置
 cors:
