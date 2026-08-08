@@ -150,6 +150,31 @@ youdaonote --source ydn check --json
 
 如果 CLI 不在 `PATH` 中，请在 `configs/config.yaml` 的 `external.youdao.cli_path` 中填写绝对路径。默认值 `youdaonote` 表示从 `PATH` 查找。CLI 不可用时应用仍可启动，但有道云笔记相关功能无法使用。
 
+#### YoudaoNoteLM API CLI 包装
+
+项目提供了一个 Python CLI 包装用于调用 HTTP API。先启动本地服务：
+
+```bash
+docker compose up -d
+```
+
+然后安装并查看命令：
+
+```bash
+cd agent-harness
+python -m pip install -e .
+python -m cli_anything.youdaonotelm --help
+```
+
+CLI 默认请求 `http://localhost:8080`。其他 API 地址通过放在子命令之前的 `--base-url` 指定：
+
+```bash
+python -m cli_anything.youdaonotelm --base-url http://localhost:8081 health
+python -m cli_anything.youdaonotelm --base-url http://localhost:8081 login <email> <password>
+```
+
+登录时出现 `WinError 10061` 通常表示后端尚未启动或地址/端口错误。访问令牌保存在用户目录下的 `.config/youdaonotelm/token.json`。
+
 #### 部署步骤
 
 ```bash
