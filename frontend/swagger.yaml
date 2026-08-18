@@ -5,7 +5,7 @@ info:
     有道云笔记 LM 后端服务 API 文档。
 
     ## 认证方式
-    除认证模块（`/auth/*`）外，所有接口均需在 Header 中携带 JWT Access Token：
+    除认证模块（`/auth/*`）和公开的 Notion OAuth 回调（`GET /api/v1/notion/oauth/callback`，由 Notion 重定向调用）外，所有接口均需在 Header 中携带 JWT Access Token。该回调不携带 JWT：
     ```
     Authorization: Bearer <access_token>
     ```
@@ -41,6 +41,8 @@ tags:
     description: 导入模块 — 文件导入、音频转写
   - name: Search
     description: 搜索 Agent 模块 — 智能搜索、URL 导入
+  - name: Notion
+    description: Notion OAuth、页面浏览和手动快照导入；仅页面，不支持数据库或自动同步
 
 components:
   securitySchemes:
@@ -49,6 +51,15 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: JWT Access Token
+
+  parameters:
+    NotionTaskID:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 当前用户的 Notion 导入任务 ID
 
   schemas:
     # ========== 通用 ==========
@@ -346,7 +357,7 @@ components:
           example: 测试文档.pdf
         type:
           type: string
-          enum: [file, url, audio, note, youdao]
+          enum: [file, url, audio, note, youdao, notion]
           example: file
         original_url:
           type: string
@@ -427,6 +438,126 @@ components:
           enum: [pending, processing, completed, failed]
         error_detail:
           type: string
+
+    # ========== Notion ==========
+    NotionOAuthStartResponse:
+      type: object
+      properties:
+        authorize_url:
+          type: string
+          format: uri
+          description: 服务端生成的 Notion 授权地址；浏览器跳转到该地址。不得记录或修改其中的 state。
+
+    NotionBindingStatusResponse:
+      type: object
+      properties:
+        bound:
+          type: boolean
+        status:
+          type: string
+          enum: [active, revoked]
+        workspace_id:
+          type: string
+        workspace_name:
+          type: string
+        workspace_icon:
+          type: string
+          format: uri
+          nullable: true
+      description: 连接状态和工作区显示信息；不包含 access token、OAuth code 或 client secret。
+
+    NotionPageItem:
+      type: object
+      required: [id, title, url, last_edited_time, has_children]
+      properties:
+        id:
+          type: string
+          description: Notion 页面 ID
+        title:
+          type: string
+          description: 页面标题；缺失标题时为“未命名 Notion 页面”
+        url:
+          type: string
+          format: uri
+          description: Notion 页面 URL
+        last_edited_time:
+          type: string
+          format: date-time
+        has_children:
+          type: boolean
+
+    NotionPageListResponse:
+      type: object
+      required: [list, has_more]
+      properties:
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotionPageItem'
+        next_cursor:
+          type: string
+          nullable: true
+          description: 不透明游标；下一次请求原样传回，不能据此拼接 Notion URL。
+        has_more:
+          type: boolean
+
+    NotionImportBatchRequest:
+      type: object
+      required: [notebook_id, page_ids]
+      properties:
+        notebook_id:
+          type: integer
+          description: 当前用户拥有的笔记本 ID
+        page_ids:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: string
+          description: 去重后的 Notion 页面 ID；服务端会再次校验页面权限。
+
+    NotionImportBatchResponse:
+      type: object
+      required: [task_id, source_ids]
+      properties:
+        task_id:
+          type: string
+          description: 用于轮询或取消 Notion 导入任务的 ID
+        source_ids:
+          type: array
+          items:
+            type: integer
+          description: 新建的 type=notion 来源 ID
+
+    NotionImportTaskResponse:
+      type: object
+      required: [task_id, task_type, notebook_id, total_count, processed_count, success_count, fail_count, status, error_detail, created_at]
+      properties:
+        task_id:
+          type: string
+        task_type:
+          type: string
+          enum: [notion]
+        notebook_id:
+          type: integer
+        total_count:
+          type: integer
+        processed_count:
+          type: integer
+        success_count:
+          type: integer
+        fail_count:
+          type: integer
+        status:
+          type: string
+          enum: [pending, running, completed, partial_failed, failed, cancelled]
+        error_detail:
+          type: string
+          description: 可安全展示的失败摘要；不包含 Notion 原始响应或凭据。
+        created_at:
+          type: integer
+          format: int64
+          description: Unix 时间戳（秒）
 
     # ========== Search ==========
     SearchRequest:
@@ -541,6 +672,12 @@ components:
         | 40011 | LLM 调用失败 |
         | 40012 | LLM 返回结果格式异常 |
         | 40013 | 搜索 Agent 执行超时 |
+        | 40017 | Notion 未配置 |
+        | 40018 | 尚未连接 Notion |
+        | 40019 | Notion 授权已失效，请重新授权 |
+        | 40024 | Notion 请求过于频繁，请稍后重试 |
+        | 40025 | Notion 页面内容处理失败 |
+        | 40026 | Notion 导入任务已取消 |
         | 50001 | 内部服务错误 |
 
 paths:
@@ -1486,6 +1623,242 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/TaskIDResponse'
+
+  # ==================== Notion ====================
+  /notion/oauth/start:
+    get:
+      tags: [Notion]
+      summary: 创建 Notion OAuth 授权地址
+      description: |
+        需登录。服务端生成一次性、用户绑定的 state（10 分钟有效）并返回授权地址；前端应直接跳转。
+        浏览器不接收 Notion access token，且请求不能指定 redirect URI。
+      operationId: startNotionOAuth
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/NotionOAuthStartResponse'
+        "401":
+          description: 未登录或用户不可用
+        "400":
+          description: Notion 未配置（稳定业务码 40017）
+
+  /notion/oauth/callback:
+    get:
+      tags: [Notion]
+      summary: Notion OAuth 服务端回调
+      description: |
+        由 Notion 重定向调用，不携带 Bearer token。服务端原子消费 state，交换 code 后保存加密凭据，
+        随即 302 跳转到固定的 NOTION_FRONTEND_REDIRECT_URL。成功时附加 `notion_oauth=success`；
+        失败时附加 `notion_oauth=error&reason=<稳定枚举>`，不会透传第三方错误、OAuth code 或 token。
+      operationId: handleNotionOAuthCallback
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Notion 仅在授权成功时提供的短期 authorization code；禁止记录或展示。
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 服务端创建的一次性 state；缺失、过期或重复使用均失败。
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 用户拒绝授权时由 Notion 返回的错误类别。
+      responses:
+        "302":
+          description: |
+            跳转到固定前端设置页。失败 reason 仅为 denied、invalid_state、expired_state、user_disabled、exchange_failed 或 not_configured。
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+              description: 配置的前端设置页及安全的 OAuth 结果查询参数。
+
+  /notion/bind:
+    get:
+      tags: [Notion]
+      summary: 查询 Notion 连接状态
+      operationId: getNotionBinding
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/NotionBindingStatusResponse'
+    delete:
+      tags: [Notion]
+      summary: 解绑 Notion 工作区
+      description: 删除当前用户的本地加密凭据；远端撤销采用尽力而为方式，不阻塞本地解绑。
+      operationId: unbindNotion
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        nullable: true
+
+  /notion/pages:
+    get:
+      tags: [Notion]
+      summary: 分页浏览已授权的 Notion 页面
+      description: 仅返回 OAuth 当前可访问的 page 对象；不返回完整 properties 或凭据。页面权限可能在实际导入时再次变化。
+      operationId: listNotionPages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: query
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 500
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 上一响应返回的不透明 next_cursor。
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/NotionPageListResponse'
+        "400":
+          description: 未配置（40017）、未连接（40018）或授权失效（40019）
+        "429":
+          description: Notion 请求受限（稳定业务码 40024）
+
+  /notion/import/batch:
+    post:
+      tags: [Notion]
+      summary: 手动批量导入 Notion 页面快照
+      description: |
+        最多 50 个页面。服务端校验当前用户对笔记本和页面的访问权限，创建 type=notion 的来源及可查询任务。
+        这是一次性快照；不导入数据库、不会自动同步、不会写回 Notion，也不下载附件。
+      operationId: importNotionPagesBatch
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotionImportBatchRequest'
+      responses:
+        "200":
+          description: 任务已创建
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/NotionImportBatchResponse'
+        "400":
+          description: 参数、连接或授权状态异常；内容处理失败使用稳定业务码 40025。
+        "403":
+          description: 当前用户不拥有 notebook_id。
+
+  /notion/import/tasks/{taskId}:
+    get:
+      tags: [Notion]
+      summary: 查询 Notion 导入任务
+      operationId: getNotionImportTask
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NotionTaskID'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/NotionImportTaskResponse'
+        "403":
+          description: 任务不属于当前用户。
+        "404":
+          description: 任务不存在。
+    delete:
+      tags: [Notion]
+      summary: 取消 Notion 导入任务
+      description: 只取消当前用户的任务；已完成的来源不会回滚，尚未开始的来源进入 cancelled。
+      operationId: cancelNotionImportTask
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NotionTaskID'
+      responses:
+        "200":
+          description: 已请求取消；任务最终状态可通过查询接口获取，取消消息使用稳定业务码 40026。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Response'
+                  - type: object
+                    properties:
+                      data:
+                        nullable: true
+        "403":
+          description: 任务不属于当前用户。
+        "404":
+          description: 任务不存在。
 
   # ==================== Health ====================
   /health:

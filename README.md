@@ -17,7 +17,7 @@ YouDaoNoteLM 是一个 NotebookLM 风格的全栈知识问答应用：将你的�
 
 | 能力 | 说明 |
 |------|------|
-| 📥 **多源知识导入** | 有道云笔记批量同步、本地文件（PDF / Word / PPT / TXT，经 MarkItDown 转 Markdown）、网页 URL、音频（阿里云 ASR 转写） |
+| 📥 **多源知识导入** | 有道云笔记批量同步、Notion 页面手动快照导入、本地文件（PDF / Word / PPT / TXT，经 MarkItDown 转 Markdown）、网页 URL、音频（阿里云 ASR 转写） |
 | 🔍 **RAG 检索与协同对话** | 基于 Milvus 向量库 + Eino 编排，支持父子分块、语义分块、重排序、SSE 流式输出，以及主 Agent 协调搜索与生成子 Agent |
 | 🎨 **异步内容生成与导出** | 思维导图、PPT（支持导出 HTML / docx）、测验、AI 笔记；生成任务支持排队、进度状态、取消、历史查看与结果回填 |
 | 🧠 **跨会话输出偏好** | 用户可在设置中维护默认语言、回答篇幅、回答方式、输出格式、生成风格和通用偏好；当前请求始终优先于已保存偏好 |
@@ -243,6 +243,10 @@ docker compose up -d
 | `MINIO_ENDPOINT` | MinIO SDK 连接地址，Docker 部署设为 `minio:9000`，本地开发设为 `localhost:9000` | 可选 |
 | `MINIO_PUBLIC_ENDPOINT` | MinIO 公网地址，用于预签名 URL 的 host 重写（SDK 不连接此地址），供浏览器 / 阿里云 ASR 访问，格式 `服务器IP:端口` | **必填** |
 | `BOCHA_API_KEY` | 博查搜索 API Key，留空禁用联网搜索 | 可选 |
+| `NOTION_CLIENT_ID` | Notion OAuth Client ID；仅启用 Notion 时必填 | 条件必填 |
+| `NOTION_CLIENT_SECRET` | Notion OAuth Client Secret；只保存于 `.env` 或部署 Secret，绝不提供给浏览器 | 条件必填 |
+| `NOTION_REDIRECT_URI` | Notion 应用中登记的后端回调地址，必须逐字等于该应用配置 | 条件必填 |
+| `NOTION_FRONTEND_REDIRECT_URL` | OAuth 完成后服务端固定跳转的前端设置页地址；不能由请求参数覆盖 | 条件必填 |
 
 ### 📄 `configs/docker_config.yaml` — 应用配置
 
@@ -251,6 +255,24 @@ docker compose up -d
 - 如需调整非敏感字段（日志级别、连接池大小、CORS 等）再编辑此文件
 
 > **配置优先级**：`docker_config.yaml` 中的空字段会被 `.env` 中同名环境变量覆盖（通过 `pkg/config/loader.go` 的 `os.Getenv` 逻辑）。非空字段以 yaml 为准。
+
+### 📓 Notion OAuth 页面导入
+
+Notion 是页面级的手动快照导入：用户在设置页连接工作区后，选择页面并导入到笔记本。再次导入同一页面会创建新的来源记录。本版本**不支持** Notion 数据库或数据库行、自动/增量同步、Webhook、定时任务、写回 Notion 或附件下载。
+
+1. 在 Notion 创建 OAuth 应用，并只授予/启用 **Read content（读取内容）**能力。
+2. 在 Notion 应用的 OAuth 设置中登记回调地址；它必须与部署环境的 `NOTION_REDIRECT_URI` **完全一致**。
+3. 在 `.env` 或部署平台 Secret 中填写 `NOTION_CLIENT_ID`、`NOTION_CLIENT_SECRET`、`NOTION_REDIRECT_URI` 与 `NOTION_FRONTEND_REDIRECT_URL`。未完整配置时，应用仍可启动，但 Notion 接口会返回稳定的“Notion 未配置”业务错误。
+
+| 运行方式 | `NOTION_REDIRECT_URI`（在 Notion 中登记相同地址） | `NOTION_FRONTEND_REDIRECT_URL` |
+| --- | --- | --- |
+| 本地源码开发（Go 监听 8081，Vite 监听 5173） | `http://localhost:8081/api/v1/notion/oauth/callback` | `http://localhost:5173/settings` |
+| 本地完整 Docker Compose（Nginx 对外端口为 `APP_PORT=8080`） | `http://localhost:8080/api/v1/notion/oauth/callback` | `http://localhost:8080/settings` |
+| 生产 Docker Compose | `https://<your-domain>/api/v1/notion/oauth/callback` | `https://<your-domain>/settings` |
+
+`NOTION_FRONTEND_REDIRECT_URL` 是回调完成后后端使用的固定前端地址；浏览器只接收成功/失败的稳定查询参数，永远不会接收 Notion access token、client secret 或 OAuth code。Docker Compose 不新增 Notion 服务：Go 应用直接调用 Notion HTTP API，现有 `env_file: .env` 传入这四个变量。
+
+所有 Notion 业务响应沿用统一的 `{ code, message, data }` 结构，不透传 Notion 原始错误或凭据。稳定错误包括：`40017` Notion 未配置、`40018` 尚未连接、`40019` 授权失效（重新授权）、`40024` 请求限流（稍后重试）、`40025` 页面内容处理失败，以及 `40026` 导入任务已取消。OAuth 回调失败只跳回设置页并携带稳定的失败类别（例如 `denied`、`invalid_state`、`expired_state`、`user_disabled`、`exchange_failed` 或 `not_configured`）。
 
 ### ⚠️ 重要提示（部署前必读）
 
@@ -386,7 +408,7 @@ youdaonote --source ydn check --json
 
 - **HTTPS 与域名**：集成 HTTPS 证书与自定义域名访问，提升生产环境安全性。
 - **Provider 注册引导**：对四类可配置服务（LLM / Embedding / ASR / 搜索）补充常见提供商的注册申请指引，降低新用户配置门槛。
-- **多笔记平台接入**：不限于有道云笔记，计划接入印象笔记、Notion、飞书文档、语雀等主流笔记 / 文档端，实现统一的知识库管理。
+- **多笔记平台接入**：在现有 Notion 页面导入基础上，计划接入印象笔记、飞书文档、语雀等主流笔记 / 文档端，实现统一的知识库管理。
 
 </details>
 

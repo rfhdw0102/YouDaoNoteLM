@@ -61,12 +61,18 @@ const (
 	CodeSearchInvalidResponse       = 40014
 	CodeSearchProviderEmptyResult   = 40015
 	CodeSearchNormalizedEmptyResult = 40016
+	CodeNotionNotConfigured         = 40017
+	CodeNotionNotConnected          = 40018
+	CodeNotionAuthExpired           = 40019
 
 	// LLM / Agent 错误码 4002x
-	CodeLLMNotConfigured   = 40020
-	CodeLLMCallFailed      = 40021
-	CodeLLMResponseInvalid = 40022
-	CodeSearchAgentTimeout = 40023
+	CodeLLMNotConfigured      = 40020
+	CodeLLMCallFailed         = 40021
+	CodeLLMResponseInvalid    = 40022
+	CodeSearchAgentTimeout    = 40023
+	CodeNotionRateLimited     = 40024
+	CodeNotionContentFailed   = 40025
+	CodeNotionImportCancelled = 40026
 
 	// 其他服务未配置错误码 4003x
 	CodeEmbeddingNotConfigured = 40030
@@ -138,6 +144,12 @@ var codeMessages = map[int]string{
 	CodeSearchInvalidResponse:       "搜索 Provider 返回结构异常",
 	CodeSearchProviderEmptyResult:   "搜索未返回结果",
 	CodeSearchNormalizedEmptyResult: "搜索结果清洗后为空",
+	CodeNotionNotConfigured:         "Notion 未配置",
+	CodeNotionNotConnected:          "尚未连接 Notion",
+	CodeNotionAuthExpired:           "Notion 授权已失效，请重新授权",
+	CodeNotionRateLimited:           "Notion 请求过于频繁，请稍后重试",
+	CodeNotionContentFailed:         "Notion 页面内容处理失败",
+	CodeNotionImportCancelled:       "Notion 导入任务已取消",
 }
 
 // GetMessage 获取错误码消息

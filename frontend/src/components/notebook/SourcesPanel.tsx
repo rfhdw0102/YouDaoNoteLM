@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Upload, Link, Globe, Search, FileText, File, Music,
+  Upload, Link, Globe, Search, FileText, File, Music, BookOpen,
   Check, MoreHorizontal, Trash2, Edit3,
   SquareCheck, Square, X, Loader2, ArrowLeft, Plus, AlertCircle,
   ChevronDown
@@ -16,11 +16,28 @@ import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
 import YoudaoImportPanel from './YoudaoImportPanel';
+import NotionImportPanel from './NotionImportPanel';
 import * as youdaoApi from '../../api/youdao';
-
+import * as notionApi from '../../api/notion';
+import { isTerminalNotionTaskStatus } from '../../utils/notionImport';
 const sourceIcons: Record<SourceType, typeof FileText> = {
-  file: FileText, url: Link, audio: Music, youdao: File, search: Globe,
+  file: FileText, url: Link, audio: Music, youdao: File, notion: BookOpen, search: Globe,
 };
+
+function safeOriginalSourceURL(source: Source): string | null {
+  if (!source.url) return null;
+  try {
+    const url = new URL(source.url);
+    if (url.protocol !== 'https:') return null;
+    const hostname = url.hostname.toLowerCase();
+    if (source.type === 'notion' && hostname !== 'notion.so' && !hostname.endsWith('.notion.so')) {
+      return null;
+    }
+    return url.href;
+  } catch {
+    return null;
+  }
+}
 
 // 解析 Agent 返回的内容，提取搜索结果 JSON
 function parseSearchContent(content: string): { results: SearchResultItem[]; summary: string } {
@@ -46,7 +63,7 @@ export default function SourcesPanel() {
   const {
     currentNotebookId, getCurrentNotebook, toggleSourceSelection,
     removeSource, batchRemoveSources, deleteFailedSources, renameSource,
-    importFile, previewAudio, confirmAudio, searchSourcesStream, importFromURL, importSearchResults, fetchSourceContent, getSourceDownloadURL, fetchSources,
+    importFile, previewAudio, confirmAudio, searchSourcesStream, importFromURL, importSearchResults, fetchSourceContent, getSourceDownloadURL, fetchSources, registerImportTask,
     reimportSelected,
     mainAgentSearchActive, mainAgentSearchResults, mainAgentSearchSummary, clearMainAgentSearch,
   } = useNotebookStore();
@@ -546,6 +563,7 @@ export default function SourcesPanel() {
 
   // ---- Content Viewer ----
   if (viewingSource) {
+    const originalURL = safeOriginalSourceURL(viewingSource);
     return (
       <div className="h-full flex flex-col bg-bg-secondary/30">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-border flex-shrink-0">
@@ -568,17 +586,17 @@ export default function SourcesPanel() {
             </button>
           </div>
         )}
-        {/* Visit original URL for url types */}
-        {viewingSource.type === 'url' && viewingSource.url && (
+        {/* Visit original URL for web and Notion sources */}
+        {(viewingSource.type === 'url' || viewingSource.type === 'notion') && originalURL && (
           <div className="px-4 py-2 border-b border-border flex-shrink-0">
             <a
-              href={viewingSource.url}
+              href={originalURL}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-xs text-accent hover:text-accent-light transition-colors"
             >
-              <Globe size={13} />
-              访问原网站
+              {viewingSource.type === 'notion' ? <BookOpen size={13} /> : <Globe size={13} />}
+              {viewingSource.type === 'notion' ? '查看 Notion 原页面' : '访问原网站'}
             </a>
           </div>
         )}
@@ -898,7 +916,7 @@ export default function SourcesPanel() {
                     {/* Main content */}
                     <div className={cn('flex-1 min-w-0', (isLoading || isError || isConfirmingAudio) ? 'cursor-default' : 'cursor-pointer')} onClick={() => { if (!isLoading && !isError && !isConfirmingAudio) handleViewSource(source); }}>
                       <div className="flex items-center gap-1.5">
-                        <div className={cn('p-1 rounded', isError ? 'bg-error/10 text-error' : '', !isError && source.type === 'file' && 'bg-blue-500/10 text-blue-400', !isError && source.type === 'url' && 'bg-teal/10 text-teal', !isError && source.type === 'audio' && 'bg-purple-500/10 text-purple-400', !isError && source.type === 'search' && 'bg-orange-500/10 text-orange-400', !isError && source.type === 'youdao' && 'bg-green-500/10 text-green-400')}>
+                        <div className={cn('p-1 rounded', isError ? 'bg-error/10 text-error' : '', !isError && source.type === 'file' && 'bg-blue-500/10 text-blue-400', !isError && source.type === 'url' && 'bg-teal/10 text-teal', !isError && source.type === 'audio' && 'bg-purple-500/10 text-purple-400', !isError && source.type === 'search' && 'bg-orange-500/10 text-orange-400', !isError && source.type === 'youdao' && 'bg-green-500/10 text-green-400', !isError && source.type === 'notion' && 'bg-stone-500/10 text-stone-300')}>
                           {(isLoading || isConfirmingAudio) ? <Loader2 size={12} className="animate-spin" /> : isError ? <AlertCircle size={12} /> : <Icon size={12} />}
                         </div>
                         {editingId === source.id ? (
@@ -916,6 +934,7 @@ export default function SourcesPanel() {
                           </span>
                         )}
                         {!isLoading && !isError && !isConfirmingAudio && source.size !== undefined && <span className="text-[10px] text-text-muted">{formatFileSize(source.size)}</span>}
+                        {source.type === 'notion' && <span className="text-[10px] text-stone-300">Notion</span>}
                         <span className="text-[10px] text-success">✓ 已入库</span>
                       </div>
                     </div>
@@ -1003,7 +1022,7 @@ export default function SourcesPanel() {
                     {/* Main content */}
                     <div className={cn('flex-1 min-w-0', (isLoading || isError || isConfirmingAudio) ? 'cursor-default' : 'cursor-pointer')} onClick={() => { if (!isLoading && !isError && !isConfirmingAudio) handleViewSource(source); }}>
                       <div className="flex items-center gap-1.5">
-                        <div className={cn('p-1 rounded', isError ? 'bg-error/10 text-error' : '', !isError && source.type === 'file' && 'bg-blue-500/10 text-blue-400', !isError && source.type === 'url' && 'bg-teal/10 text-teal', !isError && source.type === 'audio' && 'bg-purple-500/10 text-purple-400', !isError && source.type === 'search' && 'bg-orange-500/10 text-orange-400', !isError && source.type === 'youdao' && 'bg-green-500/10 text-green-400')}>
+                        <div className={cn('p-1 rounded', isError ? 'bg-error/10 text-error' : '', !isError && source.type === 'file' && 'bg-blue-500/10 text-blue-400', !isError && source.type === 'url' && 'bg-teal/10 text-teal', !isError && source.type === 'audio' && 'bg-purple-500/10 text-purple-400', !isError && source.type === 'search' && 'bg-orange-500/10 text-orange-400', !isError && source.type === 'youdao' && 'bg-green-500/10 text-green-400', !isError && source.type === 'notion' && 'bg-stone-500/10 text-stone-300')}>
                           {(isLoading || isConfirmingAudio) ? <Loader2 size={12} className="animate-spin" /> : isError ? <AlertCircle size={12} /> : <Icon size={12} />}
                         </div>
                         {editingId === source.id ? (
@@ -1021,6 +1040,7 @@ export default function SourcesPanel() {
                           </span>
                         )}
                         {!isLoading && !isError && !isConfirmingAudio && source.size !== undefined && <span className="text-[10px] text-text-muted">{formatFileSize(source.size)}</span>}
+                        {source.type === 'notion' && <span className="text-[10px] text-stone-300">Notion</span>}
                         {!isLoading && !isError && <span className="text-[10px] text-warning">待入库</span>}
                       </div>
                     </div>
@@ -1115,20 +1135,49 @@ export default function SourcesPanel() {
               }
             } catch (err) { console.error(err); }
           }}
+          onNotionImport={async (pageIds) => {
+            const res = await notionApi.importPagesBatch(Number(currentNotebookId), pageIds);
+            if (res.code !== 0) throw new Error(res.message || '导入 Notion 页面失败');
+
+            const { task_id: taskId, source_ids: sourceIds } = res.data;
+            registerImportTask(taskId, sourceIds, 'notion');
+            await fetchSources(currentNotebookId!);
+            setShowImportModal(false);
+
+            void (async () => {
+              const maxAttempts = 120;
+              for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+                try {
+                  const task = await notionApi.getImportTask(taskId);
+                  await fetchSources(currentNotebookId!);
+                  const current = getCurrentNotebook();
+                  const sourcesTerminal = sourceIds.every((sourceId) => {
+                    const source = current?.sources.find((item) => item.id === String(sourceId));
+                    return source?.status === 'ready' || source?.status === 'error';
+                  });
+                  if (sourcesTerminal || (task.code === 0 && isTerminalNotionTaskStatus(task.data.status))) return;
+                } catch {
+                  return;
+                }
+              }
+            })();
+          }}
         />
       </Modal>
     </div>
   );
 }
 
-function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudaoImport, onClose }: {
+function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudaoImport, onNotionImport, onClose }: {
   onFileImport: (file: File) => Promise<any>;
   onAudioImport: (file: File) => Promise<any>;
   onUrlImport: (url: string) => void;
   onYoudaoImport: (fileIds: string[], fileNames: Record<string, string>) => Promise<void>;
+  onNotionImport: (pageIds: string[]) => Promise<void>;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<'youdao' | 'file' | 'url'>('youdao');
+  const [tab, setTab] = useState<'youdao' | 'notion' | 'file' | 'url'>('youdao');
   const [urlValue, setUrlValue] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -1219,6 +1268,12 @@ function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudao
     );
   }
 
+  const isNotionTab = tab === 'notion';
+
+  if (isNotionTab) {
+    return <NotionImportPanel onImport={onNotionImport} onBack={() => setTab('youdao')} />;
+  }
+
   return (
     <div>
       <div className="flex gap-1 mb-5 bg-bg-tertiary rounded-lg p-1">
@@ -1229,6 +1284,7 @@ function ImportModalContent({ onFileImport, onAudioImport, onUrlImport, onYoudao
           </svg>
           有道云
         </button>
+        <button onClick={() => setTab('notion')} className={cn('flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-medium transition-all cursor-pointer', isNotionTab ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary')}><BookOpen size={13} /> Notion</button>
         <button onClick={() => setTab('file')} className={cn('flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-medium transition-all cursor-pointer', tab === 'file' ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary')}><Upload size={13} /> 文件上传</button>
         <button onClick={() => setTab('url')} className={cn('flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-medium transition-all cursor-pointer', tab === 'url' ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary')}><Link size={13} /> 网址导入</button>
       </div>

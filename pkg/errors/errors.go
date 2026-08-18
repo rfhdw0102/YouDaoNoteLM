@@ -81,6 +81,12 @@ var (
 	ErrSearchProviderUnavailable   = NewDefault(CodeSearchProviderUnavailable)
 	ErrSearchProviderEmptyResult   = NewDefault(CodeSearchProviderEmptyResult)
 	ErrSearchNormalizedEmptyResult = NewDefault(CodeSearchNormalizedEmptyResult)
+	ErrNotionNotConfigured         = NewDefault(CodeNotionNotConfigured)
+	ErrNotionNotConnected          = NewDefault(CodeNotionNotConnected)
+	ErrNotionAuthExpired           = NewDefault(CodeNotionAuthExpired)
+	ErrNotionRateLimited           = NewDefault(CodeNotionRateLimited)
+	ErrNotionContentFailed         = NewDefault(CodeNotionContentFailed)
+	ErrNotionImportCancelled       = NewDefault(CodeNotionImportCancelled)
 
 	// 搜索 Agent 相关错误
 	ErrLLMNotConfigured   = NewDefault(CodeLLMNotConfigured)

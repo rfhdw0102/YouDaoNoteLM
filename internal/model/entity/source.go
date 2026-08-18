@@ -7,7 +7,7 @@ type Source struct {
 	NotebookID      uint     `gorm:"not null;index:idx_user_notebook" json:"notebook_id"` // 所属笔记本
 	Notebook        Notebook `gorm:"foreignKey:NotebookID"`
 	Name            string   `gorm:"type:varchar(255);not null" json:"name"`                          // 来源名称
-	Type            string   `gorm:"type:varchar(20);not null;index:idx_type" json:"type"`            // 类型: file/url/audio/note/youdao
+	Type            string   `gorm:"type:varchar(20);not null;index:idx_type" json:"type"`            // 类型: file/url/audio/note/youdao/notion
 	OriginalURL     string   `gorm:"type:varchar(2048)" json:"original_url"`                          // 原始URL（网址导入时）
 	FilePath        string   `gorm:"type:varchar(512)" json:"file_path"`                              // 对象存储文件路径
 	FileSize        int64    `json:"file_size"`                                                       // 文件大小(字节)

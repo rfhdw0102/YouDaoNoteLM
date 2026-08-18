@@ -11,6 +11,7 @@ import (
 	"YoudaoNoteLm/internal/service"
 	"YoudaoNoteLm/internal/service/external"
 	externalMarkitdown "YoudaoNoteLm/internal/service/external/markitdown"
+	externalNotion "YoudaoNoteLm/internal/service/external/notion"
 	"YoudaoNoteLm/internal/service/external/reranker"
 	externalStorage "YoudaoNoteLm/internal/service/external/storage"
 	externalYoudao "YoudaoNoteLm/internal/service/external/youdao"
@@ -130,6 +131,7 @@ func (a *App) initDatabase() error {
 		&entity.UserConfig{},
 		&entity.UserLLMConfig{},
 		&entity.YoudaoBinding{},
+		&entity.NotionBinding{},
 		&entity.SysConfig{},
 		&memory.UserMemory{},
 		&feedback.AnswerFeedback{},
@@ -304,6 +306,31 @@ func (a *App) initDependencies() {
 	youdaoBindingRepo := repository.NewYoudaoBindingRepository(a.mysqlDB)
 	youdaoSvc := service.NewYoudaoService(youdaoCLI, youdaoBindingRepo, sourceRepo, ingestionSvc, structurer, configSvc, sourceSummaryCache)
 
+	// 创建 Notion OAuth/导入服务。未配置 Notion 时客户端仍可创建，接口返回稳定的未配置错误。
+	notionClient := externalNotion.NewClient(externalNotion.ClientConfig{
+		BaseURL:      a.cfg.External.Notion.APIBaseURL,
+		APIVersion:   a.cfg.External.Notion.APIVersion,
+		ClientID:     a.cfg.External.Notion.ClientID,
+		ClientSecret: a.cfg.External.Notion.ClientSecret,
+		RedirectURI:  a.cfg.External.Notion.RedirectURI,
+		Timeout:      time.Duration(a.cfg.External.Notion.TimeoutSeconds) * time.Second,
+	})
+	notionSvc := service.NewNotionService(
+		a.cfg.External.Notion,
+		notionClient,
+		repository.NewNotionBindingRepository(a.mysqlDB),
+		notebookRepo,
+		sourceRepo,
+		userRepo,
+		service.NewNotionOAuthStateStore(redisCache),
+		service.NewNotionImportTaskStore(importTaskCache),
+		ingestionSvc,
+		structurer,
+		configSvc,
+		sourceSummaryCache,
+		a.cfg.Security.EncryptionKey,
+	)
+
 	// 创建搜索 Agent（import_document 是公共工具，search agent 只用 url 来源，不依赖 youdao）
 	searchAgentInst := searchAgent.NewSearchAgent(configSvc, importerSvc)
 	searchAgentSvc := service.NewSearchAgentService(configSvc, importerSvc, searchAgentInst)
@@ -354,6 +381,8 @@ func (a *App) initDependencies() {
 		convSvc,
 		configSvc,
 		youdaoSvc,
+		notionSvc,
+		a.cfg.External.Notion.FrontendRedirectURL,
 		ingestionSvc,
 		minioStorage,
 		userRepo,

@@ -4,6 +4,7 @@ import type { Notebook, Source, Conversation, Note, NoteType, ChatMessage, Refer
 import * as notebookApi from '../api/notebook';
 import * as sourceApi from '../api/source';
 import * as importApi from '../api/import';
+import * as notionApi from '../api/notion';
 import * as searchApi from '../api/search';
 import type { SearchResultItem } from '../api/search';
 import * as chatApi from '../api/chat';
@@ -24,6 +25,8 @@ const pendingTaskNotebookMap = new Map<string, string>();
 // generationTaskPollInterval 生成任务轮询间隔。
 // 后端 worker 串行执行，任务时状态变化频率较低，2 秒轮询在实时性与请求量之间取折中。
 const generationTaskPollInterval = 2000;
+
+type ImportTaskProvider = 'generic' | 'notion';
 
 interface GenerationTaskItem {
   taskId: string;
@@ -131,6 +134,8 @@ interface NotebookState {
   generationError: string | null;
   // sourceID → taskID 映射，用于取消正在运行的导入任务
   taskIdBySourceId: Record<string, string>;
+  // sourceID → task provider 映射，避免将 Notion 任务发送到通用取消接口
+  taskProviderBySourceId: Record<string, 'generic' | 'notion'>;
 
   // Init - fetch from API
   fetchNotebooks: () => Promise<void>;
@@ -150,6 +155,7 @@ interface NotebookState {
   fetchSources: (notebookId: string, page?: number, size?: number, keyword?: string) => Promise<void>;
   addSource: (notebookId: string, source: Source) => void;
   updateSource: (notebookId: string, sourceId: string, updates: Partial<Source>) => void;
+  registerImportTask: (taskId: string, sourceIds: Array<string | number>, provider: ImportTaskProvider) => void;
   removeSource: (notebookId: string, sourceId: string) => Promise<void>;
   batchRemoveSources: (notebookId: string, sourceIds: string[]) => Promise<void>;
   deleteFailedSources: (notebookId: string) => Promise<number>;
@@ -216,13 +222,13 @@ interface NotebookState {
 
 // Helper: convert backend SourceData to frontend Source
 function toSource(s: sourceApi.SourceData): Source {
-  // 后端状态映射：pending/processing → loading, ready → ready, failed → error
+  // 后端状态映射：pending/processing → loading, ready → ready, failed/cancelled → error
   let status: 'loading' | 'ready' | 'error' | undefined;
   if (s.status === 'pending' || s.status === 'processing') {
     status = 'loading';
   } else if (s.status === 'ready') {
     status = 'ready';
-  } else if (s.status === 'failed') {
+  } else if (s.status === 'failed' || s.status === 'cancelled') {
     status = 'error';
   }
 
@@ -234,7 +240,9 @@ function toSource(s: sourceApi.SourceData): Source {
     url: s.original_url || undefined,
     selected: s.vectorized, // 只有已入库的默认选中
     status,
-    errorMessage: s.error_message || undefined,
+    errorMessage: s.status === 'cancelled'
+      ? s.error_message || '导入已取消'
+      : s.error_message || undefined,
     vectorized: s.vectorized,
     createdAt: s.created_at,
     updatedAt: s.updated_at,
@@ -247,6 +255,7 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   currentConversationId: null,
   streamingConversationId: null,
   taskIdBySourceId: {},
+  taskProviderBySourceId: {},
   loading: false,
   streamingContent: '',
   mainAgentSearchActive: false,
@@ -477,6 +486,21 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
     }));
   },
 
+  registerImportTask: (taskId, sourceIds, provider) => {
+    set((state) => {
+      const taskIdBySourceId = { ...state.taskIdBySourceId };
+      const taskProviderBySourceId = { ...state.taskProviderBySourceId };
+
+      for (const sourceId of sourceIds) {
+        const id = String(sourceId);
+        taskIdBySourceId[id] = taskId;
+        taskProviderBySourceId[id] = provider;
+      }
+
+      return { taskIdBySourceId, taskProviderBySourceId };
+    });
+  },
+
   removeSource: async (notebookId, sourceId) => {
     // loading 状态的 source 是本地 placeholder（ID 以 loading- 开头）
     if (sourceId.startsWith('loading-')) {
@@ -505,19 +529,27 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       if (res.code === 0) {
         // 检查该 source 是否关联了正在运行的导入任务，有则取消
         const taskId = get().taskIdBySourceId[sourceId];
+        const taskProvider = get().taskProviderBySourceId[sourceId] ?? 'generic';
         if (taskId) {
           try {
-            await importApi.deleteImportTask(taskId);
+            if (taskProvider === 'notion') {
+              await notionApi.cancelImportTask(taskId);
+            } else {
+              await importApi.deleteImportTask(taskId);
+            }
           } catch {
             // 任务可能已完成或不存在，忽略错误
           }
-          // 清理映射
-          set((state) => {
-            const newMapping = { ...state.taskIdBySourceId };
-            delete newMapping[sourceId];
-            return { taskIdBySourceId: newMapping };
-          });
         }
+
+        // 清理任务及 provider 映射
+        set((state) => {
+          const taskIdBySourceId = { ...state.taskIdBySourceId };
+          const taskProviderBySourceId = { ...state.taskProviderBySourceId };
+          delete taskIdBySourceId[sourceId];
+          delete taskProviderBySourceId[sourceId];
+          return { taskIdBySourceId, taskProviderBySourceId };
+        });
 
         set((state) => ({
           notebooks: state.notebooks.map((n) =>
@@ -550,14 +582,21 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       }
 
       // 找出关联了导入任务的真实 source，通知后端取消
-      const taskIdsToCancel = new Set<string>();
+      const taskRefsToCancel = new Map<string, { taskId: string; provider: ImportTaskProvider }>();
       for (const sourceId of sourceIds) {
         const taskId = get().taskIdBySourceId[sourceId];
-        if (taskId) taskIdsToCancel.add(taskId);
+        if (taskId) {
+          const provider = get().taskProviderBySourceId[sourceId] ?? 'generic';
+          taskRefsToCancel.set(`${provider}:${taskId}`, { taskId, provider });
+        }
       }
-      for (const taskId of taskIdsToCancel) {
+      for (const { taskId, provider } of taskRefsToCancel.values()) {
         try {
-          await importApi.deleteImportTask(taskId);
+          if (provider === 'notion') {
+            await notionApi.cancelImportTask(taskId);
+          } else {
+            await importApi.deleteImportTask(taskId);
+          }
         } catch {
           // 忽略
         }
@@ -579,9 +618,13 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
       // 清理映射
       set((state) => {
-        const newMapping = { ...state.taskIdBySourceId };
-        for (const sourceId of sourceIds) delete newMapping[sourceId];
-        return { taskIdBySourceId: newMapping };
+        const taskIdBySourceId = { ...state.taskIdBySourceId };
+        const taskProviderBySourceId = { ...state.taskProviderBySourceId };
+        for (const sourceId of sourceIds) {
+          delete taskIdBySourceId[sourceId];
+          delete taskProviderBySourceId[sourceId];
+        }
+        return { taskIdBySourceId, taskProviderBySourceId };
       });
 
       // 从本地状态中移除所有选中的 source（包括临时 placeholder）
@@ -922,10 +965,8 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
     const { task_id: taskId, source_id: sourceId } = res.data;
 
-    // 记录 sourceID → taskID 映射，以便取消时使用
-    set((state) => ({
-      taskIdBySourceId: { ...state.taskIdBySourceId, [String(sourceId)]: taskId },
-    }));
+    // 记录 sourceID → taskID/provider 映射，以便取消时使用
+    get().registerImportTask(taskId, [sourceId], 'generic');
 
     // 刷新列表，后端创建的 pending source 会出现在列表中
     await get().fetchSources(notebookId);
@@ -940,7 +981,16 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
           const nb = get().notebooks.find(n => n.id === notebookId);
           const src = nb?.sources.find(s => s.id === String(sourceId));
           if (!src) return; // source 已被删除
-          if (src.status !== 'loading') return; // 处理完成（ready 或 error）
+          if (src.status !== 'loading') {
+            set((state) => {
+              const taskIdBySourceId = { ...state.taskIdBySourceId };
+              const taskProviderBySourceId = { ...state.taskProviderBySourceId };
+              delete taskIdBySourceId[String(sourceId)];
+              delete taskProviderBySourceId[String(sourceId)];
+              return { taskIdBySourceId, taskProviderBySourceId };
+            });
+            return; // 处理完成（ready 或 error）
+          }
         } catch {
           return;
         }
@@ -957,12 +1007,8 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
 
     const { task_id: taskId, source_ids: sourceIds } = res.data;
 
-    // 记录 sourceID → taskID 映射，以便删除 source 时取消任务
-    const mapping: Record<string, string> = {};
-    for (const sid of sourceIds) {
-      mapping[String(sid)] = taskId;
-    }
-    set((state) => ({ taskIdBySourceId: { ...state.taskIdBySourceId, ...mapping } }));
+    // 记录 sourceID → taskID/provider 映射，以便删除 source 时取消任务
+    get().registerImportTask(taskId, sourceIds, 'generic');
 
     // 后端已创建 pending 状态的 Source，立即刷新列表显示它们
     await get().fetchSources(notebookId);
@@ -986,9 +1032,13 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
             if (pendingCount === 0) {
               // 全部处理完成，清理映射
               set((state) => {
-                const newMapping = { ...state.taskIdBySourceId };
-                for (const sid of sourceIds) delete newMapping[String(sid)];
-                return { taskIdBySourceId: newMapping };
+                const taskIdBySourceId = { ...state.taskIdBySourceId };
+                const taskProviderBySourceId = { ...state.taskProviderBySourceId };
+                for (const sid of sourceIds) {
+                  delete taskIdBySourceId[String(sid)];
+                  delete taskProviderBySourceId[String(sid)];
+                }
+                return { taskIdBySourceId, taskProviderBySourceId };
               });
               return;
             }

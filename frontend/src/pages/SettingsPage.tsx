@@ -13,13 +13,17 @@ import Badge from '../components/ui/Badge';
 import * as userConfigApi from '../api/userConfig';
 import * as providersApi from '../api/providers';
 import * as youdaoApi from '../api/youdao';
+import * as notionApi from '../api/notion';
 import type { UserConfig, UserLLMConfig, UserConfigRequest } from '../api/userConfig';
 import type { ProviderInfo } from '../api/providers';
 import type { YoudaoBindStatus } from '../api/youdao';
+import type { NotionBindingStatus } from '../api/notion';
 import { getErrorMessage } from '../utils/error';
 import LongTermMemorySettings from '../components/settings/LongTermMemorySettings';
+import NotionConnectionSettings from '../components/settings/NotionConnectionSettings';
+import { oauthMessage } from '../utils/notionImport';
 
-type ConfigTab = 'llm' | 'search' | 'asr' | 'embedding' | 'reranker' | 'youdao' | 'memory';
+type ConfigTab = 'llm' | 'search' | 'asr' | 'embedding' | 'reranker' | 'youdao' | 'notion' | 'memory';
 
 // 默认 API 地址映射
 const DEFAULT_API_URLS: Record<string, string> = {
@@ -75,10 +79,10 @@ const PROVIDER_DOCS: Record<string, { label: string; url: string; description: s
 
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<ConfigTab>(() => {
     const tab = searchParams.get('tab');
-    return tab === 'llm' || tab === 'search' || tab === 'asr' || tab === 'embedding' || tab === 'reranker' || tab === 'youdao' || tab === 'memory'
+    return tab === 'llm' || tab === 'search' || tab === 'asr' || tab === 'embedding' || tab === 'reranker' || tab === 'youdao' || tab === 'notion' || tab === 'memory'
       ? (tab as ConfigTab)
       : 'llm';
   });
@@ -101,6 +105,12 @@ export default function SettingsPage() {
   const [youdaoApiKey, setYoudaoApiKey] = useState('');
   const [youdaoLoading, setYoudaoLoading] = useState(false);
   const [youdaoError, setYoudaoError] = useState<string | null>(null);
+
+  // Notion OAuth 连接状态
+  const [notionBindingStatus, setNotionBindingStatus] = useState<NotionBindingStatus | null>(null);
+  const [notionLoading, setNotionLoading] = useState(false);
+  const [notionError, setNotionError] = useState<string | null>(null);
+  const [notionOAuthNotice, setNotionOAuthNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
 
   // 删除确认弹窗状态
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
@@ -233,6 +243,23 @@ export default function SettingsPage() {
     fetchLLMConfigs();
   }, []);
 
+  // OAuth 回调只通过受控查询参数传递结果，展示一次后立即清理，避免刷新页面重复提示。
+  useEffect(() => {
+    const result = searchParams.get('notion_oauth');
+    if (!result) return;
+
+    setActiveTab('notion');
+    setNotionOAuthNotice({
+      kind: result === 'success' ? 'success' : 'error',
+      message: oauthMessage(result, searchParams.get('reason')),
+    });
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('notion_oauth');
+    nextParams.delete('reason');
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   // Fetch configs based on active tab
   useEffect(() => {
     // 切换标签页时关闭添加/编辑表单
@@ -243,7 +270,9 @@ export default function SettingsPage() {
     if (activeTab === 'memory') {
       return;
     }
-    if (activeTab === 'youdao') {
+    if (activeTab === 'notion') {
+      fetchNotionBindingStatus();
+    } else if (activeTab === 'youdao') {
       fetchYoudaoBindStatus();
     } else {
       fetchConfigs();
@@ -253,7 +282,7 @@ export default function SettingsPage() {
 
   // Fetch providers when active tab changes
   useEffect(() => {
-    if (activeTab !== 'youdao' && activeTab !== 'memory') {
+    if (activeTab !== 'youdao' && activeTab !== 'notion' && activeTab !== 'memory') {
       fetchProviders();
     }
   }, [activeTab]);
@@ -338,6 +367,57 @@ export default function SettingsPage() {
       console.error('Failed to unbind youdao:', error);
     } finally {
       setYoudaoLoading(false);
+    }
+  };
+
+  const fetchNotionBindingStatus = async () => {
+    setNotionLoading(true);
+    setNotionError(null);
+    try {
+      const res = await notionApi.getBinding();
+      if (res.code === 0) {
+        setNotionBindingStatus(res.data);
+      } else {
+        setNotionError(res.message || '获取 Notion 连接状态失败');
+      }
+    } catch {
+      setNotionError('获取 Notion 连接状态失败');
+    } finally {
+      setNotionLoading(false);
+    }
+  };
+
+  const handleNotionConnect = async () => {
+    setNotionLoading(true);
+    setNotionError(null);
+    try {
+      const res = await notionApi.startOAuth();
+      if (res.code !== 0 || !res.data?.authorize_url) {
+        setNotionError(res.message || '无法开始 Notion 授权');
+        return;
+      }
+      window.location.assign(res.data.authorize_url);
+    } catch {
+      setNotionError('无法开始 Notion 授权');
+    } finally {
+      setNotionLoading(false);
+    }
+  };
+
+  const handleNotionUnbind = async () => {
+    setNotionLoading(true);
+    setNotionError(null);
+    try {
+      const res = await notionApi.unbind();
+      if (res.code === 0) {
+        setNotionBindingStatus({ bound: false });
+      } else {
+        setNotionError(res.message || '解绑 Notion 失败');
+      }
+    } catch {
+      setNotionError('解绑 Notion 失败');
+    } finally {
+      setNotionLoading(false);
     }
   };
 
@@ -687,6 +767,7 @@ export default function SettingsPage() {
     { key: 'reranker', label: '精排模型', icon: Filter },
     { key: 'memory', label: '长期记忆', icon: Brain },
     { key: 'youdao', label: '有道云笔记', icon: BookOpen },
+    { key: 'notion', label: 'Notion', icon: BookOpen },
   ];
 
   // 从 API 获取的动态 provider 列表（只返回已实现的）
@@ -736,7 +817,7 @@ export default function SettingsPage() {
         )}
 
         {/* LLM not configured warning */}
-        {activeTab !== 'llm' && activeTab !== 'memory' && !loading && llmConfigs.length === 0 && (
+        {activeTab !== 'llm' && activeTab !== 'memory' && activeTab !== 'notion' && !loading && llmConfigs.length === 0 && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -844,6 +925,34 @@ export default function SettingsPage() {
         {/* Config List */}
         {activeTab === 'memory' ? (
           <LongTermMemorySettings />
+        ) : activeTab === 'notion' ? (
+          <div className="space-y-4">
+            {notionOAuthNotice && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={cn(
+                  'p-4 rounded-xl border flex items-center gap-3',
+                  notionOAuthNotice.kind === 'success'
+                    ? 'bg-success/5 border-success/20 text-success'
+                    : 'bg-error/5 border-error/20 text-error',
+                )}
+                role="status"
+              >
+                {notionOAuthNotice.kind === 'success'
+                  ? <Check size={18} className="flex-shrink-0" />
+                  : <AlertCircle size={18} className="flex-shrink-0" />}
+                <p className="text-sm font-medium">{notionOAuthNotice.message}</p>
+              </motion.div>
+            )}
+            <NotionConnectionSettings
+              status={notionBindingStatus}
+              loading={notionLoading}
+              error={notionError}
+              onConnect={handleNotionConnect}
+              onUnbind={handleNotionUnbind}
+            />
+          </div>
         ) : activeTab === 'youdao' ? (
           /* 有道云配置 */
           <div className="space-y-4">
@@ -1190,8 +1299,8 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Add Config - 不为有道云标签页显示 */}
-        {activeTab !== 'youdao' && (
+        {/* Add Config - 不为有道云或 Notion 标签页显示 */}
+        {activeTab !== 'youdao' && activeTab !== 'notion' && (
           showAddForm ? (
             <motion.div
               initial={{ opacity: 0, height: 0 }}

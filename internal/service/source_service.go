@@ -169,7 +169,7 @@ func (s *sourceService) GetOriginalContent(id uint) (string, string, error) {
 		return source.OriginalURL, "url", nil
 	case "audio":
 		return source.MarkdownContent, "audio_transcript", nil
-	case "note", "youdao":
+	case "note", "youdao", "notion":
 		return source.MarkdownContent, "raw_markdown", nil
 	default:
 		return "", "", bizerrors.New(bizerrors.CodeBadRequest, "该类型不支持查看原格式")

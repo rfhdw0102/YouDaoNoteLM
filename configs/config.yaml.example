@@ -89,6 +89,16 @@ external:
     bucket: "youdaonotelm"
   youdao:
     cli_path: "youdaonote"  # CLI 路径，默认在 PATH 中查找，也可指定绝对路径
+  notion:
+    # Notion 应用只需 Read content；OAuth Secret 由 .env 覆盖，Go 直接调用 Notion HTTP API（Compose 不新增服务）
+    # 本地源码开发的 redirect_uri 为 http://localhost:8081/api/v1/notion/oauth/callback，并须与 Notion 应用登记值完全一致
+    client_id: "" # 可由 NOTION_CLIENT_ID 覆盖
+    client_secret: "" # 可由 NOTION_CLIENT_SECRET 覆盖
+    redirect_uri: "" # 必须与 Notion 应用登记的回调地址一致，可由 NOTION_REDIRECT_URI 覆盖
+    frontend_redirect_url: "" # OAuth 完成后固定跳转地址，可由 NOTION_FRONTEND_REDIRECT_URL 覆盖
+    api_base_url: "https://api.notion.com"
+    api_version: "2022-06-28"
+    timeout_seconds: 15
   bocha:
     base_url: "https://api.bochaai.com"
     endpoint: "/v1/web-search"

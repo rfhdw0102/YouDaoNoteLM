@@ -1,0 +1,14 @@
+{
+  "page-1": {
+    "results": [
+      {
+        "id": "unsupported",
+        "type": "synced_block",
+        "has_children": false,
+        "synced_block": {}
+      }
+    ],
+    "next_cursor": null,
+    "has_more": false
+  }
+}

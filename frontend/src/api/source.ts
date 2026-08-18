@@ -5,12 +5,12 @@ export interface SourceData {
   id: number;
   notebook_id: number;
   name: string;
-  type: 'file' | 'url' | 'audio' | 'note' | 'youdao';
+  type: 'file' | 'url' | 'audio' | 'note' | 'youdao' | 'notion';
   original_url: string;
   file_path: string;
   file_size: number;
   mime_type: string;
-  status: 'pending' | 'processing' | 'ready' | 'failed';
+  status: 'pending' | 'processing' | 'ready' | 'failed' | 'cancelled';
   error_message: string;
   vectorized: boolean;
   created_at: string;

@@ -37,6 +37,12 @@ func (c *Cache) Get(ctx context.Context, key string, dest interface{}) error {
 	return json.Unmarshal(data, dest)
 }
 
+// GetDelete atomically reads and removes one Redis key. It is intended for
+// one-time credentials such as OAuth state; callers must decode the returned JSON.
+func (c *Cache) GetDelete(ctx context.Context, key string) ([]byte, error) {
+	return c.client.GetDel(ctx, key).Bytes()
+}
+
 // Delete 删除缓存
 func (c *Cache) Delete(ctx context.Context, keys ...string) error {
 	return c.client.Del(ctx, keys...).Err()

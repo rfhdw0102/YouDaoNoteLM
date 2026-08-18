@@ -71,6 +71,27 @@ func Load(configPath string) (*Config, error) {
 	if val := os.Getenv("BOCHA_API_KEY"); val != "" {
 		config.External.Bocha.APIKey = val
 	}
+	if val := os.Getenv("NOTION_CLIENT_ID"); val != "" {
+		config.External.Notion.ClientID = val
+	}
+	if val := os.Getenv("NOTION_CLIENT_SECRET"); val != "" {
+		config.External.Notion.ClientSecret = val
+	}
+	if val := os.Getenv("NOTION_REDIRECT_URI"); val != "" {
+		config.External.Notion.RedirectURI = val
+	}
+	if val := os.Getenv("NOTION_FRONTEND_REDIRECT_URL"); val != "" {
+		config.External.Notion.FrontendRedirectURL = val
+	}
+	if config.External.Notion.APIBaseURL == "" {
+		config.External.Notion.APIBaseURL = "https://api.notion.com"
+	}
+	if config.External.Notion.APIVersion == "" {
+		config.External.Notion.APIVersion = "2022-06-28"
+	}
+	if config.External.Notion.TimeoutSeconds == 0 {
+		config.External.Notion.TimeoutSeconds = 15
+	}
 	// 设置默认发件人地址
 	if config.Email.From == "" {
 		config.Email.From = config.Email.Username

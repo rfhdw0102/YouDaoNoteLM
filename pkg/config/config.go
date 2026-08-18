@@ -146,7 +146,25 @@ type ExternalConfig struct {
 	ASR        ASRConfig        `mapstructure:"asr"`
 	MinIO      MinIOConfig      `mapstructure:"minio"`
 	Youdao     YoudaoConfig     `mapstructure:"youdao"`
+	Notion     NotionConfig     `mapstructure:"notion"`
 	Bocha      BochaConfig      `mapstructure:"bocha"`
+}
+
+// NotionConfig Notion OAuth 和 API 客户端配置。
+// OAuth 字段为空时 Notion 功能不可用，但不影响应用启动。
+type NotionConfig struct {
+	ClientID            string `mapstructure:"client_id"`
+	ClientSecret        string `mapstructure:"client_secret"`
+	RedirectURI         string `mapstructure:"redirect_uri"`
+	FrontendRedirectURL string `mapstructure:"frontend_redirect_url"`
+	APIBaseURL          string `mapstructure:"api_base_url"`
+	APIVersion          string `mapstructure:"api_version"`
+	TimeoutSeconds      int    `mapstructure:"timeout_seconds"`
+}
+
+// Configured 返回 OAuth 所需配置是否齐全。
+func (c NotionConfig) Configured() bool {
+	return c.ClientID != "" && c.ClientSecret != "" && c.RedirectURI != "" && c.FrontendRedirectURL != ""
 }
 
 // BochaConfig 博查联网搜索配置

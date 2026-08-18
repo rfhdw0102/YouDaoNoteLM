@@ -10,6 +10,7 @@ import (
 	"YoudaoNoteLm/internal/api/v1/importn"
 	memoryAPI "YoudaoNoteLm/internal/api/v1/memory"
 	"YoudaoNoteLm/internal/api/v1/notebook"
+	notion "YoudaoNoteLm/internal/api/v1/notion"
 	"YoudaoNoteLm/internal/api/v1/providers"
 	"YoudaoNoteLm/internal/api/v1/search"
 	"YoudaoNoteLm/internal/api/v1/source"
@@ -43,6 +44,7 @@ type Router struct {
 	searchCtrl     *search.Controller
 	providerCtrl   *providers.Controller
 	youdaoCtrl     *youdao.Controller
+	notionCtrl     *notion.Controller
 	userConfigCtrl *userconfig.Controller
 	fileCtrl       *file.Controller
 	memoryCtrl     *memoryAPI.Controller
@@ -67,6 +69,8 @@ func NewRouter(
 	convService service.ConversationService,
 	configService service.ConfigService,
 	youdaoService service.YoudaoService,
+	notionService service.NotionService,
+	notionFrontendRedirectURL string,
 	ingestionService rag.IngestionService,
 	storage externalStorage.FileStorage,
 	userRepo repository.UserRepository,
@@ -89,6 +93,7 @@ func NewRouter(
 		adminCtrl:      admin.NewControllerWithFeedback(adminService, admin.NewFeedbackController(feedbackAdminReader)),
 		providerCtrl:   providers.NewController(configService),
 		youdaoCtrl:     youdao.NewController(youdaoService),
+		notionCtrl:     notion.NewController(notionService, notionFrontendRedirectURL),
 		userConfigCtrl: userconfig.NewController(userConfigService, tokenBlacklist, ingestionService),
 		fileCtrl:       file.NewController(storage),
 		memoryCtrl:     memoryAPI.NewController(memoryService),
@@ -141,6 +146,7 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 		// 有道云笔记路由（需认证）
 		r.youdaoCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
+		r.notionCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
 
 		// Provider 发现路由（/active 支持可选认证）
 		r.providerCtrl.RegisterRoutes(v1, middleware.OptionalAuth(r.tokenBlacklist, r.userRepo))

@@ -80,6 +80,16 @@ external:
     max_count: 10
   youdao:
     cli_path: "youdaonote"
+  notion:
+    # Notion 应用只需 Read content；OAuth Secret 由 .env 覆盖，Go 直接调用 Notion HTTP API（Compose 不新增服务）
+    # Docker 回调使用对浏览器和 Notion 可访问的 Nginx 地址，例如 http://localhost:8080/api/v1/notion/oauth/callback，并须与登记值完全一致
+    client_id: "" # 由 NOTION_CLIENT_ID 环境变量覆盖
+    client_secret: "" # 由 NOTION_CLIENT_SECRET 环境变量覆盖
+    redirect_uri: "" # 由 NOTION_REDIRECT_URI 环境变量覆盖，必须与 Notion 应用登记的回调地址一致
+    frontend_redirect_url: "" # 由 NOTION_FRONTEND_REDIRECT_URL 环境变量覆盖
+    api_base_url: "https://api.notion.com"
+    api_version: "2022-06-28"
+    timeout_seconds: 15
 
 # CORS 配置
 cors:

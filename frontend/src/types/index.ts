@@ -1,5 +1,5 @@
 // ============ Source Types ============
-export type SourceType = 'file' | 'url' | 'audio' | 'youdao' | 'search';
+export type SourceType = 'file' | 'url' | 'audio' | 'youdao' | 'notion' | 'search';
 export type FileType = 'pdf' | 'docx' | 'txt' | 'md' | 'pptx' | 'mp3' | 'wav';
 
 export interface Source {
