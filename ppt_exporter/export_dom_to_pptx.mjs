@@ -45,7 +45,11 @@ async function runSelfTest() {
 }
 
 async function exportHTMLToPPTX(html, deckTitle) {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: process.env.PPT_DOM_EXPORTER_CHROMIUM || undefined,
+    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  });
   try {
     const page = await browser.newPage({
       viewport: { width: 1920, height: 1080 },

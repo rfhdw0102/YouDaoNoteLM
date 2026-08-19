@@ -63,3 +63,6 @@ frontend/.idea
 frontend/*.md
 frontend/.gitignore
 frontend/.env*
+
+# PPTX 导出器相关
+ppt_exporter/node_modules

@@ -167,9 +167,18 @@ func (a *pptGenerationAgent) repairPPTStructure(ctx context.Context, draft gener
 		repairReasons = append(repairReasons, "plan_coverage_repair")
 	}
 
-	if len(repairReasons) > 0 {
+	hardRepairReasons, softRepairReasons := splitPPTRepairReasons(repairReasons)
+	if len(softRepairReasons) > 0 {
+		logger.Warn("[PPT] quality warnings kept with LLM output",
+			zap.Strings("reasons", softRepairReasons),
+			zap.Int("content_len", len(draft.content)),
+		)
+	}
+
+	if len(hardRepairReasons) > 0 {
 		logger.Warn("[PPT] repairPPTStructure triggered, replacing LLM output with fallback",
-			zap.Strings("reasons", repairReasons),
+			zap.Strings("reasons", hardRepairReasons),
+			zap.Strings("soft_reasons", softRepairReasons),
 			zap.Int("content_len_before", len(draft.content)),
 		)
 		if draft.pptRepairPlan != nil {
@@ -182,8 +191,27 @@ func (a *pptGenerationAgent) repairPPTStructure(ctx context.Context, draft gener
 			zap.Int("content_len_after", len(draft.content)),
 			zap.Bool("used_renderStyledPPTSlides", draft.pptRepairPlan != nil),
 		)
-	} else {
+	} else if len(softRepairReasons) == 0 {
 		logger.Info("[PPT] repairPPTStructure skipped, LLM output kept")
+	} else {
+		logger.Info("[PPT] repairPPTStructure kept LLM output",
+			zap.Strings("soft_reasons", softRepairReasons),
+		)
 	}
 	return draft, nil
+}
+
+// splitPPTRepairReasons separates rendering blockers from quality warnings.
+// Content-quality issues should not erase an otherwise valid, content-driven
+// layout because the fallback renderer is intentionally more uniform.
+func splitPPTRepairReasons(reasons []string) (hard, soft []string) {
+	for _, reason := range reasons {
+		switch reason {
+		case "structure_repair", "internal_prompt_leak", "visible_placeholder_text":
+			hard = append(hard, reason)
+		default:
+			soft = append(soft, reason)
+		}
+	}
+	return hard, soft
 }

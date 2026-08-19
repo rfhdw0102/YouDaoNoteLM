@@ -31,12 +31,20 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o server ./cmd/server
 
-# ========== 阶段3: 最终镜像 ==========
+# ========== 阶段3: 安装 PPTX DOM 导出器依赖 ==========
+FROM node:20-bookworm-slim AS ppt-exporter-builder
+
+WORKDIR /app/ppt_exporter
+COPY ppt_exporter/package.json ppt_exporter/package-lock.json* ./
+RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --omit=dev
+COPY ppt_exporter/ ./
+
+# ========== 阶段4: 最终镜像 ==========
 FROM nginx:1.27-bookworm
 
 # 安装运行时依赖（Debian-based，提供 glibc 兼容性，youadonote CLI 基于 Bun 需要 glibc）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata curl python3 python3-pip bash ffmpeg && \
+    ca-certificates tzdata curl python3 python3-pip bash ffmpeg nodejs chromium && \
     rm -rf /var/lib/apt/lists/*
 
 # 安装 youdaonote CLI（使用官方一键脚本，自动处理 AVX2 兼容性）
@@ -53,6 +61,12 @@ COPY --from=frontend-builder /app/frontend/dist /usr/share/nginx/html
 
 # 复制后端二进制文件
 COPY --from=backend-builder /app/server /app/server
+
+# 复制 PPTX DOM 导出器（HTML -> editable PPTX）
+COPY --from=ppt-exporter-builder /app/ppt_exporter /app/ppt_exporter
+ENV PPT_DOM_EXPORTER_SCRIPT=/app/ppt_exporter/export_dom_to_pptx.mjs
+ENV PPT_DOM_EXPORTER_CHROMIUM=/usr/bin/chromium
+RUN node /app/ppt_exporter/export_dom_to_pptx.mjs --self-test
 
 # 复制配置文件目录
 COPY configs/ /app/configs/
