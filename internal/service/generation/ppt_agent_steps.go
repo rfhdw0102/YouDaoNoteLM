@@ -3,7 +3,6 @@
 // pptGenerationAgent 通过重写 baseGenerationAgent 的步骤方法实现 PPT 特有的：
 //   - analyzePPTContent：内容分析
 //   - planPPTChainOutline：大纲规划（遵循 ppt_outline_spec.go 规范）
-//   - reviewPPTOutline：大纲审核
 //   - enrichPPTContent：内容增强
 //   - renderPPTSlides：HTML 渲染
 //   - stylePPTTheme：样式主题应用
@@ -40,36 +39,6 @@ func (a *pptGenerationAgent) planPPTChainOutline(ctx context.Context, state pptC
 	return state, nil
 }
 
-// reviewPPTOutline 调用 LLM 复核并优化大纲内容。
-func (a *pptGenerationAgent) reviewPPTOutline(ctx context.Context, state pptChainState) (pptChainState, error) {
-	if a.model == nil {
-		return state, nil
-	}
-	llmStart := time.Now()
-	strategy := pptOutlineReviewPromptStrategy()
-	reviewed, err := a.model.Generate(ctx, GenerationPrompt{
-		AgentName:    a.name + "_outline_review",
-		System:       strategy.System,
-		User:         strings.TrimSpace(state.input.Request.Prompt),
-		Context:      appendPPTOutlineToContext(state.input.Context, state.outline),
-		OutputFormat: strategy.OutputFormat,
-	})
-	logger.Info("[PPT] LLM call: reviewPPTOutline done",
-		zap.Duration("llm_elapsed", time.Since(llmStart)),
-		zap.Int("reviewed_len", len(reviewed)),
-		zap.Error(err),
-	)
-	if err != nil || strings.TrimSpace(reviewed) == "" {
-		return state, nil
-	}
-	reviewed = strings.TrimSpace(reviewed)
-	if parsed, ok := parsePPTOutlineMarkdown(reviewed); ok && len(parsed.Slides) > 0 {
-		state.outline = reviewed
-		state.outlinePlan = parsed
-	}
-	return state, nil
-}
-
 // expandPPTChainContent 基于分析结果扩充大纲要点。
 func (a *pptGenerationAgent) expandPPTChainContent(ctx context.Context, state pptChainState) (pptChainState, error) {
 	state.expanded = expandPPTContent(state.outlinePlan, state.analysis)
@@ -92,45 +61,20 @@ func (a *pptGenerationAgent) designPPTStyle(ctx context.Context, state pptChainS
 	return state, nil
 }
 
-// generatePPTCSS 调用 LLM 生成 PPT 样式 CSS，失败时回退到兜底 CSS。
-func (a *pptGenerationAgent) generatePPTCSS(ctx context.Context, state pptChainState) (pptChainState, error) {
-	if a.model == nil {
-		state.cssBlock = fallbackPPTCSS(state.styleTheme)
-		return state, nil
-	}
-	llmStart := time.Now()
-	strategy := pptCSSPromptStrategy()
-	generated, err := a.model.Generate(ctx, GenerationPrompt{
-		AgentName:    a.name + "_css",
-		System:       strategy.System,
-		User:         strings.TrimSpace(state.input.Request.Prompt),
-		Context:      appendPPTStyleToContext(appendPPTPlansToContext(state.input.Context, state.outline, state.expanded), state.styleTheme),
-		OutputFormat: strategy.OutputFormat,
-	})
-	logger.Info("[PPT] LLM call: generatePPTCSS done",
-		zap.Duration("llm_elapsed", time.Since(llmStart)),
-		zap.Int("css_len", len(generated)),
-		zap.Error(err),
-	)
-	if err != nil || strings.TrimSpace(generated) == "" {
-		state.cssBlock = fallbackPPTCSS(state.styleTheme)
-		return state, nil
-	}
-	state.cssBlock = extractCSSBlock(strings.TrimSpace(generated))
-	if !pptCSSHasCanvasSize(state.cssBlock) {
-		state.cssBlock = injectPPTCanvasSizeIntoCSS(state.cssBlock)
-	}
-	return state, nil
-}
-
 // generatePPTHTML 调用 LLM 生成 PPT HTML 内容并组装最终草稿。
 func (a *pptGenerationAgent) generatePPTHTML(ctx context.Context, state pptChainState) (generationDraft, error) {
 	content := ""
 	fallbackUsed := false
 	if a.model != nil {
 		llmStart := time.Now()
-		strategy := promptStrategyFor(GenerationTypePPT)
-		contextValue := appendPPTCSSToContext(appendPPTStyleToContext(appendPPTPlansToContext(state.input.Context, state.outline, state.expanded), state.styleTheme), state.cssBlock)
+		strategy := contentDrivenPPTHTMLPromptStrategy()
+		contextValue := appendPPTLayoutDirectionToContext(
+			appendPPTStyleToContext(
+				appendPPTPlansToContext(state.input.Context, state.outline, state.expanded),
+				state.styleTheme,
+			),
+			state.expanded,
+		)
 		if len(state.richContent.Slides) > 0 {
 			contextValue = appendPPTRichContentToContext(contextValue, state.richContent)
 		}
@@ -155,9 +99,6 @@ func (a *pptGenerationAgent) generatePPTHTML(ctx context.Context, state pptChain
 		content = renderStyledPPTSlides(state.expanded, state.styleTheme)
 		fallbackUsed = true
 	}
-	if state.cssBlock != "" && !strings.Contains(strings.ToLower(content), "<style") {
-		content = state.cssBlock + "\n" + content
-	}
 	repairPlan := state.expanded
 	return generationDraft{input: state.input, content: content, fallbackUsed: fallbackUsed, pptRepairPlan: &repairPlan, pptStyleTheme: state.styleTheme}, nil
 }
@@ -176,7 +117,7 @@ func (a *pptGenerationAgent) polishPPTHTML(ctx context.Context, draft generation
 	content = deduplicatePPTCardTitles(content)
 	content = ensurePPTSlideAttributes(content)
 	content = ensurePPTCanvasSize(content)
-	content = ensurePPTStyleBlock(content)
+	content = ensurePPTStyleBlockForPlan(content, draft.pptRepairPlan, draft.pptStyleTheme)
 	draft.content = content
 	return draft, nil
 }

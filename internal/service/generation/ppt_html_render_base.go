@@ -366,7 +366,8 @@ li:last-child { border-bottom: none; }
 		b.WriteString(`"></span></div>`)
 		b.WriteString("</section>\n")
 	}
-	return strings.TrimSpace(b.String())
+	rendered := strings.TrimSpace(b.String())
+	return replacePPTStyleBlock(rendered, adaptivePPTStyleBlock(plan, theme))
 }
 
 // writePPTContentSlideBody 根据布局类型渲染内容页主体。

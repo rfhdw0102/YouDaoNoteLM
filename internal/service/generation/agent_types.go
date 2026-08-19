@@ -92,14 +92,15 @@ type pptStyleTheme struct {
 const pptContentEnrichBatchSize = 4
 
 type pptChainState struct {
-	input       generationAgentInput
-	analysis    learningContentAnalysis
-	outlinePlan pptOutlinePlan
-	expanded    pptOutlinePlan
-	richContent pptRichContent
-	styleTheme  pptStyleTheme
-	cssBlock    string
-	outline     string
+	input           generationAgentInput
+	analysis        learningContentAnalysis
+	outlinePlan     pptOutlinePlan
+	expanded        pptOutlinePlan
+	richContent     pptRichContent
+	styleTheme      pptStyleTheme
+	outline         string
+	outlineApproved bool
+	approvalNotes   []string
 }
 
 type mindmapChainState struct {

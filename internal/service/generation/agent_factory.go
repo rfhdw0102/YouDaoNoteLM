@@ -86,7 +86,7 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 1/14: analyzePPTContent done",
+	logger.Info("[PPT] step 1/13: analyzePPTContent done",
 		zap.Duration("elapsed", time.Since(stepStart)),
 		zap.Int("sections", len(state.analysis.Sections)),
 	)
@@ -96,19 +96,9 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 2/14: planPPTChainOutline done",
+	logger.Info("[PPT] step 2/13: planPPTChainOutline done",
 		zap.Duration("elapsed", time.Since(stepStart)),
 		zap.Int("slides", len(state.outlinePlan.Slides)),
-	)
-
-	stepStart = time.Now()
-	state, err = a.reviewPPTOutline(ctx, state)
-	if err != nil {
-		return generationAgentOutput{}, err
-	}
-	logger.Info("[PPT] step 3/14: reviewPPTOutline done",
-		zap.Duration("elapsed", time.Since(stepStart)),
-		zap.Int("slides_after_review", len(state.outlinePlan.Slides)),
 	)
 
 	stepStart = time.Now()
@@ -116,8 +106,19 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 4/14: expandPPTChainContent done",
+	logger.Info("[PPT] step 3/13: expandPPTChainContent done",
 		zap.Duration("elapsed", time.Since(stepStart)),
+	)
+
+	stepStart = time.Now()
+	state, err = a.approvePPTExpandedOutline(ctx, state)
+	if err != nil {
+		return generationAgentOutput{}, err
+	}
+	logger.Info("[PPT] step 4/13: approvePPTExpandedOutline done",
+		zap.Duration("elapsed", time.Since(stepStart)),
+		zap.Bool("outline_approved", state.outlineApproved),
+		zap.Int("slides_after_approval", len(state.expanded.Slides)),
 	)
 
 	stepStart = time.Now()
@@ -125,7 +126,7 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 5/14: enrichPPTContent done",
+	logger.Info("[PPT] step 5/13: enrichPPTContent done",
 		zap.Duration("elapsed", time.Since(stepStart)),
 		zap.Int("rich_slides", len(state.richContent.Slides)),
 	)
@@ -135,19 +136,9 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 6/14: designPPTStyle done",
+	logger.Info("[PPT] step 6/13: designPPTStyle done",
 		zap.Duration("elapsed", time.Since(stepStart)),
 		zap.String("theme", state.styleTheme.Name),
-	)
-
-	stepStart = time.Now()
-	state, err = a.generatePPTCSS(ctx, state)
-	if err != nil {
-		return generationAgentOutput{}, err
-	}
-	logger.Info("[PPT] step 7/14: generatePPTCSS done",
-		zap.Duration("elapsed", time.Since(stepStart)),
-		zap.Int("css_len", len(state.cssBlock)),
 	)
 
 	stepStart = time.Now()
@@ -155,7 +146,7 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 8/14: generatePPTHTML done",
+	logger.Info("[PPT] step 7/13: generatePPTHTML done",
 		zap.Duration("elapsed", time.Since(stepStart)),
 		zap.Int("html_len", len(draft.content)),
 		zap.Bool("fallback_used", draft.fallbackUsed),
@@ -166,7 +157,7 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 9/14: structureCheck done",
+	logger.Info("[PPT] step 8/13: structureCheck done",
 		zap.Duration("elapsed", time.Since(stepStart)),
 	)
 
@@ -175,7 +166,7 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 10/14: polishPPTHTML done",
+	logger.Info("[PPT] step 9/13: polishPPTHTML done",
 		zap.Duration("elapsed", time.Since(stepStart)),
 		zap.Int("html_len_after", len(draft.content)),
 	)
@@ -185,7 +176,7 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 11/14: repairPPTStructure done",
+	logger.Info("[PPT] step 10/13: repairPPTStructure done",
 		zap.Duration("elapsed", time.Since(stepStart)),
 		zap.Bool("fallback_used", draft.fallbackUsed),
 	)
@@ -195,7 +186,7 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 12/14: factEnhance done",
+	logger.Info("[PPT] step 11/13: factEnhance done",
 		zap.Duration("elapsed", time.Since(stepStart)),
 	)
 
@@ -204,7 +195,7 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 13/14: formatValidate done",
+	logger.Info("[PPT] step 12/13: formatValidate done",
 		zap.Duration("elapsed", time.Since(stepStart)),
 		zap.Bool("format_valid", draft.formatValid),
 	)
@@ -214,7 +205,7 @@ func (a *pptGenerationAgent) Generate(ctx context.Context, input generationAgent
 	if err != nil {
 		return generationAgentOutput{}, err
 	}
-	logger.Info("[PPT] step 14/14: finalize done",
+	logger.Info("[PPT] step 13/13: finalize done",
 		zap.Duration("elapsed", time.Since(stepStart)),
 		zap.Int("final_len", len(output.Content)),
 	)

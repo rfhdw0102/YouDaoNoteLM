@@ -1,7 +1,7 @@
 // generation_prompts.go 定义各生成类型的提示词策略。
 //
 // generationPromptStrategy 接口抽象了不同类型的提示词差异：
-//   - pptOutlinePromptStrategy / pptCSSPromptStrategy / pptOutlineReviewPromptStrategy：PPT 专用
+//   - pptOutlinePromptStrategy：PPT 专用
 //   - 其他类型（note/mindmap/quiz）使用通用策略
 //
 // promptStrategyFor 根据生成类型返回对应的策略实例。
@@ -282,59 +282,6 @@ func pptOutlinePromptStrategy() generationPromptStrategy {
 			"  - ATP合酶利用H⁺浓度梯度（质子动力）将ADP+Pi合成ATP\n" +
 			"  - 光反应产物ATP和NADPH为暗反应提供能量和还原力\n\n" +
 			"必须包含封面页、目录页、内容页、结束页。内容页优先按 Markdown 的二级/三级标题组织；如果一个章节内容很多，可以拆成多页。不要输出参考资料或 References 页面。",
-	}
-}
-
-// pptCSSPromptStrategy 返回 PPT 样式生成的提示词策略。
-func pptCSSPromptStrategy() generationPromptStrategy {
-	return generationPromptStrategy{
-		System: "你是 PPT 视觉设计专家，只负责生成 <style> 块，不负责生成 HTML 结构。\n\n" +
-			"== 严格遵循主题配色（最高优先级）==\n" +
-			"你必须读取上下文中的 PPT_STYLE_THEME，并严格使用其中的 CSS 变量值（Background、Surface、Primary、Secondary、Text、Heading、Muted 等）作为 :root 自定义属性。\n" +
-			"- 这是硬性约束，不得自行替换为其他配色。\n" +
-			"- VisualDescription 描述了该主题应有的视觉特征（例如：深色背景+亮色文字、衬线标题、暖色渐变等）。你的 CSS 必须忠实还原这些特征，而不是产出通用简约风格。\n" +
-			"- 当主题背景是深色（如 Background=#0f172a）时，页面背景、卡片背景必须使用深色，正文与标题文字必须使用亮色（如 Text、Heading）。严禁把深色主题渲染成浅色白底。\n" +
-			"- 当主题是学术清新时，标题字体应使用衬线体（FontHeading），并呈现编号小节、定义卡片等学院风元素。\n" +
-			"- 当主题是暖色叙事时，配色应偏暖，多用引语块、时间线等叙事布局。\n" +
-			"- 如果用户在消息中指定了颜色/氛围/风格偏好，必须在设计中体现，同时保持与 PPT_STYLE_THEME 基础变量协调。\n\n" +
-			"== 设计要点 ==\n" +
-			"设计一套完整、现代、美观的 CSS，覆盖封面页、目录页、内容页（至少 3 种不同布局）、结束页的样式。使用 :root 定义 CSS 自定义属性统一管理颜色；每页画布固定 1920x1080px；使用适合 PPT 的大字号（h1: 76-96px, h2: 48-64px, 正文: 30-38px）；使用渐变、阴影、圆角等现代视觉元素；为不同布局准备不同的 CSS 类名。",
-		OutputFormat: "仅返回一个 <style>...</style> 块，不要返回任何 HTML section 或其他内容。必须包含：1) :root 中的 CSS 变量定义；2) .ppt-slide 基础类（width:1920px; height:1080px; overflow:hidden; position:relative; box-sizing:border-box）；3) 封面页样式 .ppt-cover；4) 目录页样式 .ppt-agenda / .dir-list / .dir-item；5) 至少 3 种内容页布局样式（如 .content-grid / .main-points / .insight-panel, .card-grid / .content-card, .full-width-list, .comparison-layout, .quote-block）；6) 结束页样式 .summary-layout / .summary-card；7) 进度条样式 .slide-progress；8) data-ppt-slide 属性选择器样式。不要包含 html/body 外层标签。",
-	}
-}
-
-// pptOutlineReviewPromptStrategy 返回 PPT 大纲审查修正的提示词策略。
-func pptOutlineReviewPromptStrategy() generationPromptStrategy {
-	return generationPromptStrategy{
-		System: "你是一位资深咨询顾问，擅长审查和修正演示文稿大纲。你会收到一份已生成的 PPT 大纲和原始 Markdown 材料。你的任务是审查大纲并返回修正后的大纲。\n\n" +
-			"== 大纲生成规范 ==\n" +
-			"你必须严格遵循以下规范审查和修正大纲：\n" +
-			pptOutlineSpecification + "\n\n" +
-			"== 审查要点 ==\n" +
-			"1. 覆盖性：大纲是否遗漏了原始材料中的重要主题？如果有遗漏，补充对应的幻灯片。\n" +
-			"2. 冗余性：不同幻灯片的要点是否重复？如果重复，合并或删除重复项。\n" +
-			"3. 标题规范：标题是否简洁（2-8字名词短语）？是否有问句或冒号式标题？如果有，改为简洁的名词短语。\n" +
-			"4. 规划标签泄漏：大纲中是否包含'页面目的'、'核心论点'、'可用证据'、'source-topic'等内部规划标签？如果有，删除这些行。\n" +
-			"5. 内容充实度：每个内容页是否有 4-6 个具体内容要点（是可展开的知识点而非笼统主题）？如果要点太笼统，从原始材料中拆分为更细的要点。\n" +
-			"6. 逻辑顺序：幻灯片的排列是否符合学习逻辑（如：概念→原理→流程→应用→总结）？如果不符合，调整顺序。\n" +
-			"7. 页面数量：是否匹配材料规模（短材料 8-10 页，中等 10-14 页，长材料 14-20 页）？\n" +
-			"8. 结构完整性：是否包含六大核心模块（开篇导入、概念理解、原理机制、过程方法、应用拓展、收束整合）？如果缺失，补充对应页面。\n" +
-			"9. 具体性：要点是否是具体的知识颗粒？差的写法'光反应的过程'应改为'类囊体膜色素系统吸收光能驱动电子传递'。\n" +
-			"10. 数据提取：材料中的重要数据、公式、定理是否被提取到大纲中？如果遗漏，补充对应要点。\n\n" +
-			"== 修正原则 ==\n" +
-			"- 只做必要的修正，不要大幅重写大纲\n" +
-			"- 保持原有大纲的整体结构\n" +
-			"- 修正后的大纲必须只包含标题和内容要点，不包含任何元信息\n" +
-			"- 所有标题必须是简洁的名词短语\n" +
-			"- 确保大纲符合规范中的层级格式和内容要求\n" +
-			"- 如果要点太笼统，将其拆分为更具体的子要点",
-		OutputFormat: "仅返回修正后的 Markdown 大纲，格式与输入相同：\n" +
-			"# 总标题\n" +
-			"- 幻灯片标题（简洁名词短语）\n" +
-			"  - 具体知识要点1\n" +
-			"  - 具体知识要点2\n" +
-			"  - 具体知识要点3\n\n" +
-			"不要输出审查分析过程，不要输出'页面目的'等元信息，直接返回修正后的大纲。",
 	}
 }
 
