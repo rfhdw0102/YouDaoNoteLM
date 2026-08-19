@@ -30,8 +30,9 @@ type ChatAgentBuilder struct {
 	sourceNames map[uint]string
 
 	// 用户信息
-	userNickname string
-	userUsername string
+	userNickname   string
+	userUsername   string
+	longTermMemory string
 
 	// 工具相关（可选，支持自定义扩展）
 	tools []tool.BaseTool
@@ -86,6 +87,14 @@ func (b *ChatAgentBuilder) WithUserID(userID uint) *ChatAgentBuilder {
 func (b *ChatAgentBuilder) WithUser(nickname, username string) *ChatAgentBuilder {
 	b.userNickname = nickname
 	b.userUsername = username
+	return b
+}
+
+// WithLongTermMemory adds a pre-rendered, low-priority user preference block
+// to the system prompt. Rendering stays in the memory module so all consumers
+// receive the same safety and priority wording.
+func (b *ChatAgentBuilder) WithLongTermMemory(prompt string) *ChatAgentBuilder {
+	b.longTermMemory = strings.TrimSpace(prompt)
 	return b
 }
 
@@ -235,7 +244,6 @@ func (b *ChatAgentBuilder) buildSystemPrompt() string {
 		}
 		sb.WriteString(fmt.Sprintf("# 用户信息\n用户名：%s\n\n", displayName))
 	}
-
 	// 资料列表
 	sourceList := "（用户未选定特定资料）"
 	if len(b.sourceIDs) > 0 {
@@ -252,6 +260,13 @@ func (b *ChatAgentBuilder) buildSystemPrompt() string {
 
 	prompt := strings.Replace(prompts.ChatAgentSystemPrompt, "{{.SourceList}}", sourceList, 1)
 	sb.WriteString(prompt)
+	if b.longTermMemory != "" {
+		// Put concrete, structured preferences after the static rule set so the
+		// model applies them consistently. RenderPrompt keeps the values as
+		// untrusted data and defines their limited priority.
+		sb.WriteString("\n\n")
+		sb.WriteString(b.longTermMemory)
+	}
 
 	return sb.String()
 }

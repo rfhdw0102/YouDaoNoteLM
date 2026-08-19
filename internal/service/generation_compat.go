@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 
+	"YoudaoNoteLm/internal/memory"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/rag"
 	gen "YoudaoNoteLm/internal/service/generation"
@@ -127,6 +128,10 @@ func NewGenerationServiceWithMemory(retriever rag.RAGRetriever, search SearchSer
 	return gen.NewGenerationServiceWithMemory(retriever, adaptGenerationSearchService(search), model, memory)
 }
 
+func NewGenerationServiceWithMemories(retriever rag.RAGRetriever, search SearchService, model GenerationModel, memoryStore GenerationMemoryStore, longTermMemory memory.Reader) GenerationService {
+	return gen.NewGenerationServiceWithMemories(retriever, adaptGenerationSearchService(search), model, memoryStore, longTermMemory)
+}
+
 func NewGenerationServiceWithUserLLMConfig(retriever rag.RAGRetriever, search SearchService, repo interface {
 	FindDefaultByUserID(userID uint) (*entity.UserLLMConfig, error)
 }, encryptionKey string) GenerationService {
@@ -141,6 +146,19 @@ func NewGenerationServiceWithUserLLMConfigAndMemory(retriever rag.RAGRetriever, 
 		adaptGenerationSearchService(search),
 		repo,
 		memory,
+		encryptionKey,
+	)
+}
+
+func NewGenerationServiceWithUserLLMConfigAndMemories(retriever rag.RAGRetriever, search SearchService, repo interface {
+	FindDefaultByUserID(userID uint) (*entity.UserLLMConfig, error)
+}, memoryStore GenerationMemoryStore, longTermMemory memory.Reader, encryptionKey string) GenerationService {
+	return gen.NewGenerationServiceWithUserLLMConfigAndMemories(
+		retriever,
+		adaptGenerationSearchService(search),
+		repo,
+		memoryStore,
+		longTermMemory,
 		encryptionKey,
 	)
 }

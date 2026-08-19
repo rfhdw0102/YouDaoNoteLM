@@ -11,6 +11,7 @@ import (
 	"context"
 
 	"YoudaoNoteLm/internal/llm"
+	"YoudaoNoteLm/internal/memory"
 	"YoudaoNoteLm/internal/model/entity"
 	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/pkg/logger"
@@ -40,18 +41,24 @@ func NewGenerationServiceWithUserLLMConfig(retriever rag.RAGRetriever, search Se
 
 // NewGenerationServiceWithUserLLMConfigAndMemory 创建带会话记忆且支持用户自定义 LLM 配置的生成服务实例。
 func NewGenerationServiceWithUserLLMConfigAndMemory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memory GenerationMemoryStore, encryptionKey string) GenerationService {
-	return newGenerationServiceWithUserLLMChatModelFactory(retriever, search, repo, memory, func(ctx context.Context, cfg *entity.UserLLMConfig) (model.BaseChatModel, error) {
+	return NewGenerationServiceWithUserLLMConfigAndMemories(retriever, search, repo, memory, nil, encryptionKey)
+}
+
+// NewGenerationServiceWithUserLLMConfigAndMemories keeps short generation
+// history separate from long-term user preferences.
+func NewGenerationServiceWithUserLLMConfigAndMemories(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memoryStore GenerationMemoryStore, longTermMemory memory.Reader, encryptionKey string) GenerationService {
+	return newGenerationServiceWithUserLLMChatModelFactory(retriever, search, repo, memoryStore, longTermMemory, func(ctx context.Context, cfg *entity.UserLLMConfig) (model.BaseChatModel, error) {
 		return llm.NewChatModel(ctx, cfg)
 	}, encryptionKey)
 }
 
 // newGenerationServiceWithUserLLMChatModelFactory 使用自定义 chat model 工厂构造用户 LLM 配置生成服务。
-func newGenerationServiceWithUserLLMChatModelFactory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memory GenerationMemoryStore, factory chatModelFactory, encryptionKey string) GenerationService {
+func newGenerationServiceWithUserLLMChatModelFactory(retriever rag.RAGRetriever, search SearchService, repo userLLMConfigReader, memoryStore GenerationMemoryStore, longTermMemory memory.Reader, factory chatModelFactory, encryptionKey string) GenerationService {
 	return &userLLMConfigGenerationService{
 		repo:    repo,
 		factory: factory,
 		base: func(model GenerationModel) GenerationService {
-			return NewGenerationServiceWithMemory(retriever, search, model, memory)
+			return NewGenerationServiceWithMemories(retriever, search, model, memoryStore, longTermMemory)
 		},
 		encryptionKey: []byte(encryptionKey),
 	}

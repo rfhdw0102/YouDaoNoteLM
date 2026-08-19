@@ -7,6 +7,7 @@ import (
 	"YoudaoNoteLm/internal/api/v1/file"
 	"YoudaoNoteLm/internal/api/v1/generation"
 	"YoudaoNoteLm/internal/api/v1/importn"
+	memoryAPI "YoudaoNoteLm/internal/api/v1/memory"
 	"YoudaoNoteLm/internal/api/v1/notebook"
 	"YoudaoNoteLm/internal/api/v1/providers"
 	"YoudaoNoteLm/internal/api/v1/search"
@@ -14,6 +15,7 @@ import (
 	"YoudaoNoteLm/internal/api/v1/user"
 	userconfig "YoudaoNoteLm/internal/api/v1/user_config"
 	youdao "YoudaoNoteLm/internal/api/v1/youdao"
+	"YoudaoNoteLm/internal/memory"
 	"YoudaoNoteLm/internal/middleware"
 	"YoudaoNoteLm/internal/rag"
 	"YoudaoNoteLm/internal/repository"
@@ -40,6 +42,7 @@ type Router struct {
 	youdaoCtrl     *youdao.Controller
 	userConfigCtrl *userconfig.Controller
 	fileCtrl       *file.Controller
+	memoryCtrl     *memoryAPI.Controller
 }
 
 // NewRouter 创建路由。
@@ -64,6 +67,7 @@ func NewRouter(
 	ingestionService rag.IngestionService,
 	storage externalStorage.FileStorage,
 	userRepo repository.UserRepository,
+	memoryService memory.Service,
 ) *Router {
 	return &Router{
 		userCtrl:       user.NewController(userService, tokenBlacklist),
@@ -81,6 +85,7 @@ func NewRouter(
 		youdaoCtrl:     youdao.NewController(youdaoService),
 		userConfigCtrl: userconfig.NewController(userConfigService, tokenBlacklist, ingestionService),
 		fileCtrl:       file.NewController(storage),
+		memoryCtrl:     memoryAPI.NewController(memoryService),
 	}
 }
 
@@ -120,6 +125,7 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 		// 用户配置路由（需认证）
 		r.userConfigCtrl.RegisterRoutes(v1, statusCheck)
+		r.memoryCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
 
 		// 后台管理路由（需认证 + 管理员角色）
 		r.adminCtrl.RegisterRoutes(v1, r.tokenBlacklist, statusCheck)
