@@ -5,6 +5,7 @@ import "strings"
 // 校验演示文稿输出是否具备可导出的页面结构。
 func ValidateContent(content string) bool {
 	lower := strings.ToLower(strings.TrimSpace(content))
+	compact := strings.Join(strings.Fields(lower), "")
 	if strings.Contains(lower, "<ppt_file") || strings.Contains(lower, "<preview_link") {
 		return false
 	}
@@ -14,11 +15,11 @@ func ValidateContent(content string) bool {
 	if strings.Count(lower, "<section") < 4 {
 		return false
 	}
-	if !strings.Contains(lower, "<style") {
+	if !strings.Contains(compact, "<style") {
 		return false
 	}
-	for _, required := range []string{"width: 1920px", "height: 1080px", "overflow: hidden"} {
-		if !strings.Contains(lower, required) {
+	for _, required := range []string{"width:1920px", "height:1080px", "overflow:hidden"} {
+		if !strings.Contains(compact, required) {
 			return false
 		}
 	}

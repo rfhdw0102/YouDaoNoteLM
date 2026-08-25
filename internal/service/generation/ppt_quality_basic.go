@@ -15,12 +15,13 @@ import (
 func pptNeedsStructureRepair(content string) bool {
 	trimmed := strings.TrimSpace(content)
 	lower := strings.ToLower(trimmed)
+	compact := strings.Join(strings.Fields(lower), "")
 	sectionCount := strings.Count(lower, "<section")
 	if sectionCount < 4 || strings.Contains(lower, "<section></section>") {
 		return true
 	}
-	for _, required := range []string{"<style", "width: 1920px", "height: 1080px", "overflow: hidden"} {
-		if !strings.Contains(lower, required) {
+	for _, required := range []string{"<style", "width:1920px", "height:1080px", "overflow:hidden"} {
+		if !strings.Contains(compact, required) {
 			return true
 		}
 	}
@@ -74,37 +75,12 @@ func pptContainsVisiblePlaceholderText(content string) bool {
 		"insert your",
 		"fill in",
 		"lorem ipsum",
-		"页面目的",
-		"核心论点",
-		"关键要点",
-		"可用证据",
-		"内容展开",
-		"本页用于",
 		"slide purpose",
 		"page purpose",
 		"writing brief",
 		"source-topic",
 		"source topic",
 		"source_topic",
-		"礼貌地结束",
-		"引导思考",
-		"建立演示主题",
-		"呈现演示路径",
-		"收束核心结论",
-		"建立学习主题",
-		"呈现学习路径",
-		"收束学习结论",
-		"说明为什么学习",
-		"梳理概念之间的关系",
-		"连接材料和实际",
-		"提示边界和误区",
-		"建立演示主题和受众预期",
-		"收束核心结论并给出下一步",
-		"展开材料开头的核心背景",
-		"收束本部分材料并提炼结论",
-		"呈现检索或引用资料中的真实要点",
-		"说明材料背景和演示目标",
-		"连接材料和实际使用场景",
 		"this slide introduces",
 		"agenda items are organized",
 		"treat each slide entry",

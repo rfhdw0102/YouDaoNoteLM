@@ -6,14 +6,61 @@ import (
 )
 
 func ensurePPTStyleBlockForPlan(content string, plan *pptOutlinePlan, theme pptStyleTheme) string {
-	if strings.Contains(strings.ToLower(content), "<style") {
+	lower := strings.ToLower(content)
+	if !strings.Contains(lower, "<section") {
 		return content
 	}
-	var resolved pptOutlinePlan
-	if plan != nil {
-		resolved = *plan
+	if !strings.Contains(lower, "<style") {
+		var resolved pptOutlinePlan
+		if plan != nil {
+			resolved = *plan
+		}
+		return adaptivePPTStyleBlock(resolved, theme) + "\n" + content
 	}
-	return adaptivePPTStyleBlock(resolved, theme) + "\n" + content
+
+	// Preserve model-authored layout rules, but make the selected theme available
+	// to CSS that consumes the documented custom properties.
+	return appendPPTStyleBlock(content, adaptivePPTThemeTokenBlock(theme))
+}
+
+func adaptivePPTThemeTokenBlock(theme pptStyleTheme) string {
+	return fmt.Sprintf(`<style data-youdaonotelm-ppt-theme="true">
+:root {
+  --bg: %s;
+  --surface: %s;
+  --surface-soft: %s;
+  --accent: %s;
+  --accent-2: %s;
+  --accent-soft: %s;
+  --text: %s;
+  --muted: %s;
+  --heading: %s;
+  --border: %s;
+  --panel: %s;
+}
+</style>`,
+		theme.Background,
+		theme.Surface,
+		theme.Surface,
+		theme.Primary,
+		theme.Secondary,
+		pptAccentSoft(theme),
+		theme.Text,
+		theme.Muted,
+		theme.Heading,
+		pptThemeBorder(theme),
+		pptThemePanel(theme),
+	)
+}
+
+func appendPPTStyleBlock(content, styleBlock string) string {
+	lower := strings.ToLower(content)
+	for _, closingTag := range []string{"</body>", "</html>"} {
+		if idx := strings.Index(lower, closingTag); idx >= 0 {
+			return content[:idx] + styleBlock + "\n" + content[idx:]
+		}
+	}
+	return strings.TrimSpace(content) + "\n" + styleBlock
 }
 
 func adaptivePPTStyleBlock(plan pptOutlinePlan, theme pptStyleTheme) string {
